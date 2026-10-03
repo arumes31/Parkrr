@@ -60,6 +60,13 @@ func startAppGeneration(
 		return nil, errors.Join(err, g.Drain(drainCtx))
 	}
 	apiHandler.Restore = restores
+	apiHandler.Readiness = handlers.ReadinessConfig{
+		SMTPFromConfigured: strings.TrimSpace(cfg.SMTPFrom) != "",
+		Require2FA:         cfg.Require2FA,
+		WebAuthnConfigured: webAuthn != nil && webAuthn.Enabled(),
+		TimeZone:           cfg.TimeZone,
+		AutoInvoiceCron:    cfg.AutoInvoiceCron,
+	}
 	if cfg.PasskeyOnly {
 		apiHandler.PasskeyOnly = true
 	}

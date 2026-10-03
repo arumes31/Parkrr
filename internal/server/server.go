@@ -239,6 +239,10 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 	// --- Handover protocols (Übergabeprotokoll) ---
 	mux.Handle("GET /api/vehicles/{id}/handovers", authed(hf(h.ListHandovers)))
 	mux.Handle("POST /api/vehicles/{id}/handovers", editor(hf(h.CreateHandover)))
+	mux.Handle("GET /api/handover-templates", authed(hf(h.ListHandoverTemplates)))
+	mux.Handle("POST /api/handover-templates", editor(hf(h.CreateHandoverTemplate)))
+	mux.Handle("PUT /api/handover-templates/{id}", editor(hf(h.UpdateHandoverTemplate)))
+	mux.Handle("DELETE /api/handover-templates/{id}", editor(hf(h.DeleteHandoverTemplate)))
 	mux.Handle("GET /api/handovers/{id}/signature", authed(hf(h.GetHandoverSignature)))
 	mux.Handle("GET /api/handovers/{id}/pdf", authed(hf(h.HandoverPDF)))
 	// Ein unterschriebenes Übergabeprotokoll ist ein Beleg: nur Admins dürfen es
@@ -326,6 +330,7 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 	// Verzeichnis noch Bucket noch Dateiliste — dafür bleibt /status admin-only.
 	mux.Handle("GET /api/backup/health", editor(hf(h.BackupHealth)))
 	mux.Handle("GET /api/backup/status", admin(hf(h.BackupStatus)))
+	mux.Handle("GET /api/admin/readiness", admin(hf(h.OperationalReadiness)))
 	mux.Handle("POST /api/backup/schedule", admin(hf(h.SaveBackupSchedule)))
 	mux.Handle("POST /api/backup/run", admin(hf(h.RunScheduledBackup)))
 	mux.Handle("GET /api/backup/file/{name}", admin(hf(h.BackupDownloadFile)))

@@ -1178,8 +1178,11 @@
     let pendingSpotFocus = null;
     function parseHash() {
         const raw = (location.hash || '#/dashboard').replace(/^#\/?/, '');
-        const [name, id] = raw.split('/');
-        return { name: name || 'dashboard', id: id ? Number(id) : null };
+        const splitAt = raw.indexOf('?');
+        const path = splitAt >= 0 ? raw.slice(0, splitAt) : raw;
+        const search = splitAt >= 0 ? raw.slice(splitAt + 1) : '';
+        const [name, id] = path.split('/');
+        return { name: name || 'dashboard', id: id ? Number(id) : null, query: new URLSearchParams(search) };
     }
     // garage/hall sind Unteransichten des Planers und markieren denselben Reiter.
     const TAB_FOR = { dashboard: 'dashboard', persons: 'persons', person: 'persons', vehicles: 'vehicles', vehicle: 'vehicles', tariffs: 'tariffs',
@@ -1187,6 +1190,16 @@
     function navigate(path) {
         if (('#/' + path) === location.hash) render();
         else location.hash = '#/' + path;
+    }
+    function updateRouteQuery(changes) {
+        const parsed = parseHash();
+        for (const [key, value] of Object.entries(changes)) {
+            if (value == null || value === '' || value === false) parsed.query.delete(key);
+            else parsed.query.set(key, String(value));
+        }
+        const base = [parsed.name, parsed.id].filter((value) => value != null).join('/');
+        const search = parsed.query.toString();
+        navigate(base + (search ? '?' + search : ''));
     }
     // Loading placeholder: a few shimmering rows instead of a bare "Lädt…".
     function skeleton(rows = 4) {
@@ -1227,7 +1240,7 @@
         if (state.user && !$('#portal-view').hidden) {
             ++portalRenderSeq; $('#portal-view').hidden = true; $('#app-view').hidden = false;
         }
-        const { name, id } = parseHash();
+        const { name, id, query } = parseHash();
         const routeName = id != null && (name === 'persons' || name === 'vehicles') ? name.slice(0, -1) : name;
         $$('.tab').forEach((t) => {
             const on = t.dataset.route === (TAB_FOR[routeName] || TAB_FOR[name]);
@@ -1251,7 +1264,7 @@
         page.append(skeleton());
         const fn = routes[routeName] || routes.dashboard;
         try {
-            await fn(page, id);
+            await fn(page, id, query);
             if (mySeq !== renderSeq) return; // überholt: eine neuere Route hat die Seite schon
             finishRouteLayout(page, routeName);
             window.scrollTo(0, 0);
@@ -1416,10 +1429,8 @@
     }
     // Kundenwünsche aus dem Portal (Hundert 85/87): das Betreiber-Postfach. Nur
     // gerendert, wenn offene Wünsche da sind — kein Dauerrauschen auf der Übersicht.
-    async function portalRequestsCard() {
+    function portalRequestsCard(reqs = []) {
         if (!canManage()) return null;
-        let reqs = [];
-        try { reqs = await api.get('/portal-requests'); } catch (e) { return null; }
         const open = (reqs || []).filter((r) => r.status === 'offen');
         if (!open.length) return null;
         const card = el('div', { class: 'card' },
@@ -1453,6 +1464,65 @@
         return card;
     }
 
+    function readinessChecklist(data, compact = false) {
+        if (!data || !Array.isArray(data.items)) return null;
+        const wrap = el('section', { class: 'readiness' + (compact ? ' readiness-compact' : ''), 'aria-label': 'Betriebsbereitschaft' },
+            el('div', { class: 'readiness-head' },
+                el('h3', {}, 'Betriebsbereitschaft'),
+                el('span', { class: 'badge readiness-state readiness-' + data.state },
+                    data.state === 'ready' ? 'bereit' : data.state === 'blocked' ? 'Handlungsbedarf' : 'prüfen')));
+        const list = el('div', { class: 'readiness-list' });
+        for (const item of data.items) {
+            if (compact && item.state === 'ready') continue;
+            list.append(el('a', { class: 'readiness-row readiness-' + item.state, href: item.href || '#/settings' },
+                el('span', { class: 'readiness-mark', 'aria-hidden': 'true' }, icon(item.state === 'ready' ? 'check' : 'alert', 16)),
+                el('span', { class: 'readiness-copy' }, el('strong', {}, item.label), el('span', {}, item.reason)),
+                el('span', { class: 'readiness-action' }, item.state === 'ready' ? 'Öffnen' : 'Beheben')));
+        }
+        if (!list.childNodes.length) list.append(el('p', { class: 'readiness-ok' }, 'Alle geprüften Punkte sind einsatzbereit.'));
+        wrap.append(list);
+        return wrap;
+    }
+
+    function todayWorklist({ overdue, ending, portalRequests, occ, readiness }) {
+        const items = [];
+        (overdue || []).forEach((invoice) => items.push({
+            priority: 0, tone: 'critical', title: invoice.person_name + ' · Rechnung ' + invoice.number,
+            meta: invoice.days_overdue + ' Tage überfällig · ' + eur(invoice.open_amount) + ' offen · Buchhaltung',
+            href: '#/invoices/' + invoice.id, action: 'Rechnung öffnen',
+        }));
+        (portalRequests || []).filter((request) => request.status === 'offen').forEach((request) => items.push({
+            priority: 1, tone: 'attention', title: request.person_name + ' · Kundenwunsch',
+            meta: (request.kind === 'pickup' ? 'Abholung abstimmen' : 'Kontaktdaten prüfen') + ' · Kundenservice',
+            href: '#/person/' + request.person_id, action: 'Person öffnen',
+        }));
+        (ending || []).forEach((vehicle) => items.push({
+            priority: vehicle.days_left <= 7 ? 1 : 2, tone: vehicle.days_left <= 7 ? 'attention' : 'normal',
+            title: vehicle.label + ' · Vertrag endet ' + (vehicle.days_left === 0 ? 'heute' : 'in ' + vehicle.days_left + ' Tagen'),
+            meta: vehicle.person_name + ' · Disposition', href: '#/vehicle/' + vehicle.id, action: 'Gefährt öffnen',
+        }));
+        const unplaced = occ ? Math.max(0, Number(occ.active || 0) - Number(occ.placed || 0)) : 0;
+        if (unplaced) items.push({ priority: 2, tone: 'normal', title: unplaced + ' aktive Gefährte ohne Platz',
+            meta: 'Hallenzuordnung fehlt · Disposition', href: '#/vehicles?unplaced=1', action: 'Gefährte anzeigen' });
+        if (readiness && Array.isArray(readiness.items)) readiness.items.filter((item) => item.state !== 'ready').forEach((item) => items.push({
+            priority: item.state === 'blocked' ? 0 : 3, tone: item.state === 'blocked' ? 'critical' : 'normal',
+            title: item.label, meta: item.reason + ' · Administration', href: item.href || '#/settings', action: 'Konfiguration öffnen',
+        }));
+        items.sort((a, b) => a.priority - b.priority);
+        const card = el('section', { class: 'today-card', 'aria-labelledby': 'today-title' },
+            el('div', { class: 'today-head' },
+                el('div', {}, el('h3', { id: 'today-title' }, 'Heute'), el('p', {}, items.length ? items.length + (items.length === 1 ? ' Aufgabe' : ' Aufgaben') + ' nach Dringlichkeit' : 'Keine dringenden Aufgaben')),
+                items.length ? el('span', { class: 'today-count' }, String(items.length)) : null));
+        const list = el('div', { class: 'today-list' });
+        if (!items.length) list.append(el('p', { class: 'today-empty' }, 'Alles im grünen Bereich. Neue Aufgaben erscheinen hier automatisch.'));
+        items.slice(0, 10).forEach((item) => list.append(el('a', { class: 'today-row today-' + item.tone, href: item.href },
+            el('span', { class: 'today-priority', 'aria-hidden': 'true' }),
+            el('span', { class: 'today-copy' }, el('strong', {}, item.title), el('span', {}, item.meta)),
+            el('span', { class: 'today-action' }, item.action))));
+        card.append(list);
+        return card;
+    }
+
     routes.dashboard = async (page) => {
         const missing = [];
         const optional = (path, label, fallback) => api.get(path).then(data => data ?? fallback).catch((err) => {
@@ -1461,13 +1531,15 @@
             return fallback;
         });
         // These independent reads share one network round trip, instead of five.
-        const [ov, occ, overdue, ending, prCard] = await Promise.all([
+        const [ov, occ, overdue, ending, portalRequests, readiness] = await Promise.all([
             api.get('/overview' + (dashYear ? '?year=' + dashYear : '')),
             optional('/occupancy', 'Belegung', null),
             optional('/invoices/overdue', 'Überfällige Rechnungen', []),
             optional('/vehicles/ending-soon?days=30', 'Auslaufende Verträge', []),
-            portalRequestsCard(),
+            canManage() ? optional('/portal-requests', 'Kundenwünsche', []) : Promise.resolve([]),
+            isAdmin() ? optional('/admin/readiness', 'Betriebsbereitschaft', null) : Promise.resolve(null),
         ]);
+        const prCard = portalRequestsCard(portalRequests);
         dashYear = ov.year;
         page.innerHTML = '';
         page.classList.add('dashboard-view');
@@ -1498,9 +1570,12 @@
             return;
         }
 
+        page.append(todayWorklist({ overdue, ending, portalRequests, occ, readiness }));
+
         // Money first — "Offen gesamt" is the operator's lead metric, shown as a
         // gradient hero; Umsatz (with a YoY delta) and Bezahlt sit beside it.
-        page.append(el('div', { class: 'dash-hero' },
+        page.append(el('button', { class: 'dash-hero dash-hero-click', type: 'button', onclick: () => navigate('persons?owed=1'),
+            'aria-label': 'Offene Salden anzeigen' },
             el('div', { class: 'dash-hero-label' }, 'Offen gesamt'),
             el('div', { class: 'dash-hero-num' }, eur(ov.outstanding_total)),
             el('div', { class: 'dash-hero-sub' }, 'Stand heute · offene Salden zum Nachfassen')));
@@ -1528,10 +1603,10 @@
             page.append(el('div', { class: 'yoy-modes', role: 'group', 'aria-label': 'Vergleichsmodus Umsatz' }, ...modeBtns));
         }
         page.append(el('div', { class: 'stat-grid dash-counts' },
-            stat(ov.total_persons, 'Personen', { icon: 'users' }),
-            stat(ov.active_vehicles, 'aktiv eingestellt', { icon: 'warehouse' }),
-            stat(ov.total_vehicles, 'Gefährte gesamt', { icon: 'car' }),
-            stat(ov.total_categories, 'Tarife', { icon: 'tag' }),
+            stat(ov.total_persons, 'Personen', { icon: 'users', onClick: () => navigate('persons') }),
+            stat(ov.active_vehicles, 'aktiv eingestellt', { icon: 'warehouse', onClick: () => navigate('vehicles?active=1') }),
+            stat(ov.total_vehicles, 'Gefährte gesamt', { icon: 'car', onClick: () => navigate('vehicles?archived=1') }),
+            stat(ov.total_categories, 'Tarife', { icon: 'tag', onClick: () => navigate('tariffs') }),
         ));
 
         // Backup-Health. Nur für Admins: /api/backup/status ist admin-only, ein
@@ -1601,7 +1676,7 @@
             const occCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Belegung · im Plan platziert'));
             occCard.append(el('div', { class: 'stat-grid' },
                 stat(occ.placed + ' / ' + occ.active, 'Gefährte platziert', { icon: 'warehouse', tone: 'teal' }),
-                stat(Math.max(0, occ.active - occ.placed), 'noch nicht platziert', { icon: 'car' })));
+                stat(Math.max(0, occ.active - occ.placed), 'noch nicht platziert', { icon: 'car', onClick: () => navigate('vehicles?unplaced=1') })));
             // FE4 — placement trend sparkline over the daily snapshots (last ~30 days).
             const tr = (occ.trend || []).filter((d) => d && Number.isFinite(d.placed));
             if (tr.length >= 2) {
@@ -1723,7 +1798,7 @@
     };
 
     // ================= PERSONS =================
-    routes.persons = async (page) => {
+    routes.persons = async (page, _id, query = new URLSearchParams()) => {
         await refreshLookups();
         // Open balance per person, batched in one request so each row can show its
         // settlement status (and a status-coloured rail) without an N+1 of stats.
@@ -1735,6 +1810,11 @@
         const overdueByPerson = {};
         try { ((await api.get('/invoices/overdue')) || []).forEach((o) => { overdueByPerson[o.person_id] = Math.max(overdueByPerson[o.person_id] || 0, o.days_overdue); }); }
         catch (e) { /* dashboard already surfaces overdue; ignore here */ }
+        const personListState = listState.get('persons') || {};
+        personListState.controlState = personListState.controlState || {};
+        personListState.controlState.owedOnly = query.get('owed') === '1';
+        personListState.controlState.overdueOnly = query.get('overdue') === '1';
+        listState.set('persons', personListState);
         mountList(page, {
             stateKey: 'persons', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Personen', emptyIcon: 'users', emptyText: 'Noch keine Personen.', sourcePath: '/persons',
@@ -1748,9 +1828,11 @@
                 // aria-pressed="false" zeigte sonst "alle Personen", waehrend die Liste
                 // auf offene Posten gefiltert ist.
                 const btn = el('button', { class: 'btn btn-sm ' + (cs.owedOnly ? 'btn-primary' : 'btn-ghost'), type: 'button', 'aria-pressed': String(!!cs.owedOnly),
-                    onclick: () => { cs.owedOnly = !cs.owedOnly; btn.className = 'btn btn-sm ' + (cs.owedOnly ? 'btn-primary' : 'btn-ghost'); btn.setAttribute('aria-pressed', String(!!cs.owedOnly)); refresh(); } },
+                    onclick: () => updateRouteQuery({ owed: cs.owedOnly ? null : 1 }) },
                     'Nur offen');
-                const out = [btn];
+                const overdueBtn = el('button', { class: 'btn btn-sm ' + (cs.overdueOnly ? 'btn-primary' : 'btn-ghost'), type: 'button', 'aria-pressed': String(!!cs.overdueOnly),
+                    onclick: () => updateRouteQuery({ overdue: cs.overdueOnly ? null : 1 }) }, 'Überfällig');
+                const out = [btn, overdueBtn];
                 // CSV bulk import (editor+): opens a dialog to download an example
                 // file or pick a CSV. Round-trips the "Personen" export.
                 if (canManage()) {
@@ -1765,7 +1847,8 @@
             // aus wie eine leere Datenbank. Vorher rettete das frische {} bei jedem Aufbau
             // den Fall, weil cs.owedOnly dann falsy war. Ohne Salden lieber ungefiltert
             // zeigen als nichts: der Toast oben sagt bereits, dass sie fehlen.
-            extraFilter: (p, cs) => !cs.owedOnly || !oweOk || (Number(oweMap[p.id]) || 0) > 0.005,
+            extraFilter: (p, cs) => (!cs.owedOnly || !oweOk || (Number(oweMap[p.id]) || 0) > 0.005) &&
+                (!cs.overdueOnly || !!overdueByPerson[p.id]),
             sorts: [
                 { label: 'Name A–Z', cmp: (a, b) => personName(a).localeCompare(personName(b)) },
                 { label: 'Name Z–A', cmp: (a, b) => personName(b).localeCompare(personName(a)) },
@@ -1806,6 +1889,37 @@
         });
     };
 
+    function attachDuplicateWarning(body, { probes, kind, currentURL }) {
+        const region = el('div', { class: 'duplicate-warning', role: 'status', 'aria-live': 'polite', hidden: true });
+        body.append(region);
+        let sequence = 0;
+        const check = async (probe) => {
+            const query = String(probe.query() || '').trim();
+            const mySequence = ++sequence;
+            if (query.length < 3) { region.hidden = true; region.replaceChildren(); return; }
+            try {
+                const results = await api.get('/search?q=' + encodeURIComponent(query));
+                if (mySequence !== sequence) return;
+                const matches = (results || []).filter((result) => result.kind === kind && result.url !== currentURL).slice(0, 3);
+                region.replaceChildren();
+                if (!matches.length) { region.hidden = true; return; }
+                region.hidden = false;
+                region.append(el('strong', {}, matches.length === 1 ? 'Möglicher Doppeleintrag' : 'Mögliche Doppeleinträge'),
+                    el('p', {}, 'Bitte kurz prüfen. Speichern bleibt weiterhin möglich.'));
+                const links = el('div', { class: 'duplicate-links' });
+                matches.forEach((match) => links.append(el('a', { href: match.url, target: '_blank', rel: 'noopener' },
+                    el('span', {}, match.label), el('small', {}, match.sub || 'Bestehenden Eintrag prüfen'))));
+                region.append(links);
+            } catch (error) {
+                region.hidden = true;
+            }
+        };
+        probes.forEach((probe) => probe.fields.forEach((fieldName) => {
+            const input = body.querySelector('#f_' + fieldName);
+            if (input) input.addEventListener('blur', () => check(probe));
+        }));
+    }
+
     async function personForm(existing) {
         await formModal({
             title: existing ? 'Person bearbeiten' : 'Neue Person',
@@ -1817,6 +1931,14 @@
                 { name: 'address', label: 'Adresse', type: 'textarea', value: existing?.address, optional: 'Adresse & Notizen' },
                 { name: 'notes', label: 'Notizen', type: 'textarea', value: existing?.notes, optional: 'Adresse & Notizen' },
             ],
+            onRender: (body) => attachDuplicateWarning(body, {
+                kind: 'person', currentURL: existing ? '#/person/' + existing.id : '',
+                probes: [
+                    { fields: ['first_name', 'last_name'], query: () => [body.querySelector('#f_first_name').value, body.querySelector('#f_last_name').value].join(' ') },
+                    { fields: ['email'], query: () => body.querySelector('#f_email').value },
+                    { fields: ['phone'], query: () => body.querySelector('#f_phone').value },
+                ],
+            }),
             save: async (data) => {
                 if (existing) await api.put('/persons/' + existing.id, data);
                 else await api.post('/persons', data);
@@ -3139,9 +3261,18 @@
         return wrap;
     }
 
-    routes.vehicles = async (page) => {
+    routes.vehicles = async (page, _id, query = new URLSearchParams()) => {
         await refreshLookups();
         const vehicles = await api.get('/vehicles');
+        const vehicleListState = listState.get('vehicles') || {};
+        vehicleListState.controlState = vehicleListState.controlState || {};
+        vehicleListState.controlState.status = query.get('status') || '';
+        vehicleListState.controlState.person = query.get('person') || '';
+        vehicleListState.controlState.showArchived = query.get('archived') === '1';
+        vehicleListState.controlState.activeOnly = query.get('active') === '1';
+        vehicleListState.controlState.unplacedOnly = query.get('unplaced') === '1';
+        vehicleListState.controlState.endingDays = Number(query.get('ending')) || 0;
+        listState.set('vehicles', vehicleListState);
         // Die Leiste MUSS vor mountList entstehen: mountList zeichnet die Liste noch im
         // selben Zug (refresh() laeuft synchron), und die Rueckrufe unten greifen auf
         // bulkBarEl zu. Wurde sie erst danach erzeugt, blieb der Zaehler der Leiste bei
@@ -3179,10 +3310,10 @@
                 if (cs.person && !state.persons.some((p) => String(p.id) === cs.person)) cs.person = '';
                 const stSel = el('select', { 'aria-label': 'Status filtern' }, el('option', { value: '' }, 'Alle Status'),
                     ...['stored', 'reserved', 'collected', 'cancelled'].map((s) => el('option', { value: s, selected: s === cs.status }, STATUS_LABEL[s])));
-                stSel.addEventListener('change', () => { cs.status = stSel.value; refresh(); });
+                stSel.addEventListener('change', () => updateRouteQuery({ status: stSel.value }));
                 const peSel = el('select', { 'aria-label': 'Person filtern' }, el('option', { value: '' }, 'Alle Personen'),
                     ...state.persons.map((p) => el('option', { value: p.id, selected: String(p.id) === cs.person }, personName(p))));
-                peSel.addEventListener('change', () => { cs.person = peSel.value; refresh(); });
+                peSel.addEventListener('change', () => updateRouteQuery({ person: peSel.value }));
                 // Mehrfachauswahl (Hundert 54): schaltet die Checkbox-Hülle der Karten an.
                 const bulkBtn = canManage() ? el('button', { class: 'btn btn-ghost btn-sm' + (bulkMode ? ' active' : ''), 'aria-pressed': String(bulkMode) }, 'Mehrfachauswahl') : null;
                 // Nur die Liste neu zeichnen, nicht die ganze Seite — und dabei die
@@ -3199,13 +3330,23 @@
                 });
                 const arChk = el('input', { type: 'checkbox' });
                 arChk.checked = !!cs.showArchived;
-                arChk.addEventListener('change', () => { cs.showArchived = arChk.checked; refresh(); });
+                arChk.addEventListener('change', () => updateRouteQuery({ archived: arChk.checked ? 1 : null }));
                 const arLabel = el('label', { class: 'toggle-inline' }, arChk, el('span', {}, 'Archiv'));
-                return [stSel, peSel, arLabel, bulkBtn];
+                const activeBtn = el('button', { class: 'btn btn-sm ' + (cs.activeOnly ? 'btn-primary' : 'btn-ghost'), type: 'button',
+                    'aria-pressed': String(!!cs.activeOnly), onclick: () => updateRouteQuery({ active: cs.activeOnly ? null : 1 }) }, 'Nur aktiv');
+                const unplacedBtn = el('button', { class: 'btn btn-sm ' + (cs.unplacedOnly ? 'btn-primary' : 'btn-ghost'), type: 'button',
+                    'aria-pressed': String(!!cs.unplacedOnly), onclick: () => updateRouteQuery({ unplaced: cs.unplacedOnly ? null : 1 }) }, 'Ohne Platz');
+                const endingBtn = el('button', { class: 'btn btn-sm ' + (cs.endingDays ? 'btn-primary' : 'btn-ghost'), type: 'button',
+                    'aria-pressed': String(!!cs.endingDays), onclick: () => updateRouteQuery({ ending: cs.endingDays ? null : 30 }) }, 'Endet bald');
+                return [stSel, peSel, activeBtn, unplacedBtn, endingBtn, arLabel, bulkBtn];
             },
             // Hide archived (closed) vehicles unless the Archiv toggle is on.
             extraFilter: (v, cs) => (cs.showArchived || !v.archived) &&
-                (!cs.status || v.status === cs.status) && (!cs.person || String(v.person_id) === cs.person),
+                (!cs.status || v.status === cs.status) && (!cs.person || String(v.person_id) === cs.person) &&
+                (!cs.activeOnly || (!v.archived && (v.status === 'stored' || v.status === 'reserved'))) &&
+                (!cs.unplacedOnly || (!v.archived && !v.spot_id)) &&
+                (!cs.endingDays || (v.end_date && new Date(v.end_date) >= new Date(today() + 'T00:00:00') &&
+                    new Date(v.end_date) <= new Date(Date.now() + cs.endingDays * 86400000))),
             // Was der Filter ausblendet, faellt aus der Auswahl. bulkSel lebte als
             // Modulzustand neben der Liste und wurde nie abgeglichen: wer auf Seite 1
             // zwoelf Gefaehrte anhakte, weiterblaetterte und dann nach Person filterte,
@@ -4103,6 +4244,10 @@
                 const sync = () => { if (!manual) rateInp.value = catDefault(catInp.value, perInp.value); };
                 catInp.addEventListener('change', sync);
                 perInp.addEventListener('change', sync);
+                attachDuplicateWarning(body, {
+                    kind: 'vehicle', currentURL: existing ? '#/vehicle/' + existing.id : '',
+                    probes: [{ fields: ['license_plate'], query: () => body.querySelector('#f_license_plate').value }],
+                });
             },
             save: async (data) => {
                 const payload = {
@@ -4427,17 +4572,44 @@
     // Übergabeprotokoll form: direction + condition notes + signer + a drawn signature.
     async function handoverForm(vehicleId) {
         let sigData = () => '';
+        let templates = [];
+        try { templates = await api.get('/handover-templates'); } catch (error) { /* optional enhancement */ }
         await formModal({
             title: 'Übergabeprotokoll',
             submitLabel: 'Speichern',
             fields: [
                 { name: 'direction', label: 'Art', type: 'select', value: 'einlagerung',
                     options: [{ value: 'einlagerung', label: 'Einlagerung (Übernahme)' }, { value: 'auslagerung', label: 'Auslagerung (Rückgabe)' }] },
+                { name: 'template_id', label: 'Vorlage (optional)', type: 'select', value: '',
+                    options: [{ value: '', label: 'Keine Vorlage' }].concat(templates.map((template) => ({ value: template.id, label: template.name }))) },
                 { name: 'notes', label: 'Zustand / Anmerkungen', type: 'textarea', placeholder: 'z. B. Kratzer vorne links, Tank halb voll …' },
                 { name: 'signer_name', label: 'Name (Unterschrift)', type: 'text', placeholder: 'Name der unterschreibenden Person' },
             ],
             onRender: (body) => {
                 segmentedField(body, 'direction', [{ v: 'einlagerung', l: 'Einlagerung' }, { v: 'auslagerung', l: 'Auslagerung' }]);
+                const direction = body.querySelector('#f_direction');
+                const templateSelect = body.querySelector('#f_template_id');
+                const notes = body.querySelector('#f_notes');
+                const renderTemplateOptions = () => {
+                    const selected = templateSelect.value;
+                    const available = templates.filter((template) => template.applies_to === 'beide' || template.applies_to === direction.value);
+                    templateSelect.replaceChildren(el('option', { value: '' }, 'Keine Vorlage'),
+                        ...available.map((template) => el('option', { value: template.id }, template.name)));
+                    if (available.some((template) => String(template.id) === selected)) templateSelect.value = selected;
+                };
+                direction.addEventListener('change', renderTemplateOptions);
+                templateSelect.addEventListener('change', () => {
+                    const template = templates.find((candidate) => String(candidate.id) === templateSelect.value);
+                    if (!template) return;
+                    notes.value = notes.value.trim() ? notes.value.trimEnd() + '\n\n' + template.content : template.content;
+                    notes.dispatchEvent(new Event('input', { bubbles: true }));
+                    notes.focus();
+                });
+                renderTemplateOptions();
+                body.append(el('button', { type: 'button', class: 'btn btn-ghost btn-sm template-manage-link', onclick: () => {
+                    $('#modal-cancel').click();
+                    navigate('handover-templates');
+                } }, 'Übergabevorlagen verwalten'));
                 const wrap = el('div', { class: 'field' }, el('label', {}, 'Unterschrift'));
                 const canvas = el('canvas', { width: 500, height: 180,
                     style: 'width:100%;height:180px;touch-action:none;border:1px solid var(--border);border-radius:8px;background:#fff;display:block' });
@@ -4466,6 +4638,57 @@
                 render();
             },
         });
+    }
+
+    routes['handover-templates'] = async (page) => {
+        const templates = await api.get('/handover-templates');
+        page.innerHTML = '';
+        page.append(el('div', { class: 'page-head' },
+            el('div', {}, el('button', { class: 'back-btn', type: 'button', onclick: () => navigate('settings'), 'aria-label': 'Zurück zu Einstellungen' }, '‹'),
+                el('h2', { style: 'display:inline;margin-left:.65rem' }, 'Übergabevorlagen')),
+            canManage() ? el('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => handoverTemplateForm() }, '+ Neu') : null));
+        page.append(el('p', { class: 'route-intro' }, 'Textbausteine und Checklisten für Ein- und Auslagerungen. Eingefügter Text bleibt im Protokoll vollständig bearbeitbar.'));
+        if (!templates.length) {
+            page.append(emptyState('receipt', 'Noch keine Übergabevorlagen.'));
+            return;
+        }
+        const list = el('div', { class: 'template-list' });
+        templates.forEach((template) => list.append(el('article', { class: 'card template-row' },
+            el('div', { class: 'template-copy' }, el('h3', {}, template.name),
+                el('span', { class: 'badge badge-cat' }, template.applies_to === 'beide' ? 'Ein- & Auslagerung' : template.applies_to),
+                el('pre', {}, template.content)),
+            canManage() ? el('div', { class: 'card-actions' },
+                el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => handoverTemplateForm(template) }, 'Bearbeiten'),
+                el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => deleteHandoverTemplate(template) }, 'Löschen')) : null)));
+        page.append(list);
+    };
+
+    async function handoverTemplateForm(existing) {
+        await formModal({
+            title: existing ? 'Übergabevorlage bearbeiten' : 'Neue Übergabevorlage',
+            fields: [
+                { name: 'name', label: 'Name', required: true, value: existing?.name, placeholder: 'z. B. Standard-Einlagerung' },
+                { name: 'applies_to', label: 'Verwendbar für', type: 'select', value: existing?.applies_to || 'beide', options: [
+                    { value: 'beide', label: 'Ein- und Auslagerung' }, { value: 'einlagerung', label: 'Nur Einlagerung' }, { value: 'auslagerung', label: 'Nur Auslagerung' },
+                ] },
+                { name: 'content', label: 'Text / Checkliste', type: 'textarea', required: true, value: existing?.content,
+                    placeholder: '☐ Schlüssel übernommen\n☐ Zustand dokumentiert', help: 'Tipp: „☐“ kennzeichnet eine prüfbare Zeile. Der Text kann im Protokoll danach angepasst werden.' },
+            ],
+            save: async (data) => {
+                const payload = { name: data.name, applies_to: data.applies_to, content: data.content };
+                if (existing) await api.put('/handover-templates/' + existing.id, payload);
+                else await api.post('/handover-templates', payload);
+                toast('Übergabevorlage gespeichert', 'success');
+                render();
+            },
+        });
+    }
+
+    async function deleteHandoverTemplate(template) {
+        if (!await confirmDialog('Übergabevorlage löschen?', '„' + template.name + '“ wird dauerhaft entfernt. Bereits erstellte Protokolle bleiben unverändert.', 'Löschen')) return;
+        await api.del('/handover-templates/' + template.id);
+        toast('Übergabevorlage gelöscht', 'success');
+        render();
     }
     function lightbox(photoId) {
         const dlg = el('dialog', { class: 'lightbox' }, el('img', { src: '/api/photos/' + photoId, alt: '' }));
@@ -5678,7 +5901,7 @@
     const AUDIT_ACTIONS = { create: 'Erstellt', update: 'Geändert', delete: 'Gelöscht', login: 'Login', logout: 'Logout', revoke: 'Widerrufen', backup: 'Backup', backup_failed: 'Backup fehlgeschlagen', restore: 'Wiederherstellung', remind: 'Mahnung', import: 'Import', security: 'Sicherheit' };
     // Muss die im Backend verwendeten entity-Werte abdecken, sonst lässt sich ein
     // Ereignis zwar protokollieren, aber im Filter nicht mehr auswählen.
-    const AUDIT_ENTITIES = { person: 'Person', vehicle: 'Gefährt', category: 'Tarif', service_type: 'Dienst', charge: 'Zusatzkosten', payment: 'Zahlung', invoice: 'Rechnung', billing: 'Rechnungs-Einstellungen', user: 'Benutzer', photo: 'Foto', passkey: 'Passkey', flatrate: 'Pauschale', recurring_charge: 'Wiederkehrende Kosten', spot: 'Stellplatz', hall: 'Halle', garage: 'Garage', handover: 'Übergabe', 'portal-link': 'Self-Service-Link', planner_icon: 'Planer-Symbol', wall_template: 'Wandvorlage', backup_settings: 'Backup-Einstellungen', system: 'System', audit_log: 'Audit-Log' };
+    const AUDIT_ENTITIES = { person: 'Person', vehicle: 'Gefährt', category: 'Tarif', service_type: 'Dienst', charge: 'Zusatzkosten', payment: 'Zahlung', invoice: 'Rechnung', billing: 'Rechnungs-Einstellungen', user: 'Benutzer', photo: 'Foto', passkey: 'Passkey', flatrate: 'Pauschale', recurring_charge: 'Wiederkehrende Kosten', spot: 'Stellplatz', hall: 'Halle', garage: 'Garage', handover: 'Übergabe', handover_template: 'Übergabevorlage', 'portal-link': 'Self-Service-Link', planner_icon: 'Planer-Symbol', wall_template: 'Wandvorlage', backup_settings: 'Backup-Einstellungen', system: 'System', audit_log: 'Audit-Log' };
 
     function fmtAuditVal(x) {
         if (x === null || x === undefined || x === '') return '∅';
@@ -5973,6 +6196,17 @@
                 el('div', {}, el('div', {}, esc(shortUA(s.user_agent)), s.current ? el('span', { class: 'badge badge-stored', style: 'margin-left:.4rem' }, 'aktuell') : null),
                     el('div', { class: 't-time' }, (s.ip || '?') + ' · zuletzt ' + fmtDateTime(s.last_seen))),
                 s.current ? null : el('button', { class: 'btn btn-ghost btn-sm', onclick: () => revokeSession(s.token) }, 'Abmelden')));
+        }
+        if (canManage()) colB.append(el('div', { class: 'card template-links' }, el('h3', {}, 'Arbeitsvorlagen'),
+            el('a', { href: '#/handover-templates' }, 'Übergabeprotokolle', el('span', { 'aria-hidden': 'true' }, '›'))));
+        if (isAdmin()) {
+            try {
+                const readiness = await api.get('/admin/readiness');
+                const checklist = readinessChecklist(readiness);
+                if (checklist) colB.append(checklist);
+            } catch (error) {
+                colB.append(el('div', { class: 'load-notice', role: 'status' }, 'Betriebsbereitschaft konnte nicht geprüft werden.'));
+            }
         }
         if (isAdmin()) colB.append(el('div', { class: 'card admin-links' }, el('h3', {}, 'Betrieb verwalten'),
             ...[['users', 'Benutzer & Rollen'], ['billing', 'Rechnungs-Einstellungen'], ['backup', 'Sicherungen'], ['audit', 'Änderungsverlauf']]

@@ -32,6 +32,8 @@ async function mockUI(page, { delay = 0, role = 'editor', loggedIn = true, overr
     '/overview': overview, '/occupancy': { active: 12, placed: 8, halls: [], trend: [] },
     '/charges': [], '/recurring-charges': [], '/agreements': [], '/invoices/overdue': [],
     '/vehicles/ending-soon': [], '/portal-requests': [], '/garages': [], '/halls': [],
+    '/handover-templates': [], '/search': [],
+    '/admin/readiness': { state: 'ready', checked_at: '2026-10-03T12:00:00Z', items: [] },
     '/backup/health': { enabled: false, targets: {} }, '/backup/status': { enabled: false },
     '/auth/2fa': {}, '/auth/sessions': [], ...overrides,
   };
