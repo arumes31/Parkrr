@@ -1,3 +1,5 @@
+import { createAPI } from './api.js';
+
 /* Parkrr SPA – vanilla JS, no external dependencies. */
 (() => {
     'use strict';
@@ -183,35 +185,12 @@
     const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     // ---------- API ----------
-    const api = {
-        async request(method, path, body, headers = {}) {
-            // Fail fast on write attempts while offline with a friendly message
-            // rather than a confusing network error.
-            if (method !== 'GET' && typeof navigator !== 'undefined' && navigator.onLine === false) {
-                throw new Error(t('offline.action'));
-            }
-            const opts = { method, headers: { Accept: 'application/json', ...headers }, credentials: 'same-origin' };
-            if (body !== undefined) {
-                opts.headers['Content-Type'] = 'application/json';
-                opts.body = JSON.stringify(body);
-            }
-            if (method !== 'GET') opts.headers['X-CSRF-Token'] = getCookie('parkrr_csrf');
-            const seq = ++reqSeq;
-            return handle(await fetch('/api' + path, opts), path, seq);
-        },
-        async upload(path, formData, method = 'POST') {
-            const seq = ++reqSeq;
-            const res = await fetch('/api' + path, {
-                method, body: formData, credentials: 'same-origin',
-                headers: { 'X-CSRF-Token': getCookie('parkrr_csrf') },
-            });
-            return handle(res, path, seq);
-        },
-        get: (p) => api.request('GET', p),
-        post: (p, b, headers) => api.request('POST', p, b, headers),
-        put: (p, b) => api.request('PUT', p, b),
-        del: (p) => api.request('DELETE', p),
-    };
+    const api = createAPI({
+        getCookie,
+        handle: (response, path, sequence) => handle(response, path, sequence),
+        nextSequence: () => ++reqSeq,
+        offlineMessage: t('offline.action'),
+    });
     // One Idempotency-Key per create dialog, so a retry after a lost response
     // returns the first result instead of booking twice. randomUUID needs a
     // secure context; plain-HTTP deployments fall back to 16 random bytes as hex,

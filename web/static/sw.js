@@ -10,6 +10,7 @@ const SHELL = [
     '/css/style.css',
     '/css/print.css',
     '/js/geometry.js',
+    '/js/api.js',
     '/js/app.js',
     '/manifest.webmanifest',
     '/icons/icon.svg',
