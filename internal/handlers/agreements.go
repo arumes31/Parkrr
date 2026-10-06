@@ -243,11 +243,12 @@ func createVehiclesTx(ctx context.Context, tx pgx.Tx, personID int64, period str
 			return nil, err
 		}
 		label, plate := trim(nv.Label), trim(nv.LicensePlate)
+		costOverride := markZeroRate(rate, nil)
 		var id int64
 		if err := tx.QueryRow(ctx,
-			`INSERT INTO vehicles (person_id, category_id, label, license_plate, billing_period, rate, start_date, status)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,'stored') RETURNING id`,
-			personID, nv.CategoryID, label, plate, period, rate, start).Scan(&id); err != nil {
+			`INSERT INTO vehicles (person_id, category_id, label, license_plate, billing_period, rate, cost_override, start_date, status)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'stored') RETURNING id`,
+			personID, nv.CategoryID, label, plate, period, rate, costOverride, start).Scan(&id); err != nil {
 			return nil, err
 		}
 		out = append(out, createdVehicle{id: id, label: label, plate: plate})

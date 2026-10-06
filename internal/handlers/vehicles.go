@@ -333,6 +333,45 @@ func effectiveRate(req vehicleRequest, fallback float64) float64 {
 	return fallback
 }
 
+// persistedCostOverride preserves the legacy fallback contract while making an
+// explicitly submitted zero rate distinguishable from an old, uninitialized
+// rate=0 row. No data migration or reinterpretation of existing rows is needed.
+func persistedCostOverride(req vehicleRequest, existing *float64) *float64 {
+	if req.Rate != nil && *req.Rate == 0 {
+		zero := 0.0
+		return &zero
+	}
+	if req.CostOverride != nil {
+		return req.CostOverride
+	}
+	if req.Rate != nil {
+		return nil
+	}
+	return existing
+}
+
+func markZeroRate(rate float64, override *float64) *float64 {
+	if rate == 0 && override == nil {
+		zero := 0.0
+		return &zero
+	}
+	return override
+}
+
+// storedEffectiveRate resolves the amount that billing actually sees for both
+// current and legacy rows. Comparing this value lets an invoiced legacy row be
+// normalized from rate=0 to its existing Tarif amount, while still blocking a
+// real price change such as adding the explicit free-booking marker.
+func storedEffectiveRate(ctx context.Context, q rowQuerier, categoryID int64, period string, rate float64, override *float64) (float64, error) {
+	if rate != 0 {
+		return rate, nil
+	}
+	if override != nil {
+		return *override, nil
+	}
+	return categoryDefaultRate(ctx, q, categoryID, period)
+}
+
 // rowQuerier is satisfied by both *pgxpool.Pool and pgx.Tx, so lookups can run
 // standalone or inside a caller's transaction.
 type rowQuerier interface {
@@ -430,6 +469,9 @@ func (h *Handler) CreateVehicle(w http.ResponseWriter, r *http.Request) {
 		fallback = def
 	}
 	rate := effectiveRate(pv.req, fallback)
+	// A zero Tarif is also a deliberately free booking. Mark it now so a later
+	// edit of the Tarif cannot re-price this already locked vehicle.
+	costOverride := markZeroRate(rate, persistedCostOverride(pv.req, nil))
 	var id int64
 	err = tx.QueryRow(r.Context(),
 		`INSERT INTO vehicles (person_id, category_id, label, license_plate, notes,
@@ -437,7 +479,7 @@ func (h *Handler) CreateVehicle(w http.ResponseWriter, r *http.Request) {
 		        reserved_from, reserved_until, needs_power, planner_symbol)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
 		pv.req.PersonID, pv.req.CategoryID, pv.req.Label, pv.req.LicensePlate,
-		pv.req.Notes, pv.req.BillingPeriod, rate, pv.req.CostOverride,
+		pv.req.Notes, pv.req.BillingPeriod, rate, costOverride,
 		pv.startDate, pv.endDate, pv.req.Status, pv.reservedFrom, pv.reservedUntil, pv.req.NeedsPower, pv.req.PlannerSymbol,
 	).Scan(&id)
 	if err != nil {
@@ -512,12 +554,27 @@ func (h *Handler) UpdateVehicle(w http.ResponseWriter, r *http.Request) {
 	}
 	// Fallback is the existing rate, so an omitted rate keeps the locked price.
 	rate := effectiveRate(pv.req, oldRate)
+	costOverride := persistedCostOverride(pv.req, oldCostOverride)
 	// Freeze the billing-defining fields once a period is invoiced: changing
 	// rate/period/start/person would desync the period-keyed invoice_source lock
 	// (re-billing an invoiced span) or make the balance disagree with the issued
 	// document. Mirrors the agreement/recurring freeze. end_date stays editable
 	// (collect/re-store), but must not RETRACT below an invoiced period.
-	billingChanged := rate != oldRate || pv.req.BillingPeriod != oldPeriod ||
+	oldEffectiveRate, effectiveErr := storedEffectiveRate(r.Context(), tx, oldCategoryID, oldPeriod, oldRate, oldCostOverride)
+	if effectiveErr != nil {
+		writeError(w, http.StatusInternalServerError, "could not resolve existing vehicle rate")
+		return
+	}
+	newEffectiveRate, effectiveErr := storedEffectiveRate(r.Context(), tx, pv.req.CategoryID, pv.req.BillingPeriod, rate, costOverride)
+	if effectiveErr != nil {
+		if errors.Is(effectiveErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusBadRequest, "category does not exist")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not resolve vehicle rate")
+		return
+	}
+	billingChanged := newEffectiveRate != oldEffectiveRate || pv.req.BillingPeriod != oldPeriod ||
 		!pv.startDate.Equal(oldStart) || pv.req.PersonID != oldPersonID
 	if billingChanged {
 		if locked, ierr := h.refFinanciallyLocked(r.Context(), tx, "vehicle", id); ierr != nil {
@@ -551,7 +608,7 @@ func (h *Handler) UpdateVehicle(w http.ResponseWriter, r *http.Request) {
 		        planner_symbol=$15, updated_at=now()
 		 WHERE id=$16`,
 		pv.req.PersonID, pv.req.CategoryID, pv.req.Label, pv.req.LicensePlate,
-		pv.req.Notes, pv.req.BillingPeriod, rate, pv.req.CostOverride,
+		pv.req.Notes, pv.req.BillingPeriod, rate, costOverride,
 		pv.startDate, pv.endDate, pv.req.Status, pv.reservedFrom, pv.reservedUntil, pv.req.NeedsPower, pv.req.PlannerSymbol, id)
 	if err != nil {
 		if isForeignKeyViolation(err) {
@@ -585,7 +642,7 @@ func (h *Handler) UpdateVehicle(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"status": pv.req.Status, "rate": rate, "billing_period": pv.req.BillingPeriod,
 				"start_date": pv.req.StartDate, "person_id": pv.req.PersonID,
 				"label": pv.req.Label, "license_plate": pv.req.LicensePlate, "notes": pv.req.Notes,
-				"category_id": pv.req.CategoryID, "cost_override": pv.req.CostOverride,
+				"category_id": pv.req.CategoryID, "cost_override": costOverride,
 				"end_date": strPtr(pv.req.EndDate), "reserved_from": strPtr(pv.req.ReservedFrom),
 				"reserved_until": strPtr(pv.req.ReservedUntil), "needs_power": pv.req.NeedsPower,
 				"planner_symbol": pv.req.PlannerSymbol})); err != nil {

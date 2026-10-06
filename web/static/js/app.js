@@ -445,6 +445,7 @@ import { createAPI } from './api.js';
     function formModal({ title, fields, submitLabel = 'Speichern', onRender = null, save = null, danger = null }) {
         return new Promise((resolve) => {
             const dlg = $('#modal');
+            dlg.classList.remove('modal-booking');
             dlg.classList.toggle('modal-wide', fields.length >= 4);
             $('#modal-title').textContent = title;
             $('#modal-submit').textContent = submitLabel;
@@ -661,6 +662,7 @@ import { createAPI } from './api.js';
     // acknowledgement before one-time content (e.g. backup codes) disappears.
     function contentModal(title, buildBody, { closeLabel = 'Schließen', canClose = null, hideCancel = false } = {}) {
         const dlg = $('#modal');
+        dlg.classList.remove('modal-booking');
         dlg.classList.remove('modal-wide');
         $('#modal-title').textContent = title;
         $('#modal-submit').style.display = 'none';
@@ -4188,6 +4190,195 @@ import { createAPI } from './api.js';
         navigate('vehicles/' + created.id);
     }
 
+    function parseYMDUTC(value) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+        return m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
+    }
+
+    // Mirrors models.prorate: each touched calendar month/year is charged by its
+    // actual number of days, with every partial period rounded to cents.
+    function vehicleRentalTotal(rateValue, period, startValue, endValue) {
+        if (String(rateValue ?? '').trim() === '') return null;
+        const rate = Number(rateValue);
+        const from = parseYMDUTC(startValue);
+        const endInclusive = parseYMDUTC(endValue);
+        if (!Number.isFinite(rate) || rate < 0 || !from || !endInclusive || endInclusive < from) return null;
+        const to = new Date(endInclusive); to.setUTCDate(to.getUTCDate() + 1);
+        const cents = Math.round(rate * 100);
+        let total = 0;
+        let cursor = period === 'yearly'
+            ? new Date(Date.UTC(from.getUTCFullYear(), 0, 1))
+            : new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+        while (cursor < to) {
+            const next = period === 'yearly'
+                ? new Date(Date.UTC(cursor.getUTCFullYear() + 1, 0, 1))
+                : new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1));
+            const sliceStart = from > cursor ? from : cursor;
+            const sliceEnd = to < next ? to : next;
+            const usedDays = Math.round((sliceEnd - sliceStart) / 86400000);
+            const periodDays = Math.round((next - cursor) / 86400000);
+            if (usedDays > 0) total += Math.round(cents * usedDays / periodDays);
+            cursor = next;
+        }
+        return total / 100;
+    }
+
+    function addCalendarMonths(date, months) {
+        const result = new Date(date);
+        const day = result.getDate();
+        result.setDate(1);
+        result.setMonth(result.getMonth() + months);
+        const last = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
+        result.setDate(Math.min(day, last));
+        return result;
+    }
+
+    function enhanceVehicleBookingFields(body, categories, existing, catDefault) {
+        const dlg = $('#modal');
+        dlg.classList.add('modal-booking');
+        const categorySelect = body.querySelector('#f_category_id');
+        const categoryField = categorySelect.closest('.form-field');
+        const personField = body.querySelector('#f_person_id').closest('.form-field');
+        const start = body.querySelector('#f_start_date');
+        const end = body.querySelector('#f_end_date');
+        const period = body.querySelector('#f_billing_period');
+        const rate = body.querySelector('#f_rate');
+
+        // UX: searchable tariff/type input replaces the dense select while the
+        // original select remains the single submitted source of truth.
+        categoryField.hidden = true;
+        const list = el('datalist', { id: 'vehicle-category-options' });
+        categories.forEach((c) => list.append(el('option', {
+            value: c.name,
+            label: `${eur(c.default_monthly_cost)} / Monat · ${eur(c.default_yearly_cost)} / Jahr${c.archived ? ' · archiviert' : ''}`,
+        })));
+        const categoryError = el('div', { class: 'field-error', id: 'err_category_lookup', role: 'alert', hidden: true });
+        const categoryInput = el('input', {
+            id: 'vehicle-category-search', name: 'category_lookup', type: 'search', list: list.id,
+            required: true, autocomplete: 'off', 'aria-required': 'true', 'aria-autocomplete': 'list',
+            'aria-describedby': 'err_category_lookup help_category_lookup', placeholder: 'Tarif oder Fahrzeugtyp suchen',
+        });
+        const selectedCategory = categories.find((c) => String(c.id) === String(categorySelect.value));
+        categoryInput.value = selectedCategory?.name || '';
+        const categoryHelp = el('div', { class: 'card-meta', id: 'help_category_lookup' });
+        const categoryLookup = el('div', { class: 'form-field vehicle-category-field' },
+            el('label', { for: categoryInput.id }, 'Tarif / Typ', el('span', { 'aria-hidden': 'true' }, ' *')),
+            categoryInput, list, categoryError, categoryHelp);
+        personField.after(categoryLookup);
+
+        let manualRate = !!existing; // existing locked rates must never be overwritten
+        const syncRate = () => { if (!manualRate) rate.value = catDefault(categorySelect.value, period.value); };
+        const findCategory = (query) => {
+            const exact = categories.find((c) => c.name === query);
+            if (exact) return { match: exact, ambiguous: false };
+            const folded = categories.filter((c) => c.name.toLocaleLowerCase('de') === query.toLocaleLowerCase('de'));
+            return { match: folded.length === 1 ? folded[0] : null, ambiguous: folded.length > 1 };
+        };
+        const syncCategory = (revealError = false) => {
+            const query = categoryInput.value.trim();
+            const { match, ambiguous } = findCategory(query);
+            const message = match ? '' : ambiguous
+                ? 'Mehrere Tarife haben diesen Namen. Bitte die genaue Schreibweise aus der Liste wählen.'
+                : 'Bitte einen Tarif oder Typ aus der Vorschlagsliste wählen.';
+            categoryInput.setCustomValidity(message);
+            categoryError.textContent = revealError ? categoryInput.validationMessage : '';
+            categoryError.hidden = !revealError || categoryInput.validity.valid;
+            categoryHelp.textContent = match?.archived
+                ? 'Archivierter Tarif · Für dieses bestehende Gefährt weiterhin gültig; Preis und Abrechnung bleiben anpassbar.'
+                : 'Tarif oder Fahrzeugtyp suchen. Preis und Abrechnung bleiben anpassbar.';
+            if (match && String(categorySelect.value) !== String(match.id)) {
+                categorySelect.value = String(match.id);
+                categorySelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        };
+        // Keep partial search text quiet while typing. Native validation still
+        // blocks submission; the alert appears only after committing/leaving it.
+        categoryInput.addEventListener('input', () => syncCategory(false));
+        categoryInput.addEventListener('change', () => syncCategory(true));
+        categoryInput.addEventListener('blur', () => syncCategory(true));
+
+        // UX: dates, quick ranges and their financial consequence form one unit.
+        const shortcuts = el('div', { class: 'date-shortcuts vehicle-date-shortcuts', role: 'group', 'aria-label': 'Buchungszeitraum schnell festlegen' });
+        const preset = (label, action) => shortcuts.append(el('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: action }, label));
+        const dispatchDate = (input) => {
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        preset('Ab heute', () => {
+            start.value = today();
+            if (end.value && end.value < start.value) end.value = '';
+            dispatchDate(start); dispatchDate(end);
+        });
+        preset('Ab nächstem Ersten', () => {
+            const now = new Date(); const first = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+            start.value = localYMD(first);
+            if (end.value && end.value < start.value) end.value = '';
+            dispatchDate(start); dispatchDate(end);
+        });
+        const setDuration = (months) => {
+            const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(start.value || '');
+            const base = parts ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])) : new Date();
+            const until = addCalendarMonths(base, months); until.setDate(until.getDate() - 1);
+            if (!start.value) start.value = localYMD(base);
+            end.value = localYMD(until);
+            dispatchDate(start); dispatchDate(end);
+        };
+        preset('1 Monat', () => setDuration(1));
+        preset('1 Jahr', () => setDuration(12));
+
+        const totalLabel = el('span', { class: 'vehicle-cost-label' });
+        const total = el('output', {
+            id: 'vehicle-rental-total', for: 'f_start_date f_end_date f_billing_period f_rate', 'aria-live': 'polite',
+        });
+        const totalMeta = el('span', { class: 'card-meta' });
+        const summary = el('div', { class: 'vehicle-cost-summary' }, totalLabel, total, totalMeta);
+        const heading = el('div', { class: 'vehicle-booking-head' },
+            el('h3', { id: 'vehicle-booking-heading' }, 'Zeitraum & Kosten'), shortcuts);
+        const bookingGrid = el('div', { class: 'vehicle-booking-grid' });
+        const booking = el('section', { class: 'vehicle-booking form-field-wide', 'aria-labelledby': heading.firstChild.id }, heading, bookingGrid);
+        const startField = start.closest('.form-field');
+        const endField = end.closest('.form-field');
+        const periodField = period.closest('.form-field');
+        const rateField = rate.closest('.form-field');
+        startField.before(booking);
+        bookingGrid.append(startField, endField, summary, periodField, rateField);
+
+        const updateTotal = () => {
+            end.min = start.value;
+            const invalidRange = !!(start.value && end.value && end.value < start.value);
+            end.setCustomValidity(invalidRange ? 'Das Abholdatum darf nicht vor dem Einstelldatum liegen.' : '');
+            if (invalidRange) {
+                totalLabel.textContent = 'Zeitraum prüfen'; total.value = '–'; totalMeta.textContent = end.validationMessage; return;
+            }
+            const rateText = rate.value.trim();
+            const parsedRate = Number(rateText);
+            if (!rateText || !Number.isFinite(parsedRate) || parsedRate < 0) {
+                totalLabel.textContent = 'Preis ergänzen'; total.value = '–';
+                totalMeta.textContent = 'Für die Kostenberechnung fehlt ein gültiger Preis.'; return;
+            }
+            const value = vehicleRentalTotal(rate.value, period.value, start.value, end.value);
+            if (!end.value) {
+                totalLabel.textContent = 'Laufender Tarif'; total.value = eur(parsedRate);
+                totalMeta.textContent = period.value === 'yearly' ? 'pro Jahr · Ende offen' : 'pro Monat · Ende offen';
+                return;
+            }
+            totalLabel.textContent = 'Voraussichtliche Gesamtkosten';
+            total.value = value == null ? '–' : eur(value);
+            const from = parseYMDUTC(start.value); const until = parseYMDUTC(end.value);
+            const days = from && until ? Math.round((until - from) / 86400000) + 1 : 0;
+            totalMeta.textContent = value == null ? 'Bitte Zeitraum und Preis prüfen.'
+                : `${days} ${days === 1 ? 'Tag' : 'Tage'} · anteilig nach Kalender${period.value === 'yearly' ? 'jahren' : 'monaten'}`;
+        };
+        rate.addEventListener('input', () => { manualRate = true; updateTotal(); });
+        categorySelect.addEventListener('change', () => { syncRate(); updateTotal(); });
+        period.addEventListener('change', () => { syncRate(); updateTotal(); });
+        for (const input of [start, end]) {
+            input.addEventListener('input', updateTotal);
+            input.addEventListener('change', updateTotal);
+        }
+        syncCategory(); updateTotal();
+    }
+
     async function vehicleForm(existing, presetPerson) {
         if (!state.persons.length) { toast('Zuerst eine Person anlegen', 'error'); return; }
         if (!state.categories.length) { toast('Zuerst einen Tarif anlegen', 'error'); return; }
@@ -4196,15 +4387,22 @@ import { createAPI } from './api.js';
         const catDefault = (cid, period) => { const c = state.categories.find((x) => x.id === Number(cid)); return c ? (period === 'yearly' ? c.default_yearly_cost : c.default_monthly_cost) : 0; };
         const initCat = existing?.category_id ?? state.categories[0].id;
         const initPeriod = existing?.billing_period || 'monthly';
-        const initRate = existing?.rate ?? catDefault(initCat, initPeriod);
+        // Legacy rows can still carry rate=0 as "not backfilled". The API's
+        // effective_rate is what operators have actually been billed and keeps
+        // a harmless note-only edit from accidentally turning them into free rows.
+        const initRate = existing
+            ? (Number(existing.rate) !== 0
+                ? existing.rate
+                : (existing.effective_rate ?? existing.rate ?? catDefault(initCat, initPeriod)))
+            : catDefault(initCat, initPeriod);
         let customIcons = []; try { customIcons = await api.get('/planner-icons'); } catch (e) { /* optional */ }
         await formModal({
             title: existing ? 'Gefährt bearbeiten' : 'Neues Gefährt',
             fields: [
                 { name: 'person_id', label: 'Person', type: 'select', required: true, value: existing?.person_id ?? presetPerson ?? state.persons[0].id, options: state.persons.map((p) => ({ value: p.id, label: personName(p) })) },
                 { name: 'category_id', label: 'Tarif / Typ', type: 'select', required: true, value: initCat, options: state.categories.filter((c) => !c.archived || c.id === initCat).map((c) => ({ value: c.id, label: `${c.name} (${eur(c.default_monthly_cost)}/M, ${eur(c.default_yearly_cost)}/J)` + (c.archived ? ' · archiviert' : '') })) },
-                { name: 'label', label: 'Bezeichnung', value: existing?.label, placeholder: 'z. B. Wohnwagen Hobby' },
-                { name: 'license_plate', label: 'Kennzeichen', value: existing?.license_plate },
+                { name: 'label', label: 'Bezeichnung', value: existing?.label, placeholder: 'z. B. Wohnwagen Hobby', optional: 'Fahrzeugdetails' },
+                { name: 'license_plate', label: 'Kennzeichen', value: existing?.license_plate, optional: 'Fahrzeugdetails' },
                 { name: 'start_date', label: 'Einstelldatum', type: 'date', required: true, value: existing?.start_date ? existing.start_date.slice(0, 10) : today() },
                 { name: 'end_date', label: 'Abholdatum (optional)', type: 'date', value: existing?.end_date ? existing.end_date.slice(0, 10) : '', help: 'Leer = noch eingelagert. Hier auch nachträglich änderbar.' },
                 { name: 'billing_period', label: 'Abrechnung', type: 'select', value: initPeriod, options: [{ value: 'monthly', label: 'monatlich' }, { value: 'yearly', label: 'jährlich' }] },
@@ -4215,14 +4413,7 @@ import { createAPI } from './api.js';
             ],
             onRender: (body) => {
                 segmentedField(body, 'billing_period', [{ v: 'monthly', l: 'monatlich' }, { v: 'yearly', l: 'jährlich' }]);
-                const rateInp = body.querySelector('#f_rate');
-                const catInp = body.querySelector('#f_category_id');
-                const perInp = body.querySelector('#f_billing_period');
-                let manual = !!existing; // on edit, never auto-overwrite the locked price
-                rateInp.addEventListener('input', () => { manual = true; });
-                const sync = () => { if (!manual) rateInp.value = catDefault(catInp.value, perInp.value); };
-                catInp.addEventListener('change', sync);
-                perInp.addEventListener('change', sync);
+                enhanceVehicleBookingFields(body, state.categories.filter((c) => !c.archived || c.id === initCat), existing, catDefault);
                 attachDuplicateWarning(body, {
                     kind: 'vehicle', currentURL: existing ? '#/vehicle/' + existing.id : '',
                     probes: [{ fields: ['license_plate'], query: () => body.querySelector('#f_license_plate').value }],

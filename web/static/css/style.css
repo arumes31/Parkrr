@@ -2523,6 +2523,7 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 
 /* Compact workflows: shared fields, explicit optional details, unchanged tokens. */
 .modal.modal-wide { width:min(46rem, calc(100vw - 2rem)); }
+.modal.modal-booking { width:min(58rem, calc(100vw - 2rem)); }
 .form-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:1rem; }
 .form-field { min-width:0; display:flex; flex-direction:column; gap:.375rem; }
 .form-field[hidden] { display:none; }
@@ -2549,6 +2550,45 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 .form-cost-single { grid-template-columns:minmax(0,1fr); }
 .form-total { display:flex; flex-direction:column; justify-content:center; min-width:0; gap:.25rem; }
 .form-total output { font-size:1.375rem; font-weight:700; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+
+/* Neue Gefährt-Buchung: Pflichtdaten bleiben kurz; Tarif, Zeitraum und Preis
+   lesen sich als ein zusammenhängender Arbeitsablauf. */
+.vehicle-category-field input[type="search"] { padding-right:2.5rem; }
+.vehicle-booking { display:grid; gap:.75rem; margin-top:.125rem; }
+.vehicle-booking-head { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.5rem 1rem; }
+.vehicle-booking-head h3 { margin:0; font-size:var(--text-md); }
+.vehicle-date-shortcuts { justify-content:flex-end; }
+.vehicle-booking-grid {
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr)) minmax(11rem,.82fr);
+    align-items:start;
+    gap:.875rem 1rem;
+}
+.vehicle-booking-grid > .form-field { min-width:0; }
+.vehicle-cost-summary {
+    grid-column:3;
+    grid-row:1 / span 2;
+    align-self:stretch;
+    display:flex;
+    min-width:0;
+    flex-direction:column;
+    justify-content:center;
+    gap:.3rem;
+    padding:1rem;
+    border:1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+    border-radius:var(--radius-sm);
+    background:var(--primary-soft);
+}
+.vehicle-cost-label { color:var(--primary-ink); font-size:var(--text-sm); font-weight:700; }
+.vehicle-cost-summary output {
+    color:var(--text);
+    font-size:var(--text-2xl);
+    font-weight:750;
+    line-height:1.08;
+    font-variant-numeric:tabular-nums;
+    overflow-wrap:anywhere;
+}
+.vehicle-cost-summary .card-meta { margin:0; }
 .toolbar-primary { display:flex; flex:1 1 100%; gap:.75rem; min-width:0; }
 .toolbar-primary .search { min-width:0; flex:1 1 16rem; }
 .toolbar-primary > select { flex:0 1 14rem; min-width:0; }
@@ -2591,6 +2631,19 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
     .modal-wide .new-vehicle-row > select, .modal-wide .new-vehicle-row > input:nth-of-type(1) { grid-column:1 / -1; }
     .modal-wide .new-vehicle-row > * { min-width:0; width:100%; }
     .modal .form-field input, .modal .form-field select, .modal .form-field textarea { font-size:var(--text-md); }
+    .vehicle-booking-head { align-items:flex-start; }
+    .vehicle-date-shortcuts { justify-content:flex-start; }
+    .vehicle-booking-grid { grid-template-columns:minmax(0,1fr); }
+    .vehicle-cost-summary {
+        grid-column:auto;
+        grid-row:1;
+        min-height:0;
+        display:grid;
+        grid-template-columns:minmax(0,1fr) auto;
+        align-items:center;
+        padding:.75rem;
+    }
+    .vehicle-cost-summary output { grid-column:2; grid-row:1 / span 2; font-size:var(--text-xl); text-align:right; }
 }
 @media (max-width:599px) {
     .modal-wide .form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }

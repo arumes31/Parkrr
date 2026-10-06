@@ -114,17 +114,60 @@ test('recurring mode hides complete field wrappers and ignores one-off quantity'
 
 test('vehicle rate follows the tariff only until manually changed; optional settings survive closing', async ({ page }) => {
   const writes = [];
-  await mockUI(page, { overrides: { ...overrides, '/vehicles': route => {
+  await mockUI(page, { overrides: { ...overrides,
+    '/categories': [
+      { id: 1, name: 'Wohnmobil', default_monthly_cost: 85, default_yearly_cost: 1020 },
+      { id: 2, name: 'Motorrad', default_monthly_cost: 45, default_yearly_cost: 480 },
+      { id: 3, name: 'MOTORRAD', default_monthly_cost: 55, default_yearly_cost: 580 },
+    ],
+    '/vehicles': route => {
     if (route.request().method() === 'GET') return route.fulfill({ json: overrides['/vehicles'] });
     writes.push(route.request().postDataJSON()); return route.fulfill({ json: { id: 99 } });
   } } });
   await openNew(page, 'vehicles');
+  await expect(page.locator('#f_category_id')).toBeHidden();
+  const category = page.getByRole('combobox', { name: /Tarif \/ Typ/ });
+  const categoryError = page.locator('#err_category_lookup');
+  await expect(category).toHaveValue('Wohnmobil');
   await expect(page.locator('#f_rate')).toHaveValue('85');
+  await expect(page.locator('#vehicle-rental-total')).toHaveText(/85,00/);
+  await page.evaluate(() => {
+    const error = document.querySelector('#err_category_lookup');
+    window.categoryAlertCount = 0;
+    new MutationObserver(() => { if (!error.hidden) window.categoryAlertCount += 1; })
+      .observe(error, { attributes: true, attributeFilter: ['hidden'] });
+  });
+  await category.fill('');
+  await category.pressSequentially('Motorrad', { delay: 10 });
+  await expect(categoryError).toBeHidden();
+  expect(await page.evaluate(() => window.categoryAlertCount)).toBe(0);
+  await expect(page.locator('#f_category_id')).toHaveValue('2');
+  await expect(page.locator('#f_rate')).toHaveValue('45');
+  await category.fill('MOTORRAD');
+  await expect(page.locator('#f_category_id')).toHaveValue('3');
+  await expect(page.locator('#f_rate')).toHaveValue('55');
+  await category.fill('motorrad');
+  await page.locator('#f_rate').focus();
+  await expect(categoryError).toContainText('Mehrere Tarife');
+  await category.fill('Wohnmobil');
+  await expect(categoryError).toBeHidden();
+  await expect(page.locator('#f_rate')).toHaveValue('85');
+  await page.getByRole('button', { name: '1 Monat', exact: true }).click();
+  await expect(page.getByLabel('Abholdatum (optional)', { exact: true })).toHaveValue('2026-10-09');
+  await expect(page.locator('#vehicle-rental-total')).toHaveText(/84,18/);
   await page.getByRole('button', { name: 'jährlich', exact: true }).click();
   await expect(page.locator('#f_rate')).toHaveValue('1020');
+  await page.locator('#f_rate').fill('');
+  await expect(page.locator('#vehicle-rental-total')).toHaveText('–');
+  await expect(page.locator('.vehicle-cost-label')).toHaveText('Preis ergänzen');
   await page.locator('#f_rate').fill('0');
+  await expect(page.locator('#vehicle-rental-total')).toHaveText(/0,00/);
   await page.getByRole('button', { name: 'monatlich', exact: true }).click();
   await expect(page.locator('#f_rate')).toHaveValue('0');
+  await expect(page.getByLabel('Kennzeichen', { exact: true })).toBeHidden();
+  await page.getByText('Fahrzeugdetails', { exact: true }).click();
+  await expect(page.getByLabel('Kennzeichen', { exact: true })).toBeVisible();
+  await page.getByText('Fahrzeugdetails', { exact: true }).click();
   await page.getByText('Notizen & Planer-Details', { exact: true }).click();
   await page.getByLabel('Notizen', { exact: true }).fill('Strom benötigt');
   await page.getByRole('checkbox', { name: /Ladebedarf/ }).focus();
@@ -134,7 +177,7 @@ test('vehicle rate follows the tariff only until manually changed; optional sett
   await page.getByText('Notizen & Planer-Details', { exact: true }).click();
   await save(page, writes);
   expect(writes[0]).toEqual({ person_id: 1, category_id: 1, label: '', license_plate: '', notes: 'Strom benötigt', billing_period: 'monthly',
-    rate: 0, start_date: '2026-09-10', status: 'stored', end_date: null, reserved_from: null, reserved_until: null, needs_power: true, planner_symbol: 'PKW' });
+    rate: 0, start_date: '2026-09-10', status: 'stored', end_date: '2026-10-09', reserved_from: null, reserved_until: null, needs_power: true, planner_symbol: 'PKW' });
 });
 
 test('editing a charge retains its vehicle when the vehicle lookup fails', async ({ page }) => {
@@ -156,17 +199,32 @@ test('editing a charge retains its vehicle when the vehicle lookup fails', async
 test('editing a vehicle never reprices or changes slider-managed status and reservation', async ({ page }) => {
   const writes = [];
   const vehicle = { ...overrides['/vehicles'][0], rate: 47, needs_power: true, notes: 'Bestehend', planner_symbol: 'PKW', reserved_until: '2026-09-09' };
-  await mockUI(page, { overrides: { ...overrides, '/vehicles': [vehicle],
+  const archivedCategory = { ...overrides['/categories'][0], archived: true };
+  await mockUI(page, { overrides: { ...overrides, '/categories': [archivedCategory], '/vehicles': [vehicle],
     '/vehicles/1': route => { writes.push(route.request().postDataJSON()); return route.fulfill({ json: vehicle }); },
   } });
   await page.goto(origin + '/#/vehicles/1');
   await page.getByRole('button', { name: 'Bearbeiten', exact: true }).click();
   await expect(page.locator('#f_notes')).toBeVisible();
   await expect(page.locator('#f_rate')).toHaveValue('47');
+  await expect(page.locator('#help_category_lookup')).toContainText('Archivierter Tarif');
   await page.getByRole('button', { name: 'jährlich', exact: true }).click();
   await expect(page.locator('#f_rate')).toHaveValue('47');
   await save(page, writes);
   expect(writes[0]).toMatchObject({ rate: 47, billing_period: 'yearly', status: 'reserved', reserved_from: '2026-09-04', reserved_until: '2026-09-09', end_date: '2026-09-10', needs_power: true, notes: 'Bestehend', planner_symbol: 'PKW' });
+});
+
+test('editing a legacy vehicle uses its effective rate instead of turning it into a free booking', async ({ page }) => {
+  const writes = [];
+  const vehicle = { ...overrides['/vehicles'][0], rate: 0, cost_override: null, effective_rate: 85 };
+  await mockUI(page, { overrides: { ...overrides, '/vehicles': [vehicle],
+    '/vehicles/1': route => { writes.push(route.request().postDataJSON()); return route.fulfill({ json: vehicle }); },
+  } });
+  await page.goto(origin + '/#/vehicles/1');
+  await page.getByRole('button', { name: 'Bearbeiten', exact: true }).click();
+  await expect(page.locator('#f_rate')).toHaveValue('85');
+  await save(page, writes);
+  expect(writes[0].rate).toBe(85);
 });
 
 test('agreement keeps its vehicle manager visible and submits added rows and closed note', async ({ page }) => {

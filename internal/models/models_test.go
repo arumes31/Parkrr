@@ -18,21 +18,26 @@ func exact(a, b float64) bool { return math.Abs(a-b) < 0.005 }
 
 func TestEffectiveRateFor(t *testing.T) {
 	cat := Category{DefaultMonthlyCost: 50, DefaultYearlyCost: 550}
-
-	monthly := Vehicle{BillingPeriod: BillingMonthly}
-	if got := monthly.EffectiveRateFor(cat); got != 50 {
-		t.Errorf("monthly default: got %v want 50", got)
-	}
-
-	yearly := Vehicle{BillingPeriod: BillingYearly}
-	if got := yearly.EffectiveRateFor(cat); got != 550 {
-		t.Errorf("yearly default: got %v want 550", got)
-	}
-
 	override := 42.0
-	overridden := Vehicle{BillingPeriod: BillingMonthly, CostOverride: &override}
-	if got := overridden.EffectiveRateFor(cat); got != 42 {
-		t.Errorf("override: got %v want 42", got)
+	free := 0.0
+	tests := []struct {
+		name    string
+		vehicle Vehicle
+		want    float64
+	}{
+		{name: "locked monthly rate", vehicle: Vehicle{Rate: 45, BillingPeriod: BillingMonthly}, want: 45},
+		{name: "locked yearly rate", vehicle: Vehicle{Rate: 510, BillingPeriod: BillingYearly}, want: 510},
+		{name: "legacy cost override", vehicle: Vehicle{CostOverride: &override, BillingPeriod: BillingMonthly}, want: 42},
+		{name: "legacy monthly tariff fallback", vehicle: Vehicle{BillingPeriod: BillingMonthly}, want: 50},
+		{name: "legacy yearly tariff fallback", vehicle: Vehicle{BillingPeriod: BillingYearly}, want: 550},
+		{name: "explicit free booking marker", vehicle: Vehicle{CostOverride: &free, BillingPeriod: BillingMonthly}, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.vehicle.EffectiveRateFor(cat); got != tt.want {
+				t.Errorf("EffectiveRateFor() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -40,6 +45,7 @@ func TestCostInRangeMonthly(t *testing.T) {
 	cat := Category{DefaultMonthlyCost: 30}
 	v := Vehicle{
 		BillingPeriod: BillingMonthly,
+		Rate:          30,
 		StartDate:     date(2024, time.January, 1),
 	}
 	// One full year is exactly 12 monthly charges (each full month = full rate).
@@ -53,7 +59,7 @@ func TestCostInRangeMonthly(t *testing.T) {
 // yearly rate must bill exactly the configured amount (not 499.66 via 365.25).
 func TestFullYearIsExact(t *testing.T) {
 	cat := Category{DefaultYearlyCost: 500}
-	v := Vehicle{BillingPeriod: BillingYearly, StartDate: date(2024, time.January, 1)}
+	v := Vehicle{BillingPeriod: BillingYearly, Rate: 500, StartDate: date(2024, time.January, 1)}
 	got := v.CostInRange(cat, date(2025, time.January, 1), date(2026, time.January, 1))
 	if !exact(got, 500) {
 		t.Errorf("full year 2025: got %.4f want 500.00", got)
@@ -69,7 +75,7 @@ func TestFullYearIsExact(t *testing.T) {
 // regardless of the month's length.
 func TestFullMonthIsExact(t *testing.T) {
 	cat := Category{DefaultMonthlyCost: 90}
-	v := Vehicle{BillingPeriod: BillingMonthly, StartDate: date(2025, time.February, 1)}
+	v := Vehicle{BillingPeriod: BillingMonthly, Rate: 90, StartDate: date(2025, time.February, 1)}
 	got := v.CostInRange(cat, date(2025, time.February, 1), date(2025, time.March, 1)) // 28 days
 	if !exact(got, 90) {
 		t.Errorf("full February: got %.4f want 90.00", got)
@@ -80,6 +86,7 @@ func TestCostInRangeYearly(t *testing.T) {
 	cat := Category{DefaultYearlyCost: 600}
 	v := Vehicle{
 		BillingPeriod: BillingYearly,
+		Rate:          600,
 		StartDate:     date(2024, time.January, 1),
 	}
 	got := v.CostInRange(cat, date(2024, time.January, 1), date(2025, time.January, 1))
@@ -95,6 +102,7 @@ func TestAccruedRespectsEndDate(t *testing.T) {
 	end := date(2024, time.June, 30)
 	v := Vehicle{
 		BillingPeriod: BillingMonthly,
+		Rate:          30,
 		StartDate:     date(2024, time.January, 1),
 		EndDate:       &end,
 	}
@@ -109,7 +117,7 @@ func TestAccruedRespectsEndDate(t *testing.T) {
 // must stay exact even for awkward per-cent rates (no float drift).
 func TestProrationNoDriftManyPeriods(t *testing.T) {
 	cat := Category{DefaultMonthlyCost: 33.33}
-	v := Vehicle{BillingPeriod: BillingMonthly, StartDate: date(2000, time.January, 1)}
+	v := Vehicle{BillingPeriod: BillingMonthly, Rate: 33.33, StartDate: date(2000, time.January, 1)}
 	// 120 full months must equal exactly 120 * 33.33 = 3999.60.
 	got := v.CostInRange(cat, date(2000, time.January, 1), date(2010, time.January, 1))
 	want := 33.33 * 120
@@ -122,6 +130,7 @@ func TestCostZeroBeforeStart(t *testing.T) {
 	cat := Category{DefaultMonthlyCost: 30}
 	v := Vehicle{
 		BillingPeriod: BillingMonthly,
+		Rate:          30,
 		StartDate:     date(2024, time.June, 1),
 	}
 	got := v.CostInRange(cat, date(2024, time.January, 1), date(2024, time.March, 1))
