@@ -12,7 +12,7 @@ const reportUrl = pathToFileURL(path.join(reportDir, 'index.html')).href;
 const output = path.join(reportDir, 'evidence');
 const followup = JSON.parse(fs.readFileSync(path.join(reportDir, 'review-followup.json'), 'utf8'));
 // Keep the previous report's evidence intact when verifying this follow-up.
-const evidencePrefix = 'open-work';
+const evidencePrefix = 'test-profile';
 const answerKey = 'parkrr.review.answers.v1';
 // Allows a test-harness-only retry without repeating the bounded visual QA pass.
 const functionalOnly = process.argv.includes('--functional-only');
@@ -48,22 +48,38 @@ async function importAnswers(page, value) {
     await check('Received answers and recommendations are distinct from unshared drafts', async () => {
         assert.match(await page.locator('#answer-state-Q03').textContent(), /Aktuell geklärt/);
         assert.match(await page.locator('#answer-state-Q04').textContent(), /Bisher kein Bedarf/);
-        assert.match(await page.locator('#answer-state-Q01').textContent(), /Teilweise geklärt/);
-        assert.match(await page.locator('#answer-state-Q02').textContent(), /Angaben fehlen/);
-        for (const id of ['Q05', 'Q06']) assert.match(await page.locator('#answer-state-' + id).textContent(), /Vorschlag zur Bestätigung/);
+        assert.match(await page.locator('#answer-state-Q01').textContent(), /Testprofil geklärt/);
+        assert.match(await page.locator('#answer-state-Q02').textContent(), /Leistungsumfang geklärt/);
+        assert.match(await page.locator('#answer-state-Q05').textContent(), /Preisregel freigegeben/);
+        assert.match(await page.locator('#answer-state-Q06').textContent(), /Vorschlag zur Bestätigung/);
         assert.match(await page.locator('#question-Q03 .received-answer').textContent(), /ein steuerobjekt aktuell/);
-        assert.match(await page.locator('#question-Q05').textContent(), /noch nicht freigegeben oder implementiert/);
+        assert.match(await page.locator('#question-Q05 .received-answer').textContent(), /technisch noch nicht implementiert/);
         assert.equal(await page.locator('#answer-Q03').inputValue(), '');
         assert.match(await page.locator('#answer-count').textContent(), /Ergänzungsentwurf/);
         assert.match(await page.locator('#current-R08').textContent(), /Exportformat 3/);
         assert.match(await page.locator('#current-R08').textContent(), /Gesamtpaket noch nicht/);
+    });
+    await check('Test profile supersedes current-KU assumption; approved tariff rule is not an implementation', async () => {
+        assert.equal(await page.locator('#profile-summary').textContent(), followup.profileSummary);
+        const profile = await page.locator('#profile-summary').textContent();
+        for (const fact of [/Testbetrieb/, /eigenen Namen/, /späteren Echtbetrieb vorgesehen/, /2025/, /Strom als Pauschale/]) assert.match(profile, fact);
+        const q01 = await page.locator('#question-Q01 .received-answer').textContent();
+        assert.match(q01, /weder ein bestätigter aktueller Umsatzsteuerstatus noch ein tatsächlicher Vermietungsbeginn 2025/);
+        assert.match(await page.locator('#question-Q02 .received-answer').textContent(), /auch nicht null Euro/);
+        assert.equal(await page.locator('.answer-history').count(), 3);
+        assert.equal(await page.locator('.answer-history[open]').count(), 0);
+        assert.equal(await page.locator('#current-R24').getAttribute('data-work'), 'technical');
+        assert.equal(await page.locator('#current-R24').getAttribute('data-status'), 'Offen');
+        assert.match(await page.locator('#question-Q05 .received-answer').textContent(), /auch bei künftigem Mietbeginn/);
+        assert.doesNotMatch(await page.locator('#question-Q05 .received-answer').textContent(), /noch nicht freigegeben/);
+        assert.match(await page.locator('#question-Q06').textContent(), /Empfehlung · noch nicht freigegeben/);
     });
     await check('Open work groups cover all 10 unfinished measures without counting deferred work as implemented', async () => {
         assert.equal(await page.locator('.work-group').count(), 3);
         assert.match(await page.locator('#open-work').textContent(), /8 relevante Restpunkte/);
         const grouped = await page.locator('.work-group a[href^="#current-"]').evaluateAll(nodes => nodes.map(n => n.hash.slice(1)));
         assert.deepEqual([...grouped].sort(), originalStatuses.filter(i => i[1] !== 'Umgesetzt').map(i => i[0]).sort());
-        for (const [group, count] of [['technical', 4], ['decision', 4], ['deferred', 2]]) {
+        for (const [group, count] of [['technical', 5], ['decision', 3], ['deferred', 2]]) {
             await page.locator('#progress-search').fill('should be cleared');
             await page.locator(`#work-${group} summary`).click();
             await page.locator(`[data-work-filter="${group}"]`).click();
@@ -106,7 +122,7 @@ async function importAnswers(page, value) {
         assert.equal(await page.locator('#current-R01').isVisible(), true);
     });
     await check('Keyboard operates native disclosures', async () => {
-        await page.locator('#question-Q01 summary').focus();
+        await page.locator('#question-Q01 > summary').focus();
         await page.keyboard.press('Enter');
         assert.equal(await page.locator('#answer-Q01').isVisible(), true);
         await page.keyboard.press('Tab');
@@ -120,6 +136,7 @@ async function importAnswers(page, value) {
         assert.equal(await page.locator('#answer-Q01').inputValue(), 'Synthetischer QA-Entwurf: 2025 und 2026');
         assert.deepEqual(await page.locator('.current-item').evaluateAll(nodes => nodes.map(n => [n.id, n.dataset.status])), originalStatuses);
         assert.match(await page.locator('#answer-state-Q01').textContent(), /Entwurf/);
+        assert.match(await page.locator('#answer-state-Q05').textContent(), /Preisregel freigegeben · Entwurf/);
     });
     let exported;
     await check('JSON and text exports contain answer drafts and provenance', async () => {
@@ -130,6 +147,7 @@ async function importAnswers(page, value) {
         assert.equal(exported.codeStatus.items.length, 25);
         assert.equal(exported.codeStatus.commit, followup.codeCommit);
         assert.deepEqual(exported.receivedAnswers.items, followup.receivedAnswers);
+        assert.equal(exported.receivedAnswers.profile, followup.profileSummary);
         assert.equal(exported.answers[0].text, 'Synthetischer QA-Entwurf: 2025 und 2026');
         const textDownload = page.waitForEvent('download');
         await page.locator('#answers-text').click();
@@ -139,6 +157,9 @@ async function importAnswers(page, value) {
         assert.match(text, /Synthetischer QA-Entwurf/);
         assert.match(text, /Bereits übermittelt: ein steuerobjekt/);
         assert.match(text, /Empfehlung \(nicht freigegeben\)/);
+        assert.ok(text.includes('Aktuelles Profil: ' + followup.profileSummary));
+        assert.match(text, /Überholte Angabe \(nicht aktuell\)/);
+        assert.doesNotMatch(text, /Bereits bekannt: aktuell Kleinunternehmerregelung/);
     });
     await check('Invalid imports are rejected atomically', async () => {
         for (const bad of [
@@ -216,16 +237,16 @@ async function importAnswers(page, value) {
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'open work overflow');
             await page.screenshot({ path: path.join(output, `${evidencePrefix}-overview-${name}.png`) });
             await page.locator('#work-technical summary').click();
-            await page.locator('#question-Q03 summary').click();
+            await page.locator('#question-Q01 > summary').click();
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'expanded question overflow');
-            await page.locator('#question-Q03').scrollIntoViewIfNeeded();
+            await page.locator('#question-Q01').scrollIntoViewIfNeeded();
             await page.screenshot({ path: path.join(output, `${evidencePrefix}-questions-${name}.png`) });
-            await page.locator('#question-Q03 summary').click();
-            await page.locator('#question-Q05 summary').click();
+            await page.locator('#question-Q01 > summary').click();
+            await page.locator('#question-Q05 > summary').click();
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'recommendation overflow');
             await page.locator('#question-Q05').scrollIntoViewIfNeeded();
-            await page.screenshot({ path: path.join(output, `${evidencePrefix}-recommendation-${name}.png`) });
-            await page.locator('#question-Q05 summary').click();
+            await page.screenshot({ path: path.join(output, `${evidencePrefix}-approved-rule-${name}.png`) });
+            await page.locator('#question-Q05 > summary').click();
             await page.evaluate(() => scrollTo(0, 0));
         });
     }
