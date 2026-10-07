@@ -12,7 +12,7 @@ const reportUrl = pathToFileURL(path.join(reportDir, 'index.html')).href;
 const output = path.join(reportDir, 'evidence');
 const followup = JSON.parse(fs.readFileSync(path.join(reportDir, 'review-followup.json'), 'utf8'));
 // Keep the previous report's evidence intact when verifying this follow-up.
-const evidencePrefix = 'r08-answers';
+const evidencePrefix = 'open-work';
 const answerKey = 'parkrr.review.answers.v1';
 // Allows a test-harness-only retry without repeating the bounded visual QA pass.
 const functionalOnly = process.argv.includes('--functional-only');
@@ -57,6 +57,27 @@ async function importAnswers(page, value) {
         assert.match(await page.locator('#answer-count').textContent(), /Ergänzungsentwurf/);
         assert.match(await page.locator('#current-R08').textContent(), /Exportformat 3/);
         assert.match(await page.locator('#current-R08').textContent(), /Gesamtpaket noch nicht/);
+    });
+    await check('Open work groups cover all 10 unfinished measures without counting deferred work as implemented', async () => {
+        assert.equal(await page.locator('.work-group').count(), 3);
+        assert.match(await page.locator('#open-work').textContent(), /8 relevante Restpunkte/);
+        const grouped = await page.locator('.work-group a[href^="#current-"]').evaluateAll(nodes => nodes.map(n => n.hash.slice(1)));
+        assert.deepEqual([...grouped].sort(), originalStatuses.filter(i => i[1] !== 'Umgesetzt').map(i => i[0]).sort());
+        for (const [group, count] of [['technical', 4], ['decision', 4], ['deferred', 2]]) {
+            await page.locator('#progress-search').fill('should be cleared');
+            await page.locator(`#work-${group} summary`).click();
+            await page.locator(`[data-work-filter="${group}"]`).click();
+            assert.equal(await page.locator('.current-item:visible').count(), count);
+            assert.equal(await page.locator('#progress-search').inputValue(), '');
+            assert.equal(await page.locator('#measures-title').evaluate(n => n === document.activeElement), true);
+            const work = await page.locator('.current-item:visible').evaluateAll(nodes => nodes.map(n => n.dataset.work));
+            assert.ok(work.every(value => value === group));
+            await page.locator(`#work-${group} summary`).click();
+        }
+        assert.deepEqual(await page.locator('.current-item:visible').evaluateAll(nodes => nodes.map(n => n.id)), ['current-R09', 'current-R11']);
+        assert.equal(await page.locator('.current-item:visible[data-status="Offen"]').count(), 2);
+        await page.locator('#progress-reset').click();
+        assert.equal(await page.locator('.current-item:visible').count(), 25);
     });
     await check('Status filters, search, empty state and reset', async () => {
         for (const [filter, count] of [['Umgesetzt', 15], ['Teilweise', 6], ['Offen', 4], ['all', 25], ['unfinished', 10]]) {
@@ -190,6 +211,11 @@ async function importAnswers(page, value) {
             }
             await page.evaluate(() => document.documentElement.classList.remove('light'));
             await page.screenshot({ path: path.join(output, `${evidencePrefix}-report-${name}.png`) });
+            await page.locator('#work-technical summary').click();
+            await page.locator('#open-work').scrollIntoViewIfNeeded();
+            assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'open work overflow');
+            await page.screenshot({ path: path.join(output, `${evidencePrefix}-overview-${name}.png`) });
+            await page.locator('#work-technical summary').click();
             await page.locator('#question-Q03 summary').click();
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'expanded question overflow');
             await page.locator('#question-Q03').scrollIntoViewIfNeeded();
