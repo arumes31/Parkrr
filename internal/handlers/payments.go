@@ -37,6 +37,11 @@ var errIdempotencyConflict = errors.New("idempotency key reused with a different
 // writeSettlementConflict reports a stale/concurrent claim without committing
 // partial money state. Call only after the transaction has failed.
 func writeSettlementConflict(w http.ResponseWriter, err error) bool {
+	var conflict *settlementConflictError
+	if errors.As(err, &conflict) {
+		writeError(w, http.StatusConflict, conflict.msg)
+		return true
+	}
 	if !errors.Is(err, errSettlementRace) {
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) {
@@ -131,7 +136,11 @@ func (h *Handler) ListPayments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Attach the resolved positions (Gefährt/Pauschale/Zeitraum) each payment settles.
-	items, ierr := h.resolvePaymentItems(r.Context(), id)
+	pageIDs := make([]int64, 0, len(out))
+	for _, p := range out {
+		pageIDs = append(pageIDs, p.ID)
+	}
+	items, ierr := h.resolvePaymentItemsFor(r.Context(), id, pageIDs)
 	if ierr != nil {
 		serverError(w, r, "query failed", ierr)
 		return
@@ -242,6 +251,21 @@ func periodPaymentNote(kind, period string) string {
 // delete-then-insert, never an upsert. A zero amount records no row — the settled
 // flag alone marks a 0-cost period paid.
 func recordPeriodPaymentTx(ctx context.Context, tx pgx.Tx, personID int64, kind string, refID int64, period string, amount float64, createdBy *int64) error {
+	// A repeated click is not a new receipt; keep its ID, actual date and metadata.
+	var existing float64
+	err := tx.QueryRow(ctx, `SELECT amount FROM payments WHERE auto AND NOT reversed AND settles_kind=$1 AND settles_ref=$2 AND settles_period=$3 FOR UPDATE`, kind, refID, period).Scan(&existing)
+	if err == nil && round2(existing) == round2(amount) {
+		return nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err := protectPeriodPaymentsTx(ctx, tx, kind, refID, period); err != nil {
+		return err
+	}
+	if err := protectCurrentReceiptTx(ctx, tx, kind, period); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM payments WHERE auto AND settles_kind=$1 AND settles_ref=$2 AND settles_period=$3`,
 		kind, refID, period); err != nil {
@@ -250,7 +274,7 @@ func recordPeriodPaymentTx(ctx context.Context, tx pgx.Tx, personID int64, kind 
 	if amount < 0.005 {
 		return nil
 	}
-	_, err := tx.Exec(ctx,
+	_, err = tx.Exec(ctx,
 		`INSERT INTO payments (person_id, amount, method, note, auto, settles_kind, settles_ref, settles_period, created_by)
 		 VALUES ($1,$2,'bar',$3,true,$4,$5,$6,$7)`,
 		personID, amount, periodPaymentNote(kind, period), kind, refID, period, createdBy)
@@ -260,6 +284,9 @@ func recordPeriodPaymentTx(ctx context.Context, tx pgx.Tx, personID int64, kind 
 // deletePeriodPaymentTx removes the real Zahlungseingang for a sub-period toggled
 // back open (auto rows are removable wholesale, migration 035).
 func deletePeriodPaymentTx(ctx context.Context, tx pgx.Tx, kind string, refID int64, period string) error {
+	if err := protectPeriodPaymentsTx(ctx, tx, kind, refID, period); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx,
 		`DELETE FROM payments WHERE auto AND settles_kind=$1 AND settles_ref=$2 AND settles_period=$3`,
 		kind, refID, period)
@@ -388,8 +415,12 @@ type boundCharge struct {
 // reading it while holding the tx's connection can deadlock the pool under
 // concurrency (see settlePaymentTx).
 func (h *Handler) toggleOwed(r *http.Request, kind string, refID, personID int64) (float64, []boundCharge, error) {
+	return h.toggleOwedFrom(r, h.Pool, kind, refID, personID)
+}
+
+func (h *Handler) toggleOwedFrom(r *http.Request, q dbQuerier, kind string, refID, personID int64) (float64, []boundCharge, error) {
 	ctx := r.Context()
-	items, err := h.openOwedItems(r, personID)
+	items, err := h.openOwedItemsFrom(r, q, personID)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -405,7 +436,7 @@ func (h *Handler) toggleOwed(r *http.Request, kind string, refID, personID int64
 		// (paying it never flips charges.paid). Counting it here made the claim
 		// trigger refuse the whole toggle — a permanent 409 on the vehicle slider
 		// (BIL-04). Same filter as settleAgreementExtrasTx.
-		rows, qerr := h.Pool.Query(ctx,
+		rows, qerr := q.Query(ctx,
 			`SELECT c.id, c.amount, c.quantity FROM charges c
 			  WHERE c.vehicle_id=$1 AND NOT c.paid
 			    AND NOT EXISTS (SELECT 1 FROM invoice_source s JOIN invoices i ON i.id=s.invoice_id
@@ -438,15 +469,39 @@ func (h *Handler) toggleOwed(r *http.Request, kind string, refID, personID int64
 // syncTogglePaymentTx keeps a per-item "auto" payment in step with its paid
 // toggle, so flipping the one-tap slider actually moves money (P2.3): setting an
 // item paid records a payment for its open amount linked to it; setting it open
-// removes that auto-payment. Manual payments (auto=false) are never touched.
+// reverses that auto-payment while retaining its receipt and audit history.
+// Manual payments (auto=false) are never touched.
 // Idempotent.
 //
 // Runs inside the caller's transaction together with the item's paid-flag
 // UPDATE, so a failure can never leave a phantom payment/credit: both commit or
-// neither does. amt/bound come from toggleOwed, read before the tx while the
-// item is still open.
+// neither does. amt/bound are refreshed inside the caller's transaction after
+// the shared person lock, while the item is still open.
 func (h *Handler) syncTogglePaymentTx(ctx context.Context, tx pgx.Tx, kind string, refID, personID int64, paid bool, amt float64, bound []boundCharge) error {
 	if !paid {
+		rows, err := tx.Query(ctx, `SELECT p.id FROM payments p
+			WHERE p.auto AND NOT p.reversed AND EXISTS (
+			SELECT 1 FROM payment_allocations a WHERE a.payment_id=p.id AND a.kind=$1 AND a.ref_id=$2)
+			ORDER BY p.id FOR UPDATE`, kind, refID)
+		if err != nil {
+			return err
+		}
+		ids := []int64{}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			ids = append(ids, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := protectPaymentChangesTx(ctx, tx, ids); err != nil {
+			return err
+		}
 		// A vehicle's auto-payment also settled the charges bound to it — reopen
 		// them (their paid flag was set by this payment) before removing it.
 		if kind == "vehicle" {
@@ -458,10 +513,12 @@ func (h *Handler) syncTogglePaymentTx(ctx context.Context, tx pgx.Tx, kind strin
 				return err
 			}
 		}
-		_, err := tx.Exec(ctx,
-			`DELETE FROM payments WHERE auto AND id IN (
-			   SELECT payment_id FROM payment_allocations WHERE kind=$1 AND ref_id=$2)`, kind, refID)
-		return err
+		for _, paymentID := range ids {
+			if err := reverseTogglePaymentTx(ctx, tx, paymentID); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	var boundTotal float64
 	for _, b := range bound {
@@ -498,6 +555,9 @@ func (h *Handler) syncTogglePaymentTx(ctx context.Context, tx pgx.Tx, kind strin
 	}
 	if exists {
 		return nil // already covered (won the race elsewhere)
+	}
+	if err := protectCurrentReceiptTx(ctx, tx, "", ""); err != nil {
+		return err
 	}
 	// Payments are IMMUTABLE (BAO §131 — a DB trigger blocks changing amount), so the
 	// amount must be right at INSERT time. Decide which bound charges are still
@@ -554,6 +614,31 @@ func (h *Handler) syncTogglePaymentTx(ctx context.Context, tx pgx.Tx, kind strin
 		}
 	}
 	return nil
+}
+
+// reverseTogglePaymentTx corrects a mistaken paid marker, not a real refund.
+// Receipt ID, date and tax metadata survive; released claims are kept in audit.
+func reverseTogglePaymentTx(ctx context.Context, tx pgx.Tx, id int64) error {
+	var claims json.RawMessage
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(jsonb_agg(to_jsonb(a) ORDER BY a.id),'[]'::jsonb)
+		FROM payment_allocations a WHERE a.payment_id=$1`, id).Scan(&claims); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE payments SET reversed=true,reversed_at=now(),reversed_by=$2
+		WHERE id=$1 AND auto AND NOT reversed`, id, createdByFrom(ctx)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM payment_allocations WHERE payment_id=$1`, id); err != nil {
+		return err
+	}
+	var actorID int64
+	actorName := "system"
+	if actor, ok := auth.UserFrom(ctx); ok {
+		actorID, actorName = actor.ID, actor.Username
+	}
+	return auditExec(ctx, tx, actorID, actorName, "update", "payment", id,
+		"Bezahlt-Markierung korrigiert; Originalzahlung erhalten. Keine tatsächliche Rückzahlung.",
+		map[string]any{"reversed": map[string]any{"old": false, "new": true}, "released_allocations": claims})
 }
 
 // settleItemTx settles ONE open position inside a transaction, atomically and
@@ -918,6 +1003,16 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 	var archive []int64
 	var replayed bool
 	txErr := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := lockInvoicePersonTx(ctx, tx, id); err != nil {
+			return err
+		}
+		if req.Allocate || len(req.Allocations) > 0 {
+			var err error
+			openItems, err = h.openOwedItemsFrom(r, tx, id)
+			if err != nil {
+				return err
+			}
+		}
 		if key != "" {
 			prior, priorSettled, found, err := idempotentPayment(ctx, tx, createdBy, key, fingerprint)
 			if err != nil {
@@ -927,6 +1022,9 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 				p, settled, replayed = prior, priorSettled, true
 				return nil
 			}
+		}
+		if err := protectPaymentChangesTx(ctx, tx, nil, paidOn); err != nil {
+			return err
 		}
 
 		var pp payment
@@ -1042,6 +1140,16 @@ func (h *Handler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 	var delMethod string
 	var delOn time.Time
 	txErr := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		var personID int64
+		if err := tx.QueryRow(ctx, `SELECT person_id FROM payments WHERE id=$1`, id).Scan(&personID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errPaymentNotFound
+			}
+			return err
+		}
+		if err := lockInvoicePersonTx(ctx, tx, personID); err != nil {
+			return err
+		}
 		var settlesKind *string
 		if err := tx.QueryRow(ctx,
 			`SELECT settles_kind FROM payments WHERE id=$1 AND NOT reversed FOR UPDATE`, id).
@@ -1053,6 +1161,9 @@ func (h *Handler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 		}
 		if settlesKind != nil {
 			return errPeriodManagedPayment
+		}
+		if err := protectPaymentChangesTx(ctx, tx, []int64{id}); err != nil {
+			return err
 		}
 		// Position toggles this payment stamped, and invoice allocations it funded.
 		var refs []ref
@@ -1098,6 +1209,19 @@ func (h *Handler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 		irows.Close()
 		if err := irows.Err(); err != nil {
 			return err
+		}
+		var invoiceIDs []int64
+		for _, ip := range invPays {
+			invoiceIDs = append(invoiceIDs, ip.invoiceID)
+		}
+		vehicleIDs, err := invoiceVehicleIDsTx(ctx, tx, invoiceIDs)
+		if err != nil {
+			return err
+		}
+		for _, rf := range refs {
+			if rf.kind == "vehicle" {
+				vehicleIDs = append(vehicleIDs, rf.id)
+			}
 		}
 
 		// BAO §131: don't hard-delete a booked money-in — reverse it (Storno). The
@@ -1150,6 +1274,9 @@ func (h *Handler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 		}
 		// Reversal trail commits with the reversal (atomic) — the retained-record
 		// Storno and its audit row are inseparable (BAO §131).
+		if err := h.reopenUncoveredVehiclesTx(r, tx, vehicleIDs); err != nil {
+			return err
+		}
 		return h.auditChangeTx(ctx, tx, r, "update", "payment", id, fmt.Sprintf(
 			"Zahlung storniert: %.2f € (%s, %s) – Datensatz bleibt erhalten, Zuordnungen zurückgesetzt",
 			delAmt, delMethod, delOn.Format("2006-01-02")),
@@ -1159,6 +1286,9 @@ func (h *Handler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(txErr, errPeriodManagedPayment) {
 		writeError(w, http.StatusConflict,
 			"Periodenzahlung über den Bezahlt-Schalter der Pauschale/Nebenkosten zurücksetzen.")
+		return
+	}
+	if writeSettlementConflict(w, txErr) {
 		return
 	}
 	if errors.Is(txErr, errPaymentNotFound) || (txErr == nil && !deleted) {
@@ -1227,7 +1357,13 @@ func (h *Handler) ApplyCredit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	if len(items) == 0 {
+	var invoiceOpen float64
+	if err := h.Pool.QueryRow(ctx, `SELECT COALESCE(sum(total-paid_amount),0) FROM invoices
+		WHERE person_id=$1 AND NOT canceled AND cancels_id IS NULL AND total-paid_amount>0.005`, id).Scan(&invoiceOpen); err != nil {
+		serverError(w, r, "could not read open invoices", err)
+		return
+	}
+	if len(items) == 0 && invoiceOpen < 0.005 {
 		writeJSON(w, http.StatusOK, map[string]any{"settled": 0})
 		return
 	}
@@ -1267,6 +1403,28 @@ func (h *Handler) ApplyCredit(w http.ResponseWriter, r *http.Request) {
 		if err := lockInvoicePersonTx(ctx, tx, id); err != nil {
 			return err
 		}
+		// Lock all credit receipts before any tax-year or invoice locks. Recheck
+		// available value after locks; two requests must never consume it twice.
+		creditIDs, err := creditPaymentIDsTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		items, err = h.openOwedItemsFrom(r, tx, id)
+		if err != nil {
+			return err
+		}
+		accrued, err = h.personAccruedTotalFrom(r, tx, id)
+		if err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(amount),0) FROM payments WHERE person_id=$1 AND NOT reversed`, id).Scan(&paymentsTotal); err != nil {
+			return err
+		}
+		openTotal = 0
+		for _, item := range items {
+			openTotal += item.LineTotal
+		}
+		budget = round2(paymentsTotal - round2(accrued-openTotal))
 		for _, it := range items {
 			if budget < 0.005 {
 				break // no drawable Guthaben left at all
@@ -1313,6 +1471,9 @@ func (h *Handler) ApplyCredit(w http.ResponseWriter, r *http.Request) {
 			if remaining+0.005 < it.LineTotal {
 				continue // lost the remaining budget to a concurrent settlement
 			}
+			if err := protectPaymentChangesTx(ctx, tx, []int64{payID}); err != nil {
+				return err
+			}
 			ok, veh, serr := settleItemTx(ctx, tx, payID, it, businessDay(h.now()))
 			if serr != nil {
 				return serr
@@ -1326,6 +1487,11 @@ func (h *Handler) ApplyCredit(w http.ResponseWriter, r *http.Request) {
 			budget -= it.LineTotal
 			settled++
 		}
+		invoiceCount, err := h.applyInvoiceCreditTx(r, tx, id, creditIDs)
+		if err != nil {
+			return err
+		}
+		settled += invoiceCount
 		if settled > 0 {
 			// The drawdown may now span several payments, so audit the PERSON whose
 			// Guthaben was applied rather than a single payment id.
@@ -1345,5 +1511,6 @@ func (h *Handler) ApplyCredit(w http.ResponseWriter, r *http.Request) {
 	for _, vid := range archive {
 		h.autoArchiveIfClosed(r, vid)
 	}
+	h.archiveInvoiceSettledCollected(ctx, id)
 	writeJSON(w, http.StatusOK, map[string]any{"settled": settled})
 }

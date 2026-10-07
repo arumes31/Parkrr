@@ -545,6 +545,9 @@ func (h *Handler) UpdateCharge(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	// A charge on an issued invoice is part of an immutable document (BAO): its money
+	if !lockFinancialSource(w, r, tx, "charge", id, req.PersonID) {
+		return
+	}
 	// (amount/quantity), owner (person) or binding (vehicle) must not change out from
 	// under the invoice — otherwise the live balance disagrees with what was billed and
 	// paid, or the charge is re-billed under a new owner. Freeze exactly those fields
@@ -642,6 +645,9 @@ func (h *Handler) DeleteCharge(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	var lockedID int64
+	if !lockFinancialSource(w, r, tx, "charge", id, 0) {
+		return
+	}
 	if err := tx.QueryRow(r.Context(), `SELECT id FROM charges WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "charge not found")
@@ -740,6 +746,22 @@ func (h *Handler) SetChargePaid(w http.ResponseWriter, r *http.Request) {
 		// CreateInvoice's per-person lock, then the state checks (BIL-05).
 		if err := lockInvoicePersonTx(r.Context(), tx, personID); err != nil {
 			return err
+		}
+		var lockedPerson int64
+		var boundVehicle *int64
+		if err := tx.QueryRow(r.Context(), `SELECT person_id,paid,vehicle_id FROM charges WHERE id=$1 FOR UPDATE`, id).
+			Scan(&lockedPerson, &curPaid, &boundVehicle); err != nil {
+			return err
+		}
+		if lockedPerson != personID || boundVehicle != nil {
+			return &settlementConflictError{msg: "Zusatzkosten wurden zwischenzeitlich geändert – bitte neu laden"}
+		}
+		if req.Paid && !curPaid {
+			var err error
+			amt, bound, err = h.toggleOwedFrom(r, tx, "charge", id, personID)
+			if err != nil {
+				return err
+			}
 		}
 		if req.Paid != curPaid {
 			// A charge on an active invoice is settled through that invoice, in both

@@ -1,9 +1,34 @@
 package config
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestLoadDatabaseURLRoundTripsReservedCharacters(t *testing.T) {
+	setRequired(t)
+	t.Setenv("PARKRR_DATABASE_URL", "")
+	t.Setenv("PARKRR_DB_USER", "user@tenant")
+	t.Setenv("PARKRR_DB_PASSWORD", "#/?@:%Überprüfung")
+	t.Setenv("PARKRR_DB_HOST", "::1")
+	t.Setenv("PARKRR_DB_NAME", "test database")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(cfg.DatabaseURL)
+	if err != nil {
+		t.Fatal("database URL could not be parsed")
+	}
+	password, ok := u.User.Password()
+	if !ok || password != "#/?@:%Überprüfung" || u.User.Username() != "user@tenant" {
+		t.Fatal("database credentials did not round-trip")
+	}
+	if u.Hostname() != "::1" || u.Path != "/test database" || u.Query().Get("sslmode") != "disable" {
+		t.Fatal("database address did not round-trip")
+	}
+}
 
 func setRequired(t *testing.T) {
 	t.Helper()

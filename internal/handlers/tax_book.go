@@ -150,7 +150,9 @@ func acquireTaxYearAdvisoryLock(ctx context.Context, tx pgx.Tx, year int) error 
 
 // taxYearLocked acquires the year's transaction lock before reading its lock state.
 func taxYearLocked(ctx context.Context, tx pgx.Tx, year int) (bool, error) {
-	if err := acquireTaxYearAdvisoryLock(ctx, tx, year); err != nil {
+	// Writers share the gate; closing/reopening takes the exclusive counterpart.
+	// This also avoids cross-year cycles in bulk payment operations.
+	if err := acquireTaxYearWriteLock(ctx, tx, year); err != nil {
 		return false, err
 	}
 	return taxYearLockStatus(ctx, tx, year)
@@ -181,7 +183,7 @@ func (h *Handler) rejectLockedAssetYears(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	for year := firstYear; year <= lastYear; year++ {
-		if err := acquireTaxYearAdvisoryLock(r.Context(), tx, year); err != nil {
+		if err := acquireTaxYearWriteLock(r.Context(), tx, year); err != nil {
 			serverError(w, r, "Steuerjahrsperre konnte nicht geprüft werden", err)
 			return true
 		}
@@ -995,7 +997,7 @@ func (h *Handler) GetTaxReceipt(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+safeDownloadFilename(filename)+`"`)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("Cache-Control", "private, no-store")
 	_, _ = w.Write(data)
 }
 
@@ -1316,11 +1318,13 @@ func (h *Handler) UpdatePaymentTaxMetadata(w http.ResponseWriter, r *http.Reques
 	var auto bool
 	var oldReceived *time.Time
 	var oldProperty int64
+	var settlesKind, settlesPeriod string
 	if err := tx.QueryRow(r.Context(), `
 		SELECT p.paid_on,p.auto,m.received_on,
-		       COALESCE(m.tax_property_id,(SELECT id FROM tax_properties ORDER BY is_default DESC,id LIMIT 1))
+		       COALESCE(m.tax_property_id,(SELECT id FROM tax_properties ORDER BY is_default DESC,id LIMIT 1)),
+		       COALESCE(p.settles_kind,''),COALESCE(p.settles_period,'')
 		  FROM payments p LEFT JOIN payment_tax_metadata m ON m.payment_id=p.id
-		 WHERE p.id=$1 FOR UPDATE OF p`, id).Scan(&paidOn, &auto, &oldReceived, &oldProperty); err != nil {
+		 WHERE p.id=$1 FOR UPDATE OF p`, id).Scan(&paidOn, &auto, &oldReceived, &oldProperty, &settlesKind, &settlesPeriod); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "Zahlung nicht gefunden")
 			return
@@ -1339,6 +1343,13 @@ func (h *Handler) UpdatePaymentTaxMetadata(w http.ResponseWriter, r *http.Reques
 	newEffective := paidOn
 	if receivedOn != nil {
 		newEffective = *receivedOn
+	}
+	newRuleDate := time.Date(taxRuleYear(newEffective, settlesKind, settlesPeriod), 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := protectPaymentChangesTx(r.Context(), tx, []int64{id}, newEffective, newRuleDate); err != nil {
+		if !writeSettlementConflict(w, err) {
+			serverError(w, r, "Steuerjahrsperre konnte nicht geprüft werden", err)
+		}
+		return
 	}
 	years := []int{oldEffective.Year()}
 	if newEffective.Year() != oldEffective.Year() {

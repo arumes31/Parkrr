@@ -33,7 +33,15 @@ func vehicleRentPeriod(start time.Time, end *time.Time) string {
 // settles_* (Pauschale / Nebenkosten period), and invoice_payments (Rechnung).
 // Reversed payments are skipped (they carry no money). Batched — no N+1.
 func (h *Handler) resolvePaymentItems(ctx context.Context, personID int64) (map[int64][]attrItem, error) {
+	return h.resolvePaymentItemsFor(ctx, personID, nil)
+}
+
+// resolvePaymentItemsFor restricts attribution to the visible page; nil means all.
+func (h *Handler) resolvePaymentItemsFor(ctx context.Context, personID int64, paymentIDs []int64) (map[int64][]attrItem, error) {
 	out := map[int64][]attrItem{}
+	if paymentIDs != nil && len(paymentIDs) == 0 {
+		return out, nil
+	}
 
 	// (1) Vehicle-rent and one-off Zusatzkosten allocations.
 	arows, err := h.Pool.Query(ctx,
@@ -45,8 +53,8 @@ func (h *Handler) resolvePaymentItems(ctx context.Context, personID int64) (map[
 		   LEFT JOIN vehicles   v   ON pa.kind='vehicle' AND v.id = pa.ref_id
 		   LEFT JOIN categories cat ON cat.id = v.category_id
 		   LEFT JOIN charges    c   ON pa.kind='charge'  AND c.id = pa.ref_id
-		  WHERE p.person_id=$1 AND NOT p.reversed
-		  ORDER BY pa.payment_id, pa.id`, personID)
+		  WHERE p.person_id=$1 AND NOT p.reversed AND ($2::bigint[] IS NULL OR p.id=ANY($2))
+		  ORDER BY pa.payment_id, pa.id`, personID, paymentIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +98,7 @@ func (h *Handler) resolvePaymentItems(ctx context.Context, personID int64) (map[
 		           LEFT JOIN categories cat ON cat.id = v.category_id
 		          WHERE fv.period_id = p.settles_ref)
 		   FROM payments p
-		  WHERE p.person_id=$1 AND NOT p.reversed AND p.settles_kind='agreement' AND p.settles_period <> 'extras'`, personID)
+		  WHERE p.person_id=$1 AND NOT p.reversed AND ($2::bigint[] IS NULL OR p.id=ANY($2)) AND p.settles_kind='agreement' AND p.settles_period <> 'extras'`, personID, paymentIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +126,7 @@ func (h *Handler) resolvePaymentItems(ctx context.Context, personID int64) (map[
 	rrows, err := h.Pool.Query(ctx,
 		`SELECT p.id, p.settles_period, p.amount, rc.description
 		   FROM payments p JOIN recurring_charges rc ON rc.id = p.settles_ref
-		  WHERE p.person_id=$1 AND NOT p.reversed AND p.settles_kind='recurring'`, personID)
+		  WHERE p.person_id=$1 AND NOT p.reversed AND ($2::bigint[] IS NULL OR p.id=ANY($2)) AND p.settles_kind='recurring'`, personID, paymentIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +152,7 @@ func (h *Handler) resolvePaymentItems(ctx context.Context, personID int64) (map[
 		   FROM invoice_payments ip
 		   JOIN invoices i ON i.id = ip.invoice_id
 		   JOIN payments p ON p.id = ip.payment_id
-		  WHERE p.person_id=$1 AND NOT p.reversed`, personID)
+		  WHERE p.person_id=$1 AND NOT p.reversed AND ($2::bigint[] IS NULL OR p.id=ANY($2))`, personID, paymentIDs)
 	if err != nil {
 		return nil, err
 	}

@@ -368,11 +368,14 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 // Logout ends the current session.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	if err := h.Auth.DestroySession(r.Context(), w, r); err != nil {
+		serverError(w, r, "Abmeldung nicht bestätigt – bitte erneut versuchen", err)
+		return
+	}
 	if u, ok := auth.UserFrom(r.Context()); ok {
 		slog.Info("logout", "user", u.Username, "user_id", u.ID, "ip", h.Auth.ClientIP(r))
 		h.audit(r, "logout", "user", u.ID, u.Username+" signed out")
 	}
-	h.Auth.DestroySession(r.Context(), w, r)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

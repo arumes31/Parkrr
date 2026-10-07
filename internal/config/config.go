@@ -4,6 +4,8 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -199,8 +201,12 @@ func Load() (*Config, error) {
 		pass := getenv("PARKRR_DB_PASSWORD", "parkrr")
 		name := getenv("PARKRR_DB_NAME", "parkrr")
 		ssl := getenv("PARKRR_DB_SSLMODE", "disable")
-		cfg.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-			user, pass, host, port, name, ssl)
+		dbURL := url.URL{
+			Scheme: "postgres", User: url.UserPassword(user, pass),
+			Host: net.JoinHostPort(host, port), Path: "/" + name,
+			RawQuery: url.Values{"sslmode": {ssl}}.Encode(),
+		}
+		cfg.DatabaseURL = dbURL.String()
 		// Surface the silent defaults — fine on a private Docker network, a footgun
 		// once the DB is exposed or on a separate host.
 		if pass == "parkrr" {

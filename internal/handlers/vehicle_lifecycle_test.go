@@ -41,6 +41,10 @@ func vehicleRow(t *testing.T, h *Handler, vid int64) (status string, end *time.T
 func TestVehicleCloseSetsEndDateAndReopenClearsIt(t *testing.T) {
 	h := testHandler(t)
 	vid := mkPhotoVehicle(t, h) // Person+Tarif+Gefährt, Status stored
+	// The later backdated collection must still follow the rental start.
+	if _, err := h.Pool.Exec(t.Context(), `UPDATE vehicles SET start_date=$2 WHERE id=$1`, vid, h.now().AddDate(0, 0, -20)); err != nil {
+		t.Fatal(err)
+	}
 
 	// Abholen ohne Datum: Enddatum = heute.
 	if rec := changeStatus(t, h, vid, map[string]any{"status": "collected"}); rec.Code != http.StatusOK {

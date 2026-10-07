@@ -225,8 +225,11 @@ var auditIgnoredPerFunc = map[string]map[string]bool{
 	"SetAgreementPaid":       {"archived": true},
 	"SetAgreementPeriodPaid": {"archived": true},
 	"ChangeVehicleStatus":    {"archived": true},
-	"MarkPaid":               {"archived": true},
-	"UpdateVehicle":          {"archived": true},
+	// Reversal belongs to the separate payment audit from reverseTogglePaymentTx;
+	// the operational vehicle/charge diff does not claim to be a payment diff.
+	"MarkPaid":      {"archived": true, "reversed": true},
+	"SetChargePaid": {"reversed": true},
+	"UpdateVehicle": {"archived": true},
 	// CreatePayment deckt ueber settleItemTx Posten ab und stempelt dabei paid; dazu
 	// archiviert es geschlossene Gefaehrte. Dieselbe Begruendung wie DeletePayment.
 	"CreatePayment": {"paid": true, "paid_through": true, "archived": true},

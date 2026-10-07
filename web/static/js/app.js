@@ -2411,7 +2411,7 @@ import { createAPI } from './api.js';
     function delPayment(p, node) {
         // BAO: the payment is not deleted but reversed (Storno) — the record is kept.
         deleteWithUndo('Zahlung stornieren?',
-            eur(p.amount) + ' vom ' + new Date(p.paid_on).toLocaleDateString('de-DE') + ' wird storniert (Datensatz bleibt erhalten).',
+            eur(p.amount) + ' vom ' + new Date(p.paid_on).toLocaleDateString('de-DE') + ' wird als Erfassungsfehler korrigiert. Der Datensatz bleibt erhalten und zählt nicht mehr als Einnahme. Dies erfasst keine tatsächliche Rückzahlung.',
             () => api.del('/payments/' + p.id), () => render(), node);
     }
     async function paymentForm(personId, stats) {
@@ -3019,7 +3019,7 @@ import { createAPI } from './api.js';
 
         const income = taxRule ? rep.total_with_rule : rep.total_by_date;
         const surplus = taxRule ? rep.surplus_with_rule : rep.surplus;
-        page.append(el('div', { class: 'stat-grid' }, stat(eur(income), taxRule ? 'Einnahmen mit 15-Tage-Regel' : 'Einnahmen nach Zuflussdatum'),
+        page.append(el('div', { class: 'stat-grid' }, stat(eur(income), taxRule ? 'Einnahmen · ungeprüfte Simulation' : 'Einnahmen nach Zuflussdatum'),
             stat(eur(rep.expense_total + rep.depreciation_total), 'Werbungskosten inkl. AfA'), stat(eur(surplus), 'Überschuss ' + rep.year)));
 
         const lock = el('button', { class: 'btn ' + (rep.locked ? 'btn-ghost' : 'btn-primary') + ' btn-sm' }, rep.locked ? 'Jahr entsperren' : 'Jahr abschließen');
@@ -3038,14 +3038,12 @@ import { createAPI } from './api.js';
             el('span', { class: 'badge ' + (rep.locked ? 'badge-ok' : '') }, rep.locked ? 'Abgeschlossen' : 'In Bearbeitung'), lock,
             el('span', { class: 'card-meta' }, 'Keine Steuerberatung · Werte vor Abgabe prüfen.')));
 
-        const limit = Number(rep.settings.small_business_limit) || 55000;
-        const percent = Number(rep.small_business_percent) || 0;
+        // Cash receipts are not a verified VAT-turnover basis. No misleading
+        // threshold gauge or automatic tax-status decision from this ledger.
         const limitCard = el('div', { class: 'card tax-limit' },
-            el('div', { class: 'tax-limit-head' }, el('h3', {}, 'Kleinunternehmer-Grenze'), el('b', {}, percent.toFixed(1) + ' %')),
-            el('progress', { max: 100, value: Math.min(100, percent), 'aria-label': 'Auslastung der Kleinunternehmer-Grenze' }),
-            el('div', { class: 'card-meta' }, eur(rep.total_by_date) + ' von ' + eur(limit) + (rep.settings.vat_opted_in ? ' · Regelbesteuerung hinterlegt' : ' · Bruttoumsatz')));
-        if (rep.small_business_exceeded) limitCard.append(el('div', { class: 'load-notice danger' }, 'Grenze überschritten – umsatzsteuerliche Behandlung prüfen.'));
-        else if (percent >= Number(rep.settings.warning_percent || 90)) limitCard.append(el('div', { class: 'load-notice' }, 'Warnschwelle erreicht – Entwicklung prüfen.'));
+            el('div', { class: 'tax-limit-head' }, el('h3', {}, 'Kleinunternehmer · Umsatzprüfung'), el('b', {}, 'Nicht geprüft')),
+            el('div', { class: 'card-meta' }, eur(rep.total_by_date) + ' erfasste Zahlungseingänge · kein Nachweis der Umsatzgrenze'),
+            el('p', { class: 'card-meta' }, 'Leistungsumsätze, weitere unternehmerische Umsätze und das Vorjahr müssen gesondert geprüft werden. Parkrr ändert daraus weder Steuersatz noch bestehende Beträge.'));
         page.append(limitCard);
 
         const ruleCheck = el('input', { type: 'checkbox', id: 'tax_rule_full' }); ruleCheck.checked = taxRule;
@@ -3053,8 +3051,8 @@ import { createAPI } from './api.js';
         const shifted = rep.shifted_in.length + rep.shifted_out.length;
         page.append(el('details', { class: 'card tax-details' }, el('summary', {}, '15-Tage-Regel' + (shifted ? ' · ' + shifted + ' Prüfposten' : '')),
             el('label', { class: 'switch' }, ruleCheck, el('span', { class: 'track' }),
-                el('span', {}, 'Wiederkehrende Einnahmen am Jahreswechsel dem Leistungsjahr zurechnen')),
-            el('p', { class: 'card-meta' }, 'Nur anwenden, wenn auch die Fälligkeit im 15-Tage-Fenster liegt. Parkrr schlägt vor; die Entscheidung bleibt bei dir.'),
+                el('span', {}, 'Unbestätigte Jahreswechsel-Zuordnung simulieren')),
+            el('p', { class: 'card-meta' }, 'Nur eine Prüfsimulation für Einnahmen, keine bestätigte Steuerzuordnung. Fälligkeit und Regelmäßigkeit sind nicht geprüft; Ausgaben werden nicht umgeordnet. Abschlusskorrekturen gesondert bestätigen.'),
             shifted ? taxShiftList(rep) : el('div', { class: 'card-meta' }, 'Keine betroffene Zahlung.')));
 
         const monthCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Einnahmen pro Monat · ' + rep.year));
@@ -9818,7 +9816,7 @@ import { createAPI } from './api.js';
             box.append(cell);
         }
     }
-    function showLogin() {
+    function showLogin(logoutFailed = false) {
         $('#app-view').hidden = true;
         $('#login-view').hidden = false;
         paintLoginBays();
@@ -9845,9 +9843,29 @@ import { createAPI } from './api.js';
         if (or) or.hidden = !showPk || pkOnly;
         if (!pkOnly) $('#login-username').focus();
         else if (pkBtn) pkBtn.focus();
+        $('#logout-pending')?.remove();
+        $('#login-form').hidden = logoutFailed;
+        if (logoutFailed) {
+            // Local privacy lock is not proof that the server session was revoked.
+            if (pkBtn) pkBtn.hidden = true;
+            if (or) or.hidden = true;
+            const retry = el('button', { class: 'btn btn-primary', type: 'button', onclick: async () => {
+                retry.disabled = true;
+                await logout();
+            } }, 'Abmeldung erneut versuchen');
+            const notice = el('div', { id: 'logout-pending', class: 'load-notice', role: 'alert' },
+                el('p', {}, 'Abmeldung nicht bestätigt. Die Ansicht ist gesperrt, die Serversitzung kann aber noch aktiv sein.'), retry);
+            $('#login-form').before(notice);
+            retry.focus();
+        }
     }
     async function logout() {
-        try { await api.post('/auth/logout'); } catch { /* ignore */ }
+        let logoutFailed = false;
+        try { sessionStorage.setItem('parkrr.logoutPending', '1'); } catch { /* storage may be unavailable */ }
+        try {
+            await api.post('/auth/logout');
+            try { sessionStorage.removeItem('parkrr.logoutPending'); } catch { /* storage may be unavailable */ }
+        } catch { logoutFailed = true; }
         state.user = null;
         // Die Oberfläche wird beim Abmelden NICHT neu geladen — die Anwendung bleibt
         // dieselbe Seite. Ohne das Zurücksetzen erbte der nächste Anmeldende am selben
@@ -9872,7 +9890,7 @@ import { createAPI } from './api.js';
         // Ein offener Dialog (z. B. ein Formular, dessen Speichern an der
         // abgelaufenen Sitzung scheiterte) läge sonst modal über der Anmeldung.
         document.querySelectorAll('dialog[open]').forEach((d) => d.close());
-        showLogin();
+        showLogin(logoutFailed);
     }
 
     // ---------- passkeys (WebAuthn) ----------
@@ -10652,8 +10670,14 @@ import { createAPI } from './api.js';
         setupInstallPrompt();
         setupOfflineIndicator();
         try { state.capabilities = await api.get('/auth/capabilities'); } catch { state.capabilities = {}; }
-        try { state.user = await api.get('/auth/me'); showApp(); }
-        catch { showLogin(); }
+        let logoutPending = false;
+        try { logoutPending = sessionStorage.getItem('parkrr.logoutPending') === '1'; } catch { /* storage may be unavailable */ }
+        if (logoutPending) {
+            await logout(); // Reload must not silently reopen an unconfirmed logout.
+        } else {
+            try { state.user = await api.get('/auth/me'); showApp(); }
+            catch { showLogin(); }
+        }
         // View steht (synchron in showApp/showLogin gesetzt) — Blaupause freigeben.
         // Vorher blieb sie waehrend der Auth-Roundtrips als Post-Login-Grund sichtbar.
         document.documentElement.classList.remove('preboot');

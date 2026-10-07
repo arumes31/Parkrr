@@ -243,7 +243,10 @@ func writeInvoicePDF(w http.ResponseWriter, iv invoice) {
 
 	// Payment details — omitted on canceled/storno documents (nothing to pay).
 	iban, bic := snapStr(seller, "iban"), snapStr(seller, "bic")
-	if iban != "" && !iv.Canceled && iv.CancelsID == nil {
+	if !iv.Canceled && iv.CancelsID == nil && iv.OpenAmount <= 0.005 {
+		pdf.MultiCell(usableW, 4.6, tr("Ausgeglichen – kein offener Zahlbetrag (Stand dieser Darstellung)."), "", "L", false)
+	}
+	if iban != "" && !iv.Canceled && iv.CancelsID == nil && iv.OpenAmount > 0.005 {
 		pay := "Zahlbar auf IBAN " + iban
 		if bic != "" {
 			pay += "  ·  BIC " + bic
@@ -256,12 +259,8 @@ func writeInvoicePDF(w http.ResponseWriter, iv invoice) {
 		pdf.MultiCell(usableW, 4.6, tr(pay), "", "L", false)
 		pdf.Ln(1)
 
-		// SEPA "Girocode" QR: scan to pre-fill the transfer. Use the open amount if
-		// there is one, else the total (a paid invoice still documents how it was paid).
+		// A payment action always uses the current remainder, never the historical total.
 		qrAmount := iv.OpenAmount
-		if qrAmount <= 0.005 {
-			qrAmount = iv.Total
-		}
 		if payload, problem := epcPayload(snapStr(seller, "name"), iban, bic, qrAmount, iv.Number); problem == "" {
 			if qrBytes, err := qrPNG(payload, 240); err == nil {
 				pdf.RegisterImageOptionsReader("payqr", fpdf.ImageOptions{ImageType: "PNG"}, bytes.NewReader(qrBytes))

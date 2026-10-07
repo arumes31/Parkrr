@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -50,26 +51,21 @@ func ensureVehicleWritable(w http.ResponseWriter, archived bool, scanErr error) 
 // vehicles. Archiving never touches billing – it only affects list/edit
 // visibility – so it is safe to run after any status/payment change.
 func (h *Handler) autoArchiveIfClosed(r *http.Request, id int64) {
-	ct, err := h.Pool.Exec(r.Context(),
-		`UPDATE vehicles SET archived=true, updated_at=now()
-		 WHERE id=$1 AND archived=false
-		   AND (status='cancelled'
-		        -- paid only closes the vehicle when the settlement reaches its last
-		        -- day: rent after paid_through is still owed and invoiced (BIL-02),
-		        -- and an archived vehicle is never invoiced.
-		        OR (status='collected' AND paid AND paid_through >= end_date)
-		        -- collected + settled through invoice(s): has a covering non-canceled
-		        -- invoice and none of them is still open (all fully paid).
-		        OR (status='collected'
-		            AND EXISTS (SELECT 1 FROM invoice_source s JOIN invoices i ON i.id=s.invoice_id
-		                        WHERE s.kind='vehicle' AND s.ref_id=$1 AND NOT i.canceled)
-		            AND NOT EXISTS (SELECT 1 FROM invoice_source s JOIN invoices i ON i.id=s.invoice_id
-		                            WHERE s.kind='vehicle' AND s.ref_id=$1 AND NOT i.canceled
-		                              AND (i.total - i.paid_amount) > 0.005)))`, id)
-	if err == nil && ct.RowsAffected() > 0 {
-		h.auditChange(r, "update", "vehicle", id,
-			"Gefährt archiviert (abgeschlossen): "+h.vehicleDesc(r, id),
+	err := pgx.BeginFunc(r.Context(), h.Pool, func(tx pgx.Tx) error {
+		if err := lockFinancialSourceTx(r.Context(), tx, "vehicle", id, 0); err != nil {
+			return err
+		}
+		ct, err := tx.Exec(r.Context(), `UPDATE vehicles v SET archived=true, updated_at=now()
+		 WHERE v.id=$1 AND NOT v.archived AND (`+vehicleArchivePredicate+`)`, id, businessDay(h.now()))
+		if err != nil || ct.RowsAffected() == 0 {
+			return err
+		}
+		return h.auditChangeTx(r.Context(), tx, r, "update", "vehicle", id,
+			"Gefährt archiviert (abgeschlossen)",
 			diffFields(map[string]any{"archived": false}, map[string]any{"archived": true}))
+	})
+	if err != nil {
+		slog.Error("vehicle auto-archive failed", "vehicle_id", id, "err", err)
 	}
 }
 
@@ -528,6 +524,9 @@ func (h *Handler) UpdateVehicle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	var oldStatus, oldPeriod string
+	if !lockFinancialSource(w, r, tx, "vehicle", id, pv.req.PersonID) {
+		return
+	}
 	var oldRate float64
 	var oldStart time.Time
 	var oldPersonID int64
@@ -553,6 +552,12 @@ func (h *Handler) UpdateVehicle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Fallback is the existing rate, so an omitted rate keeps the locked price.
+	if err := h.guardInvoicedPartialExtension(r.Context(), tx, "vehicle", id, oldEnd, pv.endDate, oldPeriod); err != nil {
+		if !writeSettlementConflict(w, err) {
+			serverError(w, r, "could not check billed rental end", err)
+		}
+		return
+	}
 	rate := effectiveRate(pv.req, oldRate)
 	costOverride := persistedCostOverride(pv.req, oldCostOverride)
 	// Freeze the billing-defining fields once a period is invoiced: changing
@@ -605,7 +610,7 @@ func (h *Handler) UpdateVehicle(w http.ResponseWriter, r *http.Request) {
 		`UPDATE vehicles SET person_id=$1, category_id=$2, label=$3, license_plate=$4,
 		        notes=$5, billing_period=$6, rate=$7, cost_override=$8, start_date=$9,
 		        end_date=$10, status=$11, reserved_from=$12, reserved_until=$13, needs_power=$14,
-		        planner_symbol=$15, updated_at=now()
+		        planner_symbol=$15, spot_id=CASE WHEN $11 IN ('collected','cancelled') THEN NULL ELSE spot_id END, updated_at=now()
 		 WHERE id=$16`,
 		pv.req.PersonID, pv.req.CategoryID, pv.req.Label, pv.req.LicensePlate,
 		pv.req.Notes, pv.req.BillingPeriod, rate, costOverride,
@@ -726,6 +731,9 @@ func (h *Handler) DeleteVehicle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	var lockedID int64
+	if !lockFinancialSource(w, r, tx, "vehicle", id, 0) {
+		return
+	}
 	if err := tx.QueryRow(r.Context(), `SELECT id FROM vehicles WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "vehicle not found")
@@ -807,10 +815,60 @@ func (h *Handler) ChangeVehicleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	var oldStatus string
 	var oldEnd *time.Time // a status change can set or clear the end date — audit it
+	var start time.Time
+	var personID int64
 	var archived bool
-	scanErr := h.Pool.QueryRow(r.Context(),
-		`SELECT status, archived, end_date FROM vehicles WHERE id=$1`, id).Scan(&oldStatus, &archived, &oldEnd)
+	ctx := r.Context()
+	tx, err := h.Pool.Begin(ctx)
+	if err != nil {
+		serverError(w, r, "could not change status", err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := tx.QueryRow(ctx, `SELECT person_id FROM vehicles WHERE id=$1`, id).Scan(&personID); err != nil {
+		ensureVehicleWritable(w, false, err)
+		return
+	}
+	if err := lockInvoicePersonTx(ctx, tx, personID); err != nil {
+		serverError(w, r, "could not change status", err)
+		return
+	}
+	var lockedPersonID int64
+	scanErr := tx.QueryRow(ctx,
+		`SELECT status, archived, end_date, start_date, person_id FROM vehicles WHERE id=$1 FOR UPDATE`, id).
+		Scan(&oldStatus, &archived, &oldEnd, &start, &lockedPersonID)
 	if !ensureVehicleWritable(w, archived, scanErr) {
+		return
+	}
+	if lockedPersonID != personID {
+		writeError(w, http.StatusConflict, "Kundenzuordnung wurde geändert – bitte neu laden")
+		return
+	}
+	var billingPeriod string
+	if err := tx.QueryRow(ctx, `SELECT billing_period FROM vehicles WHERE id=$1`, id).Scan(&billingPeriod); err != nil {
+		serverError(w, r, "could not check rental period", err)
+		return
+	}
+	var proposedEnd *time.Time
+	if req.Status == models.StatusCollected || req.Status == models.StatusCancelled {
+		end := businessDay(h.now())
+		if oldEnd != nil {
+			end = *oldEnd
+		}
+		if trim(req.Date) != "" {
+			parsed, err := time.Parse(dateLayout, trim(req.Date))
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
+				return
+			}
+			end = parsed
+		}
+		proposedEnd = &end
+	}
+	if err := h.guardInvoicedPartialExtension(ctx, tx, "vehicle", id, oldEnd, proposedEnd, billingPeriod); err != nil {
+		if !writeSettlementConflict(w, err) {
+			serverError(w, r, "could not check billed rental end", err)
+		}
 		return
 	}
 	// When collecting, set the pickup/end date: use the caller-supplied date if
@@ -832,28 +890,52 @@ func (h *Handler) ChangeVehicleStatus(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
 			return
 		}
+		if end.Before(start) {
+			writeError(w, http.StatusBadRequest, "Enddatum darf nicht vor Mietbeginn liegen")
+			return
+		}
 		// A back-dated close must not fall below an already-invoiced period — that
 		// would drop it from accrual while its payment stays → phantom Guthaben
 		// (mirrors the UpdateVehicle guard).
-		if retract, ierr := h.endDateRetractsBelowInvoiced(r.Context(), h.Pool, "vehicle", id, &end); ierr != nil {
+		if retract, ierr := h.endDateRetractsBelowInvoiced(ctx, tx, "vehicle", id, &end); ierr != nil {
 			writeError(w, http.StatusInternalServerError, "could not check invoices")
 			return
 		} else if retract {
 			writeError(w, http.StatusConflict, "Enddatum liegt vor einer fakturierten Periode – Storno über die Rechnung")
 			return
 		}
-		ct, uerr = h.Pool.Exec(r.Context(),
-			`UPDATE vehicles SET status=$1, end_date=$2, updated_at=now() WHERE id=$3`,
+		ct, uerr = tx.Exec(ctx,
+			`UPDATE vehicles SET status=$1, end_date=$2, spot_id=NULL, updated_at=now() WHERE id=$3`,
 			req.Status, end, id)
 	case req.Status == models.StatusCollected || req.Status == models.StatusCancelled:
-		ct, uerr = h.Pool.Exec(r.Context(),
-			`UPDATE vehicles SET status=$1, end_date=COALESCE(end_date, $2::date), updated_at=now() WHERE id=$3`,
-			req.Status, h.now().Format(dateLayout), id)
+		end := businessDay(h.now())
+		if oldEnd != nil {
+			end = *oldEnd
+		}
+		// Cancelling a future reservation closes it without inventing an invalid
+		// rental interval; collection, in contrast, must have a valid actual date.
+		if end.Before(start) && req.Status == models.StatusCancelled {
+			end = start
+		}
+		if end.Before(start) {
+			writeError(w, http.StatusBadRequest, "Enddatum darf nicht vor Mietbeginn liegen")
+			return
+		}
+		if retract, err := h.endDateRetractsBelowInvoiced(ctx, tx, "vehicle", id, &end); err != nil {
+			serverError(w, r, "could not check invoices", err)
+			return
+		} else if retract {
+			writeError(w, http.StatusConflict, "Enddatum liegt vor einer fakturierten Periode – Storno über die Rechnung")
+			return
+		}
+		ct, uerr = tx.Exec(ctx,
+			`UPDATE vehicles SET status=$1, end_date=$2, spot_id=NULL, updated_at=now() WHERE id=$3`,
+			req.Status, end, id)
 	default:
 		// stored / reserved re-open storage: clear any end_date left by a prior
 		// collected/cancelled, otherwise CostInRange stays capped at the stale date
 		// and the (now active-looking) vehicle silently accrues nothing.
-		ct, uerr = h.Pool.Exec(r.Context(),
+		ct, uerr = tx.Exec(ctx,
 			`UPDATE vehicles SET status=$1, end_date=NULL, updated_at=now() WHERE id=$2`, req.Status, id)
 	}
 	// Don't record history/audit for a write that never landed: a swallowed error
@@ -867,14 +949,27 @@ func (h *Handler) ChangeVehicleStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "vehicle not found")
 		return
 	}
-	h.recordStatus(r, id, oldStatus, req.Status, trim(req.Note))
+	if err := h.recordStatusTx(r, tx, id, oldStatus, req.Status, trim(req.Note)); err != nil {
+		serverError(w, r, "could not record status history", err)
+		return
+	}
 	// Re-read the end date: the branches above set, keep or clear it.
 	var newEnd *time.Time
-	_ = h.Pool.QueryRow(r.Context(), `SELECT end_date FROM vehicles WHERE id=$1`, id).Scan(&newEnd)
-	h.auditChange(r, "update", "vehicle", id,
-		"Status "+h.vehicleDesc(r, id)+": "+oldStatus+" → "+req.Status,
+	if err := tx.QueryRow(ctx, `SELECT end_date FROM vehicles WHERE id=$1`, id).Scan(&newEnd); err != nil {
+		serverError(w, r, "could not read status", err)
+		return
+	}
+	if err := h.auditChangeTx(ctx, tx, r, "update", "vehicle", id,
+		"Status Gefährt #"+strconv.FormatInt(id, 10)+": "+oldStatus+" → "+req.Status,
 		diffFields(map[string]any{"status": oldStatus, "end_date": auditDate(oldEnd)},
-			map[string]any{"status": req.Status, "end_date": auditDate(newEnd)}))
+			map[string]any{"status": req.Status, "end_date": auditDate(newEnd)})); err != nil {
+		serverError(w, r, "could not record status audit", err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		serverError(w, r, "could not change status", err)
+		return
+	}
 	h.autoArchiveIfClosed(r, id)
 	h.writeVehicle(w, r.Context(), id, http.StatusOK)
 }
@@ -975,6 +1070,22 @@ func (h *Handler) MarkPaid(w http.ResponseWriter, r *http.Request) {
 		// (BIL-05).
 		if err := lockInvoicePersonTx(r.Context(), tx, personID); err != nil {
 			return err
+		}
+		var lockedPerson int64
+		if err := tx.QueryRow(r.Context(), `SELECT person_id,archived,paid,paid_through FROM vehicles WHERE id=$1 FOR UPDATE`, id).
+			Scan(&lockedPerson, &archived, &curPaid, &curThrough); err != nil {
+			return err
+		}
+		if lockedPerson != personID || archived {
+			return &settlementConflictError{msg: "Gefährt wurde zwischenzeitlich geändert – bitte neu laden"}
+		}
+		newThrough = curThrough
+		if req.Paid && !curPaid {
+			var err error
+			amt, bound, err = h.toggleOwedFrom(r, tx, "vehicle", id, personID)
+			if err != nil {
+				return err
+			}
 		}
 		if req.Paid && !curPaid {
 			// A vehicle already billed by an active invoice is settled through that
@@ -1127,7 +1238,7 @@ func (h *Handler) DuplicateVehicle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	start := time.Now()
+	start := businessDay(h.now())
 	if trim(req.StartDate) != "" {
 		if !validDateLength(trim(req.StartDate)) {
 			writeError(w, http.StatusBadRequest, "start_date is too long")
@@ -1141,12 +1252,21 @@ func (h *Handler) DuplicateVehicle(w http.ResponseWriter, r *http.Request) {
 		start = s
 	}
 
+	ctx := r.Context()
+	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		serverError(w, r, "could not duplicate vehicle", err)
+		return
+	}
+	defer tx.Rollback(ctx)
 	var newID int64
-	err := h.Pool.QueryRow(r.Context(),
+	err = tx.QueryRow(ctx,
 		`INSERT INTO vehicles (person_id, category_id, label, license_plate, notes,
-		        billing_period, rate, cost_override, start_date, status)
+		        billing_period, rate, cost_override, start_date, status,
+		        length_m, width_m, height_m, weight_t, needs_power, planner_symbol)
 		 SELECT person_id, category_id, label, license_plate, notes,
-		        billing_period, rate, cost_override, $2, 'stored'
+		        billing_period, rate, cost_override, $2, 'stored',
+		        length_m, width_m, height_m, weight_t, needs_power, planner_symbol
 		 FROM vehicles WHERE id = $1
 		 RETURNING id`, id, start).Scan(&newID)
 	if err != nil {
@@ -1159,14 +1279,26 @@ func (h *Handler) DuplicateVehicle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Copy the photos so the new period reuses the existing images.
-	_, _ = h.Pool.Exec(r.Context(),
-		`INSERT INTO vehicle_photos (vehicle_id, filename, content_type, byte_size, data)
-		 SELECT $1, filename, content_type, byte_size, data
-		 FROM vehicle_photos WHERE vehicle_id = $2`, newID, id)
-
-	h.recordStatus(r, newID, "", models.StatusStored, "erneut eingestellt")
-	h.auditCreated(r, "vehicle", newID, "re-stored vehicle from #"+strconv.FormatInt(id, 10),
-		map[string]any{"restored_from_vehicle_id": id, "status": models.StatusStored})
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO vehicle_photos (vehicle_id, filename, content_type, byte_size, data, sort_order)
+		 SELECT $1, filename, content_type, byte_size, data, sort_order
+		 FROM vehicle_photos WHERE vehicle_id = $2 ORDER BY sort_order, id`, newID, id); err != nil {
+		serverError(w, r, "could not copy vehicle photos", err)
+		return
+	}
+	if err := h.recordStatusTx(r, tx, newID, "", models.StatusStored, "erneut eingestellt"); err != nil {
+		serverError(w, r, "could not copy vehicle history", err)
+		return
+	}
+	if err := h.auditCreatedTx(ctx, tx, r, "vehicle", newID, "re-stored vehicle from #"+strconv.FormatInt(id, 10),
+		map[string]any{"restored_from_vehicle_id": id, "status": models.StatusStored}); err != nil {
+		serverError(w, r, "could not record vehicle copy", err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		serverError(w, r, "could not duplicate vehicle", err)
+		return
+	}
 	h.writeVehicle(w, r.Context(), newID, http.StatusCreated)
 }
 
@@ -1233,14 +1365,18 @@ func scanVehicleRow(row rowScanner) (models.Vehicle, models.Category, error) {
 // paying the invoice closes the vehicle out, mirroring autoArchiveIfClosed's
 // invoice branch for the bulk (one payment can settle several invoices/vehicles).
 func (h *Handler) archiveInvoiceSettledCollected(ctx context.Context, personID int64) {
-	_, _ = h.Pool.Exec(ctx,
-		`UPDATE vehicles v SET archived=true, updated_at=now()
+	err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+		if err := lockInvoicePersonTx(ctx, tx, personID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE vehicles v SET archived=true, updated_at=now()
 		  WHERE v.person_id=$1 AND v.archived=false AND v.status='collected'
-		    AND EXISTS (SELECT 1 FROM invoice_source s JOIN invoices i ON i.id=s.invoice_id
-		                WHERE s.kind='vehicle' AND s.ref_id=v.id AND NOT i.canceled)
-		    AND NOT EXISTS (SELECT 1 FROM invoice_source s JOIN invoices i ON i.id=s.invoice_id
-		                    WHERE s.kind='vehicle' AND s.ref_id=v.id AND NOT i.canceled
-		                      AND (i.total - i.paid_amount) > 0.005)`, personID)
+		    AND (`+vehicleArchivePredicate+`)`, personID, businessDay(h.now()))
+		return err
+	})
+	if err != nil {
+		slog.Error("invoice vehicle auto-archive failed", "person_id", personID, "err", err)
+	}
 }
 
 // setVehicleInvoiceStatus fills Invoiced/InvoiceOpen for each vehicle from the

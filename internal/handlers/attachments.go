@@ -232,7 +232,7 @@ func (h *Handler) GetAttachment(w http.ResponseWriter, r *http.Request) {
 		return r
 	}, filename)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+safe+`"`)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("Cache-Control", "private, no-store")
 	_, _ = w.Write(data)
 }
 

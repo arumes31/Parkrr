@@ -18,6 +18,29 @@ function forbidden(error) {
         json: async () => ({ error }) };
 }
 
+test('unconfirmed logout stays locally locked until a successful retry', async () => {
+    const stored = new Map();
+    const views = [];
+    let fail = true;
+    const state = { user: { id: 1 } };
+    const logout = vm.runInNewContext(
+        section('    let twoFARedirected =', '    // ---------- state ----------') +
+        section('    async function logout()', '    // ---------- passkeys (WebAuthn) ----------') + '\nlogout;',
+        { state, api: { post: async () => { if (fail) throw new Error('offline'); } },
+            sessionStorage: { setItem: (key, value) => stored.set(key, value), removeItem: key => stored.delete(key) },
+            totalCounts: new Map(), listState: new Map(), bulkSel: new Set(), bulkMode: false,
+            twoFARedirected: false, mfaLogoutPending: null, dashYear: null, calMonth: null,
+            document: { querySelectorAll: () => [] }, showLogin: failed => views.push(failed) });
+    await logout();
+    assert.equal(state.user, null);
+    assert.equal(stored.get('parkrr.logoutPending'), '1');
+    assert.deepEqual(views, [true]);
+    fail = false;
+    await logout();
+    assert.equal(stored.has('parkrr.logoutPending'), false);
+    assert.deepEqual(views, [true, false]);
+});
+
 test('concurrent MFA failures log out and warn once, then reset for the next session', async () => {
     let logoutCalls = 0;
     let loginViews = 0;

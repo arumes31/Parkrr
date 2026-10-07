@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -520,12 +521,16 @@ func (m *Manager) slide(ctx context.Context, w http.ResponseWriter, r *http.Requ
 }
 
 // DestroySession removes the current session and clears cookies.
-func (m *Manager) DestroySession(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (m *Manager) DestroySession(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
 	if c, err := r.Cookie(SessionCookie); err == nil {
-		_, _ = m.pool.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, hashToken(c.Value))
+		if _, err := m.pool.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, hashToken(c.Value)); err != nil {
+			// Keep the cookie so a retry can revoke the same server-side session.
+			return fmt.Errorf("revoke session: %w", err)
+		}
 	}
 	m.clearCookie(w, SessionCookie)
 	m.clearCookie(w, CSRFCookie)
+	return nil
 }
 
 func (m *Manager) clearCookie(w http.ResponseWriter, name string) {
