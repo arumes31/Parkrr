@@ -10,6 +10,9 @@ const root = path.resolve(__dirname, '../..');
 const reportDir = path.join(root, 'docs/anwendungsreview');
 const reportUrl = pathToFileURL(path.join(reportDir, 'index.html')).href;
 const output = path.join(reportDir, 'evidence');
+const followup = JSON.parse(fs.readFileSync(path.join(reportDir, 'review-followup.json'), 'utf8'));
+// Keep the previous report's evidence intact when verifying this follow-up.
+const evidencePrefix = 'r08-answers';
 const answerKey = 'parkrr.review.answers.v1';
 // Allows a test-harness-only retry without repeating the bounded visual QA pass.
 const functionalOnly = process.argv.includes('--functional-only');
@@ -41,6 +44,19 @@ async function importAnswers(page, value) {
         assert.equal(await page.locator('.current-item:visible').count(), 10);
         assert.equal(await page.locator('#historical-audit').getAttribute('open'), null);
         assert.equal(await page.locator('h1').count(), 1);
+    });
+    await check('Received answers and recommendations are distinct from unshared drafts', async () => {
+        assert.match(await page.locator('#answer-state-Q03').textContent(), /Aktuell geklärt/);
+        assert.match(await page.locator('#answer-state-Q04').textContent(), /Bisher kein Bedarf/);
+        assert.match(await page.locator('#answer-state-Q01').textContent(), /Teilweise geklärt/);
+        assert.match(await page.locator('#answer-state-Q02').textContent(), /Angaben fehlen/);
+        for (const id of ['Q05', 'Q06']) assert.match(await page.locator('#answer-state-' + id).textContent(), /Vorschlag zur Bestätigung/);
+        assert.match(await page.locator('#question-Q03 .received-answer').textContent(), /ein steuerobjekt aktuell/);
+        assert.match(await page.locator('#question-Q05').textContent(), /noch nicht freigegeben oder implementiert/);
+        assert.equal(await page.locator('#answer-Q03').inputValue(), '');
+        assert.match(await page.locator('#answer-count').textContent(), /Ergänzungsentwurf/);
+        assert.match(await page.locator('#current-R08').textContent(), /Exportformat 3/);
+        assert.match(await page.locator('#current-R08').textContent(), /Gesamtpaket noch nicht/);
     });
     await check('Status filters, search, empty state and reset', async () => {
         for (const [filter, count] of [['Umgesetzt', 15], ['Teilweise', 6], ['Offen', 4], ['all', 25], ['unfinished', 10]]) {
@@ -91,7 +107,8 @@ async function importAnswers(page, value) {
         exported = JSON.parse(await downloadText(await jsonDownload));
         assert.equal(exported.answers.length, 6);
         assert.equal(exported.codeStatus.items.length, 25);
-        assert.equal(exported.codeStatus.commit, '8e6ec0f');
+        assert.equal(exported.codeStatus.commit, followup.codeCommit);
+        assert.deepEqual(exported.receivedAnswers.items, followup.receivedAnswers);
         assert.equal(exported.answers[0].text, 'Synthetischer QA-Entwurf: 2025 und 2026');
         const textDownload = page.waitForEvent('download');
         await page.locator('#answers-text').click();
@@ -99,6 +116,8 @@ async function importAnswers(page, value) {
         assert.match(text, /Q06/);
         assert.match(text, /kein Rechnungsablauf/);
         assert.match(text, /Synthetischer QA-Entwurf/);
+        assert.match(text, /Bereits übermittelt: ein steuerobjekt/);
+        assert.match(text, /Empfehlung \(nicht freigegeben\)/);
     });
     await check('Invalid imports are rejected atomically', async () => {
         for (const bad of [
@@ -117,6 +136,7 @@ async function importAnswers(page, value) {
     await check('Valid import: cancel preserves answers, confirm imports text safely', async () => {
         const imported = structuredClone(exported);
         imported.answers[1].text = '</textarea><img src=x onerror="window.reportXSS=1">';
+        imported.receivedAnswers.items.Q03.text = 'Forged confirmed answer';
         page.once('dialog', dialog => dialog.dismiss());
         await importAnswers(page, imported);
         await page.waitForFunction(() => document.getElementById('answers-file').value === '');
@@ -126,6 +146,7 @@ async function importAnswers(page, value) {
         await page.waitForFunction(() => document.getElementById('answers-flash').textContent.startsWith('Antwortentwürfe importiert'));
         assert.equal(await page.locator('#answer-Q02').inputValue(), imported.answers[1].text);
         assert.equal(await page.evaluate(() => window.reportXSS), undefined);
+        assert.match(await page.locator('#question-Q03 .received-answer').textContent(), /ein steuerobjekt aktuell/);
         assert.deepEqual(await page.locator('.current-item').evaluateAll(nodes => nodes.map(n => [n.id, n.dataset.status])), originalStatuses);
     });
     await check('Historic notes survive reload; historical deep links open archive', async () => {
@@ -168,12 +189,17 @@ async function importAnswers(page, value) {
                 assert.deepEqual(serious.map(v => ({ id: v.id, nodes: v.nodes.map(n => n.target) })), []);
             }
             await page.evaluate(() => document.documentElement.classList.remove('light'));
-            await page.screenshot({ path: path.join(output, `status-report-${name}.png`) });
+            await page.screenshot({ path: path.join(output, `${evidencePrefix}-report-${name}.png`) });
             await page.locator('#question-Q03 summary').click();
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'expanded question overflow');
             await page.locator('#question-Q03').scrollIntoViewIfNeeded();
-            await page.screenshot({ path: path.join(output, `status-questions-${name}.png`) });
+            await page.screenshot({ path: path.join(output, `${evidencePrefix}-questions-${name}.png`) });
             await page.locator('#question-Q03 summary').click();
+            await page.locator('#question-Q05 summary').click();
+            assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'recommendation overflow');
+            await page.locator('#question-Q05').scrollIntoViewIfNeeded();
+            await page.screenshot({ path: path.join(output, `${evidencePrefix}-recommendation-${name}.png`) });
+            await page.locator('#question-Q05 summary').click();
             await page.evaluate(() => scrollTo(0, 0));
         });
     }
@@ -189,7 +215,7 @@ async function importAnswers(page, value) {
             return {
                 duplicate: ids.filter((id, i) => ids.indexOf(id) !== i),
                 missing: [...document.querySelectorAll('a[href^="#"]')].map(a => a.hash.slice(1)).filter(id => !document.getElementById(id)),
-                marker: /__(?:PROGRESS|IMPLEMENTATION|REPORT_DATA|FONT|BEFORE_TAX)[A-Z_]*__/.test(document.documentElement.innerHTML)
+                marker: /__(?:PROGRESS|IMPLEMENTATION|REPORT_DATA|FONT|BEFORE_TAX|CODE_COMMIT)[A-Z_]*__/.test(document.documentElement.innerHTML)
             };
         });
         assert.deepEqual(errors, { duplicate: [], missing: [], marker: false });
@@ -219,7 +245,7 @@ async function importAnswers(page, value) {
     await browser.close();
     browser = null;
     const result = { checkedAt: new Date().toISOString(), scope: 'Offline status report only; Chromium file://, synthetic answer drafts, no Parkrr or Docker access', mode: functionalOnly ? 'functional-only; visual QA not repeated' : 'full', checks, failures };
-    fs.writeFileSync(path.join(output, functionalOnly ? 'status-report-functional-checks.json' : 'status-report-checks.json'), JSON.stringify(result, null, 2) + '\n');
+    fs.writeFileSync(path.join(output, `${evidencePrefix}-${functionalOnly ? 'functional-checks' : 'checks'}.json`), JSON.stringify(result, null, 2) + '\n');
     console.log(JSON.stringify(result, null, 2));
     if (failures.length) process.exitCode = 1;
 })().catch(async error => { console.error(error); if (browser) await browser.close(); process.exitCode = 1; });
