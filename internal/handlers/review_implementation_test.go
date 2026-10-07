@@ -262,7 +262,7 @@ func TestReviewTaxExportStableIDsAndManifest(t *testing.T) {
 		Version int `json:"version"`
 		Year    int `json:"year"`
 	}
-	if err := json.Unmarshal(entries["manifest.json"], &manifest); err != nil || manifest.Version != 2 || manifest.Year != 2094 {
+	if err := json.Unmarshal(entries["manifest.json"], &manifest); err != nil || manifest.Version != 3 || manifest.Year != 2094 {
 		t.Fatalf("manifest: %+v %v", manifest, err)
 	}
 	if !bytes.Contains(entries["einnahmen.csv"], []byte("payment_id;person_id;steuerobjekt_id")) || !bytes.Contains(entries["zuordnungen.csv"], []byte("allocation_id;payment_id")) {

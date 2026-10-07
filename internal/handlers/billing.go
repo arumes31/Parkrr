@@ -1096,6 +1096,11 @@ func (h *Handler) CancelInvoice(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		// Release any payments tied to the original -> back to on-account (Guthaben).
+		var releasedInvoicePayments json.RawMessage
+		if err := tx.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(ip) ORDER BY ip.id),'[]'::jsonb)
+			FROM invoice_payments ip WHERE ip.invoice_id=$1`, id).Scan(&releasedInvoicePayments); err != nil {
+			return fmt.Errorf("capture canceled invoice payment links: %w", err)
+		}
 		if _, err := tx.Exec(r.Context(), `DELETE FROM invoice_payments WHERE invoice_id=$1`, id); err != nil {
 			return err
 		}
@@ -1107,7 +1112,12 @@ func (h *Handler) CancelInvoice(w http.ResponseWriter, r *http.Request) {
 			Kleinunternehmer: o.klein, Note: note, CancelsID: &id}
 		// Both trail rows commit with the Storno itself (atomic).
 		if err := h.auditChangeTx(r.Context(), tx, r, "update", "invoice", id, "storniert – Gegenbeleg "+number,
-			diffFields(map[string]any{"canceled": false}, map[string]any{"canceled": true})); err != nil {
+			map[string]any{
+				"canceled":                    map[string]any{"old": false, "new": true},
+				"released_invoice_payments":   releasedInvoicePayments,
+				"cancellation_invoice_id":     stornoID,
+				"cancellation_invoice_number": number,
+			}); err != nil {
 			return err
 		}
 		// The counter-document is a distinct gapless-numbered Beleg — audit its issuance

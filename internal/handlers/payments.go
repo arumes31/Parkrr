@@ -1228,6 +1228,15 @@ func (h *Handler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 		// row is KEPT and flagged reversed (excluded from every money sum, retained
 		// for audit); its allocations and invoice links are removed so the settlement
 		// is undone. Re-reversing (already reversed) affects no row → not found.
+		var releasedAllocations, releasedInvoicePayments json.RawMessage
+		if err := tx.QueryRow(ctx, `SELECT
+			(SELECT COALESCE(jsonb_agg(to_jsonb(a) ORDER BY a.id),'[]'::jsonb)
+			 FROM payment_allocations a WHERE a.payment_id=$1),
+			(SELECT COALESCE(jsonb_agg(to_jsonb(ip) ORDER BY ip.id),'[]'::jsonb)
+			 FROM invoice_payments ip WHERE ip.payment_id=$1)`, id).
+			Scan(&releasedAllocations, &releasedInvoicePayments); err != nil {
+			return fmt.Errorf("capture released payment links: %w", err)
+		}
 		if err := tx.QueryRow(ctx,
 			`UPDATE payments SET reversed=true, reversed_at=now(), reversed_by=$2
 			   WHERE id=$1 AND NOT reversed RETURNING amount, method, paid_on`, id, reversedBy).
@@ -1277,11 +1286,15 @@ func (h *Handler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 		if err := h.reopenUncoveredVehiclesTx(r, tx, vehicleIDs); err != nil {
 			return err
 		}
+		// Preserve the released links in the same transaction, not as extra money.
 		return h.auditChangeTx(ctx, tx, r, "update", "payment", id, fmt.Sprintf(
 			"Zahlung storniert: %.2f € (%s, %s) – Datensatz bleibt erhalten, Zuordnungen zurückgesetzt",
 			delAmt, delMethod, delOn.Format("2006-01-02")),
-			diffFields(map[string]any{"reversed": false, "amount": delAmt, "method": delMethod},
-				map[string]any{"reversed": true, "amount": delAmt, "method": delMethod}))
+			map[string]any{
+				"reversed":                  map[string]any{"old": false, "new": true},
+				"released_allocations":      releasedAllocations,
+				"released_invoice_payments": releasedInvoicePayments,
+			})
 	})
 	if errors.Is(txErr, errPeriodManagedPayment) {
 		writeError(w, http.StatusConflict,

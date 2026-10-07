@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -493,14 +494,15 @@ func (h *Handler) TaxYearPackage(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, "Exportpaket konnte nicht erstellt werden", err)
 		return
 	}
-	// Finish relational queries before streaming blobs, including on a one-connection pool.
-	ids := make([]int64, 0, len(rep.payments))
-	for _, p := range rep.payments {
-		ids = append(ids, p.ID)
-	}
-	var links bytes.Buffer
-	if err := writeTaxAllocationCSV(r.Context(), h.Pool, &links, ids); err != nil {
-		serverError(w, r, "Zuordnungen konnten nicht geladen werden", err)
+	// Complete the read-only history snapshot before streaming receipt blobs;
+	// no second pool connection is needed while receipt rows are open.
+	history, err := h.buildTaxPaymentHistory(r.Context(), rep)
+	if err != nil {
+		if errors.Is(err, errTaxExportChanged) {
+			writeError(w, http.StatusConflict, "Zahlungen wurden während des Exports geändert. Bitte Export erneut starten.")
+			return
+		}
+		serverError(w, r, "Zahlungsverlauf konnte nicht geladen werden", err)
 		return
 	}
 	receipts, err := h.Pool.Query(r.Context(), `
@@ -535,7 +537,17 @@ func (h *Handler) TaxYearPackage(w http.ResponseWriter, r *http.Request) {
 		_ = zw.Close()
 		return
 	}
-	if err := writeBytes("zuordnungen.csv", links.Bytes()); err != nil {
+	if err := writeBytes("zuordnungen.csv", history.Links.Bytes()); err != nil {
+		auth.SetRequestError(r.Context(), err)
+		_ = zw.Close()
+		return
+	}
+	if err := writeBytes("zahlungsverlauf.csv", history.Payments.Bytes()); err != nil {
+		auth.SetRequestError(r.Context(), err)
+		_ = zw.Close()
+		return
+	}
+	if err := writeBytes("zahlungsaudit.csv", history.Audit.Bytes()); err != nil {
 		auth.SetRequestError(r.Context(), err)
 		_ = zw.Close()
 		return
@@ -577,10 +589,18 @@ func (h *Handler) TaxYearPackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	metadata, err := json.MarshalIndent(map[string]any{
-		"format": "parkrr-tax-export", "version": 2, "year": year,
+		"format": "parkrr-tax-export", "version": 3, "year": year,
 		"income_basis": "receipt_date", "rule_simulation": taxRuleParam(r),
 		"income_by_receipt_date": rep.TotalByDate, "expense_total": rep.ExpenseTotal,
 		"depreciation_total": rep.DepreciationTotal, "receipts": entries,
+		"payment_history": map[string]any{
+			"rows": history.Count, "reversed": history.Reversed,
+			"reversals_without_allocation_evidence": history.Unverified,
+			"meaning":                               "documentary_history_not_additional_income_or_refunds",
+			"read_consistency":                      "history_audit_and_current_links_share_repeatable_read_snapshot",
+			"package_single_snapshot":               false,
+			"legacy_history_complete":               false,
+		},
 	}, "", "  ")
 	if err != nil {
 		auth.SetRequestError(r.Context(), err)
@@ -592,8 +612,9 @@ func (h *Handler) TaxYearPackage(w http.ResponseWriter, r *http.Request) {
 		_ = zw.Close()
 		return
 	}
-	manifest := fmt.Sprintf("Parkrr Steuerjahr %d · Exportformat 2\nZahlungen: %d\nAusgabenbuchungen: %d\nBelege: %d\nErstellt: %s\n\nE1b-Zuordnungen sind eine unvollständige Vorschau, keine abgabefertige Erklärung. Keine Steuerberatung.\nZuordnungen sind Verknüpfungen, keine zusätzlichen Einnahmen; Beträge nicht zu einnahmen.csv addieren.\nDie optionale Jahreswechsel-Regel ist eine unbestätigte Simulation für Einnahmen, nicht für Ausgaben.\n",
+	manifest := fmt.Sprintf("Parkrr Steuerjahr %d · Exportformat 3\nZahlungen: %d\nAusgabenbuchungen: %d\nBelege: %d\nErstellt: %s\n\nE1b-Zuordnungen sind eine unvollständige Vorschau, keine abgabefertige Erklärung. Keine Steuerberatung.\nZuordnungen sind Verknüpfungen, keine zusätzlichen Einnahmen; Beträge nicht zu einnahmen.csv addieren.\nDie optionale Jahreswechsel-Regel ist eine unbestätigte Simulation für Einnahmen, nicht für Ausgaben.\n",
 		year, rep.Count, len(rep.Expenses), receiptCount, h.now().Format("02.01.2006 15:04"))
+	manifest += taxPaymentHistoryReadme
 	if err := writeBytes("LESE_MICH.txt", []byte(manifest)); err != nil {
 		auth.SetRequestError(r.Context(), err)
 	}

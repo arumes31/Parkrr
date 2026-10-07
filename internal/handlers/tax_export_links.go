@@ -21,6 +21,9 @@ func writeTaxAllocationCSV(ctx context.Context, q dbQuerier, dst io.Writer, ids 
 		return err
 	}
 	defer rows.Close()
+	if _, err := io.WriteString(dst, "\ufeff"); err != nil {
+		return err
+	}
 	writer := csv.NewWriter(dst)
 	writer.Comma = ';'
 	if err := writer.Write([]string{"beziehung", "allocation_id", "payment_id", "art", "referenz_id", "periode", "invoice_id", "rechnungsnummer", "zugeordnet_eur"}); err != nil {
