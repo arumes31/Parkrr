@@ -91,6 +91,9 @@ func TestTaxYearReport(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
 		t.Fatal(err)
 	}
+	if rep.WriteEnabled || !strings.Contains(rec.Body.String(), `"write_enabled":false`) {
+		t.Fatal("default report must explicitly advertise read-only capability")
+	}
 	if rep.TotalByDate != 210 || rep.Count != 3 {
 		t.Errorf("by date: total %.2f / count %d, want 210 / 3", rep.TotalByDate, rep.Count)
 	}

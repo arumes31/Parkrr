@@ -38,6 +38,7 @@ func setRequired(t *testing.T) {
 
 func TestLoadDefaults(t *testing.T) {
 	setRequired(t)
+	t.Setenv("PARKRR_TAX_WRITES_ENABLED", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -59,6 +60,34 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.BrowserRestore {
 		t.Error("BrowserRestore must default to false")
+	}
+	if cfg.TaxWritesEnabled {
+		t.Error("TaxWritesEnabled must default to false")
+	}
+}
+
+func TestLoadTaxWritesEnabled(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		value    string
+		expected bool
+	}{
+		{name: "unset defaults to read only"},
+		{name: "explicit true enables writes", value: "true", expected: true},
+		{name: "explicit false keeps read only", value: "false"},
+		{name: "invalid value fails closed", value: "enabled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequired(t)
+			t.Setenv("PARKRR_TAX_WRITES_ENABLED", tc.value)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.TaxWritesEnabled != tc.expected {
+				t.Errorf("TaxWritesEnabled = %v, want %v", cfg.TaxWritesEnabled, tc.expected)
+			}
+		})
 	}
 }
 

@@ -60,6 +60,7 @@ func startAppGeneration(
 		return nil, errors.Join(err, g.Drain(drainCtx))
 	}
 	apiHandler.Restore = restores
+	apiHandler.TaxWritesEnabled = cfg.TaxWritesEnabled
 	apiHandler.Readiness = handlers.ReadinessConfig{
 		SMTPFromConfigured: strings.TrimSpace(cfg.SMTPFrom) != "",
 		Require2FA:         cfg.Require2FA,

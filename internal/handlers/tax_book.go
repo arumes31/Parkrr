@@ -485,6 +485,9 @@ func validateTaxPropertyRequest(req *taxPropertyRequest) bool {
 
 // CreateTaxProperty creates a tax object and assigns the selected garages.
 func (h *Handler) CreateTaxProperty(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxPropertyRequest
 	if err := decodeJSON(r, &req); err != nil || !validateTaxPropertyRequest(&req) {
 		writeError(w, http.StatusBadRequest, "Ungültiges Steuerobjekt")
@@ -526,6 +529,9 @@ func (h *Handler) CreateTaxProperty(w http.ResponseWriter, r *http.Request) {
 
 // UpdateTaxProperty updates a tax object and its garage assignments atomically.
 func (h *Handler) UpdateTaxProperty(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -621,6 +627,9 @@ func (h *Handler) GetTaxSettings(w http.ResponseWriter, r *http.Request) {
 
 // SaveTaxSettings validates and persists the singleton tax configuration.
 func (h *Handler) SaveTaxSettings(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxSettings
 	if err := decodeJSON(r, &req); err != nil || req.SmallBusinessLimit <= 0 || req.SmallBusinessLimit > 1e9 ||
 		req.WarningPercent <= 0 || req.WarningPercent > 100 {
@@ -695,6 +704,9 @@ func (h *Handler) ListTaxExpenses(w http.ResponseWriter, r *http.Request) {
 
 // CreateTaxExpense appends a tax-deductible expense entry to an unlocked tax year.
 func (h *Handler) CreateTaxExpense(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxExpenseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Ungültige Ausgabe")
@@ -784,6 +796,9 @@ func (h *Handler) CreateTaxExpense(w http.ResponseWriter, r *http.Request) {
 
 // ReverseTaxExpense appends one immutable counter-entry for an existing expense.
 func (h *Handler) ReverseTaxExpense(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -856,6 +871,9 @@ func (h *Handler) ReverseTaxExpense(w http.ResponseWriter, r *http.Request) {
 
 // UploadTaxReceipt validates and appends a receipt to an expense in an unlocked year.
 func (h *Handler) UploadTaxReceipt(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1051,6 +1069,9 @@ func (h *Handler) ListTaxRecurring(w http.ResponseWriter, r *http.Request) {
 
 // CreateTaxRecurring creates a recurring tax-expense template.
 func (h *Handler) CreateTaxRecurring(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxRecurringRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Ungültige wiederkehrende Ausgabe")
@@ -1095,6 +1116,9 @@ func (h *Handler) CreateTaxRecurring(w http.ResponseWriter, r *http.Request) {
 
 // UpdateTaxRecurring changes whether a recurring template is active.
 func (h *Handler) UpdateTaxRecurring(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1140,6 +1164,9 @@ func (h *Handler) UpdateTaxRecurring(w http.ResponseWriter, r *http.Request) {
 
 // BookTaxRecurring creates one expense from an active recurring template.
 func (h *Handler) BookTaxRecurring(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1243,6 +1270,9 @@ func (h *Handler) ListTaxAssets(w http.ResponseWriter, r *http.Request) {
 
 // CreateTaxAsset adds an asset only when every affected tax year is unlocked.
 func (h *Handler) CreateTaxAsset(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxAssetRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Ungültiges Wirtschaftsgut")
@@ -1290,6 +1320,9 @@ func (h *Handler) CreateTaxAsset(w http.ResponseWriter, r *http.Request) {
 
 // UpdatePaymentTaxMetadata assigns a payment to a tax object and optional receipt date.
 func (h *Handler) UpdatePaymentTaxMetadata(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1409,6 +1442,9 @@ func taxYearPath(r *http.Request) (int, bool) {
 
 // LockTaxYear prevents further ledger changes for one tax year.
 func (h *Handler) LockTaxYear(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	year, ok := taxYearPath(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "Ungültiges Steuerjahr")
@@ -1444,6 +1480,9 @@ func (h *Handler) LockTaxYear(w http.ResponseWriter, r *http.Request) {
 
 // UnlockTaxYear permits ledger changes for a previously locked tax year.
 func (h *Handler) UnlockTaxYear(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	year, ok := taxYearPath(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "Ungültiges Steuerjahr")

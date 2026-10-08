@@ -91,7 +91,10 @@ per vehicle — monthly or yearly, prorated to the day.
   re-opens exactly what it had covered.
 - **Austrian tax-year ledger** — track cash-basis income and immutable expenses
   with receipts, recurring costs, properties, straight-line depreciation and
-  E1b previews; lock a completed year and export a complete adviser ZIP.
+  E1b previews. Read-only by default: inspect existing records, simulate the
+  year boundary, and export adviser files without adopting a bookkeeping workflow.
+  Explicit opt-in enables manual tax entries and year closing; it does not
+  activate invoicing or import externally verified annual adjustments.
 - **Statistics & charts** — revenue/month, status distribution, paid/open, and
   cost per person by month and year (local SVG charts).
 - **CSV import & export** — bulk-import people from a CSV (with a downloadable
@@ -195,6 +198,18 @@ compose network). Schema migrations run automatically at startup.
 | `PARKRR_REQUIRE_2FA` | require verified TOTP/recovery-code or passkey proof for each session; unenrolled accounts can only reach setup, and existing unverified sessions must sign in again | `false` |
 | `PARKRR_PASSKEY_ONLY` | disable password login entirely (passkey sign-in only); requires `PARKRR_WEBAUTHN_RP_ID` | `false` |
 | `PARKRR_AUTO_INVOICE_CRON` | 5-field cron for the automatic invoice run (e.g. `0 6 1 * *`); empty = off; uses the same path as the manual button, billed periods are never invoiced twice | – |
+| `PARKRR_TAX_WRITES_ENABLED` | allow manual tax-book changes, receipt uploads, tax settings, payment tax metadata and year locking/unlocking; `false` keeps tax reports, simulations, receipts and exports read-only | `false` |
+
+Tax-book activation is optional: set `PARKRR_TAX_WRITES_ENABLED=true` and restart
+the application (recreate the container to apply changed environment variables).
+Use the same setting on every app replica. Activation does not book anything,
+issue invoices, import annual corrections, or recalculate agreed prices.
+Returning to `false` blocks further tax changes, but preserves existing expenses,
+depreciation, assignments and closed-year locks. Those locks continue protecting
+ordinary payment changes; unlocking requires explicit tax-write activation.
+The normal booking/payment workflow does not require using the tax module.
+E1b remains a preview, not a verified tax filing. See the
+[operator handbook](docs/betreiber-handbuch.md#steuerbereich-zuerst-nur-lesen-später-aktivieren).
 
 ---
 

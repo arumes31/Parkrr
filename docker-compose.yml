@@ -68,6 +68,8 @@ services:
       PARKRR_TIMEZONE: ${PARKRR_TIMEZONE:-}
       # Automatischer Rechnungslauf als 5-Feld-Cron. LEER = AUS.
       PARKRR_AUTO_INVOICE_CRON: ${PARKRR_AUTO_INVOICE_CRON:-}
+      # Steuerbereich: lesend pruefen; Schreibzugriffe nur nach expliziter Aktivierung.
+      PARKRR_TAX_WRITES_ENABLED: ${PARKRR_TAX_WRITES_ENABLED:-false}
       # Empfaenger fuer Betriebsalarme (fehlgeschlagene Sicherungen). Braucht SMTP.
       PARKRR_ALERT_EMAIL: ${PARKRR_ALERT_EMAIL:-}
       PARKRR_RATE_LIMIT_PER_MIN: ${PARKRR_RATE_LIMIT_PER_MIN:-600}

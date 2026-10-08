@@ -62,7 +62,9 @@ func TestReviewLockedTaxYearRejectsBackdatedPaymentAndReversal(t *testing.T) {
 	lockReq := httptest.NewRequest(http.MethodPost, "/api/tax/years/2097/lock", nil)
 	lockReq.SetPathValue("year", "2097")
 	lockRec := httptest.NewRecorder()
+	h.TaxWritesEnabled = true // Explicitly opt in only to arrange the existing lock.
 	h.LockTaxYear(lockRec, lockReq)
+	h.TaxWritesEnabled = false // Read-only mode must not bypass existing year locks.
 	if lockRec.Code != http.StatusOK {
 		t.Fatalf("fixture lock: %d %s", lockRec.Code, lockRec.Body.String())
 	}

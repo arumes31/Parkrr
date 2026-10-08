@@ -2710,6 +2710,34 @@ import { createAPI } from './api.js';
     // Vorschlag und standardmäßig aus: sie setzt voraus, dass auch die Fälligkeit im
     // Fenster um den Jahreswechsel liegt, und die kennt Parkrr nicht.
     let taxYear = null, taxRule = false;
+    // Missing capability also means read-only (e.g. during a rolling upgrade).
+    function taxWritesEnabled(rep) { return rep.write_enabled === true; }
+    /** Keep forms inspectable without suggesting that a preview can be saved. */
+    function taxFormPreview(rep, form) {
+        if (taxWritesEnabled(rep)) return form;
+        form.prepend(el('p', { class: 'card-meta tax-preview-note' }, 'Formularvorschau · Eingaben und Speichern sind im Lesemodus gesperrt.'));
+        form.querySelectorAll('input, select, textarea, button').forEach(control => { control.disabled = true; });
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        }, { capture: true });
+        return form;
+    }
+    /** Activation is deliberately a server option, not an accidental UI click. */
+    function taxAccessNotice(rep) {
+        const active = taxWritesEnabled(rep);
+        return el('section', { class: 'card tax-mode', 'aria-labelledby': 'tax-mode-title' },
+            el('h3', { id: 'tax-mode-title' }, active ? 'Steuerbereich · Bearbeitung aktiviert' : 'Steuerbereich · Nur lesen'),
+            el('p', {}, active
+                ? 'Steuerdaten können manuell erfasst werden. Die Nutzung bleibt optional; eine Aktivierung ist keine steuerliche Freigabe.'
+                : 'Auswertungen, Belege und Formulare ansehen, Simulationen prüfen und Exporte herunterladen – ohne Steuerdaten zu verändern.'),
+            el('p', { class: 'card-meta' }, 'Buchung anlegen, bezahlt markieren und abholen bleiben unabhängig davon nutzbar. Vorhandene Daten und Jahressperren bleiben erhalten.'),
+            el('details', { class: 'tax-details' }, el('summary', {}, active ? 'Zurück zum Lesemodus' : 'Später aktivieren'),
+                el('p', {}, 'In der Serverkonfiguration ', el('code', {}, 'PARKRR_TAX_WRITES_ENABLED=' + (active ? 'false' : 'true')),
+                    ' setzen und den App-Dienst neu starten. Die laufende Instanz wird hier nicht umgestellt.'),
+                el('p', { class: 'card-meta' }, 'Diese Option startet keine automatische Rechnung, Buchung oder Datenübernahme. Zum Lesemodus zurückzukehren löscht keine Daten und entsperrt keine abgeschlossenen Jahre.'),
+                el('p', { class: 'card-meta' }, 'E1b und Jahreswechsel bleiben Prüfansichten. Ein Import extern geprüfter Jahreskorrekturen ist noch nicht vorhanden.')));
+    }
     function taxRows(groups, total) {
         const box = el('div', { class: 'tax-rows' });
         if (!groups.length) box.append(el('div', { class: 'card-meta' }, 'Keine Einnahmen in diesem Jahr.'));
@@ -2805,7 +2833,7 @@ import { createAPI } from './api.js';
                     submit.disabled = false;
                 }
             });
-            section.append(el('details', { class: 'card tax-details' }, el('summary', {}, '+ Ausgabe erfassen'), form));
+            section.append(el('details', { class: 'card tax-details' }, el('summary', {}, '+ Ausgabe erfassen'), taxFormPreview(rep, form)));
         }
         const list = el('div', { class: 'tax-ledger' });
         if (!rep.expenses.length) list.append(el('div', { class: 'card-meta' }, 'Keine Werbungskosten in diesem Jahr.'));
@@ -2823,15 +2851,15 @@ import { createAPI } from './api.js';
                 actions.append(show);
             }
             if (!rep.locked && !expense.reverses_id && !expense.reversed) {
-                const file = el('input', { type: 'file', accept: '.pdf,image/jpeg,image/png', hidden: true });
+                const file = el('input', { type: 'file', accept: '.pdf,image/jpeg,image/png', hidden: true, disabled: !taxWritesEnabled(rep) });
                 file.addEventListener('change', async () => {
                     if (!file.files[0]) return;
                     const fd = new FormData(); fd.append('file', file.files[0]);
                     try { await api.upload('/tax/expenses/' + expense.id + '/receipts', fd); toast('Beleg gespeichert', 'success'); render(); }
                     catch (err) { toast(err.message, 'error'); }
                 });
-                actions.append(el('button', { class: 'btn btn-ghost btn-sm', onclick: () => file.click() }, '+ Beleg'), file);
-                const reverse = el('button', { class: 'btn btn-ghost btn-sm' }, 'Stornieren');
+                actions.append(el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep), onclick: () => file.click() }, '+ Beleg'), file);
+                const reverse = el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep) }, 'Stornieren');
                 reverse.addEventListener('click', async () => {
                     if (!await confirmDialog('Ausgabe stornieren?', 'Es wird eine unveränderliche Gegenbuchung erstellt.', 'Stornieren')) return;
                     try { await api.post('/tax/expenses/' + expense.id + '/reverse', {}); toast('Gegenbuchung erstellt', 'success'); render(); }
@@ -2875,18 +2903,18 @@ import { createAPI } from './api.js';
                     toast('Vorlage angelegt', 'success'); render();
                 } catch (err) { toast(err.message, 'error'); }
             });
-            section.append(form);
+            section.append(taxFormPreview(rep, form));
         }
         const list = el('div', { class: 'tax-ledger' });
         if (!rep.recurring_expenses.length) list.append(el('div', { class: 'card-meta' }, 'Noch keine wiederkehrenden Ausgaben.'));
         rep.recurring_expenses.forEach((item) => {
-            const date = el('input', { type: 'date', value: taxYearDate(rep.year), disabled: rep.locked || !item.active });
-            const book = el('button', { class: 'btn btn-ghost btn-sm', disabled: rep.locked || !item.active }, 'Buchen');
+            const date = el('input', { type: 'date', 'aria-label': 'Bezahlt am · ' + item.description, value: taxYearDate(rep.year), disabled: !taxWritesEnabled(rep) || rep.locked || !item.active });
+            const book = el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep) || rep.locked || !item.active }, 'Buchen');
             book.addEventListener('click', async () => {
                 try { await api.post('/tax/recurring/' + item.id + '/book', { paid_on: date.value }); toast('Ausgabe gebucht', 'success'); render(); }
                 catch (err) { toast(err.message, 'error'); }
             });
-            const toggle = el('button', { class: 'btn btn-ghost btn-sm', disabled: rep.locked }, item.active ? 'Deaktivieren' : 'Aktivieren');
+            const toggle = el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep) || rep.locked }, item.active ? 'Deaktivieren' : 'Aktivieren');
             toggle.addEventListener('click', async () => {
                 try { await api.put('/tax/recurring/' + item.id, { active: !item.active }); toast('Vorlage gespeichert', 'success'); render(); }
                 catch (err) { toast(err.message, 'error'); }
@@ -2924,7 +2952,7 @@ import { createAPI } from './api.js';
                     toast('Wirtschaftsgut angelegt', 'success'); render();
                 } catch (err) { toast(err.message, 'error'); }
             });
-            section.append(form);
+            section.append(taxFormPreview(rep, form));
         }
         const list = el('div', { class: 'tax-ledger' });
         if (!rep.assets.length) list.append(el('div', { class: 'card-meta' }, 'Noch keine Wirtschaftsgüter.'));
@@ -2966,7 +2994,7 @@ import { createAPI } from './api.js';
         cancel.addEventListener('click', () => setEditing(null));
         const objectList = el('div', { class: 'tax-ledger' }, ...rep.properties.map((p) => el('div', { class: 'tax-ledger-row' },
             el('div', {}, el('b', {}, p.name), el('small', {}, [p.address, p.garages].filter(Boolean).join(' · ') || 'Noch keine Adresse/Halle zugeordnet')),
-            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => setEditing(p) }, 'Bearbeiten'))));
+            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => setEditing(p) }, taxWritesEnabled(rep) ? 'Bearbeiten' : 'Details ansehen'))));
         objects.append(objectList);
         const objectForm = el('form', { class: 'tax-form-grid' }, taxField('Name', name), taxField('Lageadresse', address),
             taxField('Postleitzahl', postalCode), taxField('Einheitswert-Aktenzeichen', eawz),
@@ -2982,7 +3010,7 @@ import { createAPI } from './api.js';
                 toast(editingID ? 'Steuerobjekt gespeichert' : 'Steuerobjekt angelegt', 'success'); render();
             } catch (err) { toast(err.message, 'error'); }
         });
-        objects.append(objectForm); wrap.append(objects);
+        objects.append(taxFormPreview(rep, objectForm)); wrap.append(objects);
 
         const settings = el('details', { class: 'card tax-details' }, el('summary', {}, 'Steuereinstellungen'));
         const limit = el('input', { type: 'number', min: 1, step: '0.01', value: rep.settings.small_business_limit });
@@ -2998,7 +3026,7 @@ import { createAPI } from './api.js';
                 toast('Einstellungen gespeichert', 'success'); render();
             } catch (err) { toast(err.message, 'error'); }
         });
-        settings.append(form); wrap.append(settings);
+        settings.append(taxFormPreview(rep, form)); wrap.append(settings);
         return wrap;
     }
 
@@ -3016,13 +3044,14 @@ import { createAPI } from './api.js';
             el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächstes Jahr', disabled: taxYear >= nowYear,
                 onclick: () => { taxYear++; render(); } }, '›'));
         page.append(el('div', { class: 'page-head' }, el('h2', {}, 'Steuerjahr'), el('div', { class: 'page-head-actions' }, yearSel)));
+        page.append(taxAccessNotice(rep));
 
         const income = taxRule ? rep.total_with_rule : rep.total_by_date;
         const surplus = taxRule ? rep.surplus_with_rule : rep.surplus;
         page.append(el('div', { class: 'stat-grid' }, stat(eur(income), taxRule ? 'Einnahmen · ungeprüfte Simulation' : 'Einnahmen nach Zuflussdatum'),
             stat(eur(rep.expense_total + rep.depreciation_total), 'Werbungskosten inkl. AfA'), stat(eur(surplus), 'Überschuss ' + rep.year)));
 
-        const lock = el('button', { class: 'btn ' + (rep.locked ? 'btn-ghost' : 'btn-primary') + ' btn-sm' }, rep.locked ? 'Jahr entsperren' : 'Jahr abschließen');
+        const lock = el('button', { class: 'btn ' + (rep.locked ? 'btn-ghost' : 'btn-primary') + ' btn-sm', disabled: !taxWritesEnabled(rep) }, rep.locked ? 'Jahr entsperren' : 'Jahr abschließen');
         lock.addEventListener('click', async () => {
             const title = rep.locked ? 'Steuerjahr entsperren?' : 'Steuerjahr abschließen?';
             const message = rep.locked ? 'Danach sind wieder Änderungen an Buchungen und Zuflussdaten möglich.'
@@ -3035,7 +3064,7 @@ import { createAPI } from './api.js';
             } catch (err) { toast(err.message, 'error'); }
         });
         page.append(el('div', { class: 'tax-toolbar' },
-            el('span', { class: 'badge ' + (rep.locked ? 'badge-ok' : '') }, rep.locked ? 'Abgeschlossen' : 'In Bearbeitung'), lock,
+            el('span', { class: 'badge ' + (rep.locked ? 'badge-ok' : '') }, rep.locked ? 'Abgeschlossen' : taxWritesEnabled(rep) ? 'In Bearbeitung' : 'Offen · nur lesend'), lock,
             el('span', { class: 'card-meta' }, 'Keine Steuerberatung · Werte vor Abgabe prüfen.')));
 
         // Cash receipts are not a verified VAT-turnover basis. No misleading
@@ -3077,9 +3106,9 @@ import { createAPI } from './api.js';
             review.append(el('p', { class: 'card-meta' }, 'Die steuerliche Zuordnung wird separat gespeichert; die unveränderliche Zahlung bleibt bestehen.'));
             const list = el('div', { class: 'tax-ledger' });
             rep.review_payments.forEach((payment) => {
-                const date = el('input', { type: 'date', value: String(payment.paid_on).slice(0, 10), disabled: rep.locked || !payment.slider });
-                const prop = taxPropertySelect(rep, payment.property_id, { disabled: rep.locked || rep.properties.length === 1 });
-                const save = el('button', { class: 'btn btn-ghost btn-sm', disabled: rep.locked }, 'Speichern');
+                const date = el('input', { type: 'date', 'aria-label': 'Zuflussdatum · ' + payment.person, value: String(payment.paid_on).slice(0, 10), disabled: !taxWritesEnabled(rep) || rep.locked || !payment.slider });
+                const prop = taxPropertySelect(rep, payment.property_id, { 'aria-label': 'Steuerobjekt · ' + payment.person, disabled: !taxWritesEnabled(rep) || rep.locked || rep.properties.length === 1 });
+                const save = el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep) || rep.locked }, 'Speichern');
                 save.addEventListener('click', async () => {
                     try { await api.put('/tax/payments/' + payment.id, { received_on: date.value, property_id: Number(prop.value) }); toast('Steuerzuordnung gespeichert', 'success'); render(); }
                     catch (err) { toast(err.message, 'error'); }

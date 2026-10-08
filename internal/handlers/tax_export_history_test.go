@@ -143,6 +143,7 @@ func TestTaxPaymentHistoryInvoiceCancellation(t *testing.T) {
 
 func TestTaxPaymentHistoryIntermediateYearsAndLegacyGap(t *testing.T) {
 	h := testHandler(t)
+	h.TaxWritesEnabled = true
 	pid := createIntegrationPerson(t, h)
 	cid := mkChargeP(t, h, pid, "Metadata history", 70, "2026-01-01")
 	setChargePaidT(t, h, cid, true)

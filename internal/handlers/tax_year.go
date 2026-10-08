@@ -62,6 +62,7 @@ type taxYearGroup struct {
 // taxYearReport is the JSON shape of GET /api/reports/tax-year.
 type taxYearReport struct {
 	Year                  int                   `json:"year"`
+	WriteEnabled          bool                  `json:"write_enabled"`
 	TotalByDate           float64               `json:"total_by_date"`
 	TotalWithRule         float64               `json:"total_with_rule"`
 	Count                 int                   `json:"count"`
@@ -142,7 +143,15 @@ func taxRuleYear(paidOn time.Time, kind, period string) int {
 // year to 15 Jan of the next and aggregates the year by payment date, with the
 // 15-day-rule alternative alongside.
 func (h *Handler) buildTaxYearReport(ctx context.Context, year int) (taxYearReport, error) {
-	rep := taxYearReport{Year: year, ByMonth: make([]float64, 12), ShiftedIn: []taxYearPayment{}, ShiftedOut: []taxYearPayment{}, ReviewPayments: []taxYearPayment{}, E1B: []taxE1BLine{}}
+	rep := taxYearReport{
+		Year:           year,
+		WriteEnabled:   h.TaxWritesEnabled,
+		ByMonth:        make([]float64, 12),
+		ShiftedIn:      []taxYearPayment{},
+		ShiftedOut:     []taxYearPayment{},
+		ReviewPayments: []taxYearPayment{},
+		E1B:            []taxE1BLine{},
+	}
 	from := time.Date(year-1, time.December, 17, 0, 0, 0, 0, time.UTC)
 	to := time.Date(year+1, time.January, 15, 0, 0, 0, 0, time.UTC)
 

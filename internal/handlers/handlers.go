@@ -46,6 +46,9 @@ type Handler struct {
 	// den Start, wenn dabei kein WebAuthn eingerichtet ist — sonst käme niemand
 	// mehr hinein.
 	PasskeyOnly bool
+	// TaxWritesEnabled is configured once before serving requests. Its zero value
+	// keeps the optional tax ledger read-only without disabling ordinary payments.
+	TaxWritesEnabled bool
 	// BackupKey (if set) enables the encrypted-backup endpoint; DatabaseURL is
 	// the connection string handed to pg_dump; BackupDir holds scheduled backups.
 	BackupKey   string

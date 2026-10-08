@@ -110,6 +110,41 @@ Wiederherstellung des Backups von vor dem Update (deshalb Schritt 1).
 | `PARKRR_TIMEZONE` | Geschäftszeitzone (z. B. `Europe/Vienna`). Wichtig, wenn der Container in UTC läuft: zwischen 00:00 und 02:00 Wiener Zeit ist in UTC noch gestern — Zahlungen bekämen das Datum von gestern. |
 | `PARKRR_ALERT_EMAIL` | Betriebsalarme (fehlgeschlagene Backups) per Mail. Braucht konfiguriertes SMTP. |
 
+### Steuerbereich: zuerst nur lesen, später aktivieren
+
+Der Steuerbereich ist standardmäßig im **Lesemodus**. Administratoren können
+Jahre wechseln, vorhandene Einnahmen, Ausgaben, Anlagen und Belege prüfen,
+die unverbindliche Jahreswechsel-Simulation ansehen und CSV, PDF oder ZIP
+herunterladen. Der normale Ablauf „Buchung → bezahlt markieren → abholen“
+setzt weder den Steuerbereich noch einen Rechnungsprozess voraus.
+
+Schreibaktionen sind auch serverseitig gesperrt: Ausgaben und Vorlagen anlegen,
+Ausgaben stornieren, Belege hochladen, Anlagen erfassen, Steuerobjekte und
+Einstellungen ändern, Zahlungen steuerlich zuordnen sowie Jahre sperren oder
+entsperren. Der Lesemodus ist kein leerer Demodatenbestand: bereits vorhandene
+Ausgaben, AfA und Zuordnungen gehen weiterhin in die Vorschau ein.
+
+**Später aktivieren:** `PARKRR_TAX_WRITES_ENABLED=true` in der
+App-Konfiguration setzen und die Anwendung neu starten. Bei Docker den
+App-Container mit der geänderten Konfiguration neu erstellen; ein bloßes
+`docker restart` übernimmt keine geänderten Umgebungsvariablen. Bei mehreren
+App-Replikaten denselben Wert auf allen Replikaten setzen. Anschließend ist die
+Bearbeitung für Administratoren freigegeben. Es werden dadurch keine Rechnungen,
+Ausgaben oder Importe erzeugt und keine vereinbarten Preise neu berechnet.
+Eine Freigabe in dieser Dokumentation aktiviert keine laufende Instanz.
+
+**Wieder nur lesen:** auf `false` zurückstellen und genauso neu starten bzw.
+neu erstellen. Daten werden dabei weder gelöscht noch zurückgesetzt.
+Bereits abgeschlossene Steuerjahre bleiben gesperrt und schützen weiterhin
+auch normale Zahlungskorrekturen. Zum Entsperren ist die bewusste Aktivierung
+der Steuer-Schreibfunktionen nötig; der Lesemodus umgeht diesen Schutz nicht.
+
+Die Aktivierung ist keine steuerliche Abnahme. E1b bleibt eine Vorschau,
+KU-Voraussetzungen und maßgebliche Jahres-/Vorjahresumsätze müssen fachlich
+geprüft werden. Der kontrollierte Import extern bestätigter AfA-/Jahreskorrekturen
+und ein vollständiges jahresbezogenes E1b-Mapping sind noch nicht implementiert.
+Eine vorhandene einfache AfA-Berechnung ersetzt diese Prüfung nicht.
+
 ## 5. Kundenportal
 
 Ein Portal-Link ist ein GEHEIMNIS mit Ablaufdatum (Person → „Portal-Link"):
