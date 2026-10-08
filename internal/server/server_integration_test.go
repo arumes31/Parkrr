@@ -75,7 +75,7 @@ func TestServerWiring(t *testing.T) {
 		t.Errorf("die strikte CSP fehlt auf der Shell: %q", csp)
 	}
 
-	for _, path := range []string{"/js/app.js", "/css/style.css", "/manifest.webmanifest", "/sw.js"} {
+	for _, path := range []string{"/js/app.js", "/js/tax-review.js", "/css/style.css", "/manifest.webmanifest", "/sw.js"} {
 		if rec := doReq(t, h, http.MethodGet, path, nil); rec.Code != http.StatusOK {
 			t.Errorf("%s: %d", path, rec.Code)
 		}

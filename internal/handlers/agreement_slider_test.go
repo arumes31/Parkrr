@@ -26,7 +26,7 @@ func setAgreementMasterPaid(t *testing.T, h *Handler, aid int64, paid bool) {
 // TestAgreementSliderBooksPaymentAndSettlesExtras: marking a whole Pauschale paid via
 // the master slider must (a) book a real Zahlungseingang for the completed rent
 // periods and (b) settle the bound Zusatzkosten on its covered vehicles — so the
-// balance nets to 0 and nothing is left silently owed. "offen" reverses both.
+// balance nets to 0 and nothing is left silently owed. A reset preserves both.
 func TestAgreementSliderBooksPaymentAndSettlesExtras(t *testing.T) {
 	h := testHandler(t)
 	pid := createIntegrationPerson(t, h)
@@ -91,20 +91,23 @@ func TestAgreementSliderBooksPaymentAndSettlesExtras(t *testing.T) {
 		t.Errorf("expected exactly one extras payment, got %d", extrasN)
 	}
 
-	// "offen" reverses everything.
-	setAgreementMasterPaid(t, h, aid, false)
+	// R03 interim guard: keep rent and bound-extra receipts on a reset attempt.
+	reset := periodHistoryRequest(t, h.SetAgreementPaid, aid, map[string]any{"paid": false})
+	if reset.Code != http.StatusConflict {
+		t.Fatalf("reset: %d %s", reset.Code, reset.Body.String())
+	}
 	back := personStatsT(t, h, pid)
-	if math.Abs(back.Balance-before.Balance) > 0.05 {
-		t.Errorf("un-toggle must restore the balance: before=%.2f back=%.2f", before.Balance, back.Balance)
+	if math.Abs(back.Balance-after.Balance) > 0.05 {
+		t.Errorf("rejected reset changed balance: paid=%.2f after=%.2f", after.Balance, back.Balance)
 	}
 	_ = h.Pool.QueryRow(t.Context(), `SELECT paid FROM charges WHERE person_id=$1 AND vehicle_id=$2`, pid, vid).Scan(&chPaid)
-	if chPaid {
-		t.Errorf("un-toggle must reset the bound extra to unpaid")
+	if !chPaid {
+		t.Errorf("rejected reset changed the bound extra to unpaid")
 	}
 	var anyPay int
 	_ = h.Pool.QueryRow(t.Context(),
 		`SELECT count(*) FROM payments WHERE settles_kind='agreement' AND settles_ref=$1`, aid).Scan(&anyPay)
-	if anyPay != 0 {
-		t.Errorf("un-toggle must remove all of the agreement's settlement payments, got %d", anyPay)
+	if anyPay != 4 {
+		t.Errorf("rejected reset must preserve all four receipts, got %d", anyPay)
 	}
 }

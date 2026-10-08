@@ -24,6 +24,10 @@ services:
     # upload plus the decrypted dump during a restore). Only with an empty
     # PARKRR_BACKUP_DIR does the app fall back to /tmp, and the 32 MiB tmpfs below
     # is far too small for that.
+    # Tax ZIP exports separately stage receipts in /tmp (24 MiB default limit).
+    # For larger exports provision a private writable volume and set TMPDIR plus
+    # PARKRR_TAX_EXPORT_MAX_RECEIPT_MB in your own override. Concurrent exports
+    # share that capacity; a full spool aborts before download, without DB writes.
     read_only: true
     tmpfs:
       # Bounded so a runaway temp write cannot consume host RAM up to mem_limit

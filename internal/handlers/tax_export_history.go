@@ -33,22 +33,30 @@ func (h *Handler) buildTaxPaymentHistory(ctx context.Context, rep taxYearReport)
 		return taxPaymentHistory{}, fmt.Errorf("begin payment history snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	history, ids, err := readTaxPaymentHistory(ctx, tx, rep)
+	history, err := loadTaxPaymentHistory(ctx, tx, rep)
 	if err != nil {
 		return history, err
 	}
-	if err := writeTaxPaymentAuditCSV(ctx, tx, &history.Audit, ids); err != nil {
+	if err := tx.Commit(ctx); err != nil {
+		return history, fmt.Errorf("finish payment history snapshot: %w", err)
+	}
+	return history, nil
+}
+
+func loadTaxPaymentHistory(ctx context.Context, q dbQuerier, rep taxYearReport) (taxPaymentHistory, error) {
+	history, ids, err := readTaxPaymentHistory(ctx, q, rep)
+	if err != nil {
+		return history, err
+	}
+	if err := writeTaxPaymentAuditCSV(ctx, q, &history.Audit, ids); err != nil {
 		return history, err
 	}
 	incomeIDs := make([]int64, 0, len(rep.payments))
 	for _, p := range rep.payments {
 		incomeIDs = append(incomeIDs, p.ID)
 	}
-	if err := writeTaxAllocationCSV(ctx, tx, &history.Links, incomeIDs); err != nil {
+	if err := writeTaxAllocationCSV(ctx, q, &history.Links, incomeIDs); err != nil {
 		return history, fmt.Errorf("write current payment links: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return history, fmt.Errorf("finish payment history snapshot: %w", err)
 	}
 	return history, nil
 }

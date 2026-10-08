@@ -250,7 +250,11 @@ func annualTaxDepreciation(basis, usefulYears float64, inService time.Time, disp
 
 // loadTaxProperties returns tax objects with their assigned garages.
 func (h *Handler) loadTaxProperties(ctx context.Context) ([]taxProperty, error) {
-	rows, err := h.Pool.Query(ctx, `
+	return loadTaxProperties(ctx, h.Pool)
+}
+
+func loadTaxProperties(ctx context.Context, q dbQuerier) ([]taxProperty, error) {
+	rows, err := q.Query(ctx, `
 		SELECT p.id, p.name, p.address, p.postal_code, p.eawz, p.is_default,
 		       COALESCE(array_agg(g.id ORDER BY g.id) FILTER (WHERE g.id IS NOT NULL), '{}'),
 		       COALESCE(string_agg(g.name, ', ' ORDER BY g.sort_order, g.name), '')
@@ -273,7 +277,11 @@ func (h *Handler) loadTaxProperties(ctx context.Context) ([]taxProperty, error) 
 
 // loadTaxCategories returns active expense categories in display order.
 func (h *Handler) loadTaxCategories(ctx context.Context) ([]taxCategory, error) {
-	rows, err := h.Pool.Query(ctx, `SELECT id, key, label, e1b_code, sort_order FROM tax_expense_categories WHERE active ORDER BY sort_order, label`)
+	return loadTaxCategories(ctx, h.Pool)
+}
+
+func loadTaxCategories(ctx context.Context, q dbQuerier) ([]taxCategory, error) {
+	rows, err := q.Query(ctx, `SELECT id, key, label, e1b_code, sort_order FROM tax_expense_categories WHERE active ORDER BY sort_order, label`)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +299,11 @@ func (h *Handler) loadTaxCategories(ctx context.Context) ([]taxCategory, error) 
 
 // loadTaxExpenses returns all immutable expense and reversal entries for a year.
 func (h *Handler) loadTaxExpenses(ctx context.Context, year int) ([]taxExpense, error) {
-	rows, err := h.Pool.Query(ctx, `
+	return loadTaxExpenses(ctx, h.Pool, year)
+}
+
+func loadTaxExpenses(ctx context.Context, q dbQuerier, year int) ([]taxExpense, error) {
+	rows, err := q.Query(ctx, `
 		SELECT e.id, e.tax_property_id, p.name, e.category_id, c.label, c.e1b_code,
 		       e.paid_on, e.amount, e.vat_amount, e.payee, e.description, e.payment_method,
 		       e.reverses_id, EXISTS(SELECT 1 FROM tax_expenses r WHERE r.reverses_id=e.id),
@@ -322,7 +334,11 @@ func (h *Handler) loadTaxExpenses(ctx context.Context, year int) ([]taxExpense, 
 
 // loadTaxRecurring returns recurring tax-expense templates.
 func (h *Handler) loadTaxRecurring(ctx context.Context) ([]taxRecurringExpense, error) {
-	rows, err := h.Pool.Query(ctx, `
+	return loadTaxRecurring(ctx, h.Pool)
+}
+
+func loadTaxRecurring(ctx context.Context, q dbQuerier) ([]taxRecurringExpense, error) {
+	rows, err := q.Query(ctx, `
 		SELECT r.id, r.tax_property_id, p.name, r.category_id, c.label, r.description, r.payee,
 		       r.amount, r.payment_method, r.frequency, r.due_day, r.due_month,
 		       r.start_on, r.end_on, r.active
@@ -353,7 +369,11 @@ func (h *Handler) loadTaxRecurring(ctx context.Context) ([]taxRecurringExpense, 
 
 // loadTaxAssets returns assets that can affect the requested year and calculates their depreciation.
 func (h *Handler) loadTaxAssets(ctx context.Context, year int) ([]taxAsset, error) {
-	rows, err := h.Pool.Query(ctx, `
+	return loadTaxAssets(ctx, h.Pool, year)
+}
+
+func loadTaxAssets(ctx context.Context, q dbQuerier, year int) ([]taxAsset, error) {
+	rows, err := q.Query(ctx, `
 		SELECT a.id, a.tax_property_id, p.name, a.name, a.in_service_on, a.depreciable_basis,
 		       a.useful_life_years, a.half_year_rule, a.disposed_on, a.notes
 		  FROM tax_assets a JOIN tax_properties p ON p.id=a.tax_property_id
@@ -383,8 +403,12 @@ func (h *Handler) loadTaxAssets(ctx context.Context, year int) ([]taxAsset, erro
 
 // loadTaxSettings returns the singleton tax configuration.
 func (h *Handler) loadTaxSettings(ctx context.Context) (taxSettings, error) {
+	return loadTaxSettings(ctx, h.Pool)
+}
+
+func loadTaxSettings(ctx context.Context, q dbQuerier) (taxSettings, error) {
 	var s taxSettings
-	err := h.Pool.QueryRow(ctx, `SELECT small_business_limit, warning_percent, vat_opted_in FROM tax_settings WHERE singleton`).
+	err := q.QueryRow(ctx, `SELECT small_business_limit, warning_percent, vat_opted_in FROM tax_settings WHERE singleton`).
 		Scan(&s.SmallBusinessLimit, &s.WarningPercent, &s.VATOptedIn)
 	return s, err
 }
@@ -1520,27 +1544,27 @@ func (h *Handler) UnlockTaxYear(w http.ResponseWriter, r *http.Request) {
 }
 
 // addTaxBook enriches an income report with expenses, depreciation, and E1b totals.
-func (h *Handler) addTaxBook(ctx context.Context, rep *taxYearReport) error {
+func addTaxBook(ctx context.Context, q dbQuerier, rep *taxYearReport) error {
 	var err error
-	if rep.Properties, err = h.loadTaxProperties(ctx); err != nil {
+	if rep.Properties, err = loadTaxProperties(ctx, q); err != nil {
 		return err
 	}
-	if rep.Categories, err = h.loadTaxCategories(ctx); err != nil {
+	if rep.Categories, err = loadTaxCategories(ctx, q); err != nil {
 		return err
 	}
-	if rep.Expenses, err = h.loadTaxExpenses(ctx, rep.Year); err != nil {
+	if rep.Expenses, err = loadTaxExpenses(ctx, q, rep.Year); err != nil {
 		return err
 	}
-	if rep.RecurringExpenses, err = h.loadTaxRecurring(ctx); err != nil {
+	if rep.RecurringExpenses, err = loadTaxRecurring(ctx, q); err != nil {
 		return err
 	}
-	if rep.Assets, err = h.loadTaxAssets(ctx, rep.Year); err != nil {
+	if rep.Assets, err = loadTaxAssets(ctx, q, rep.Year); err != nil {
 		return err
 	}
-	if rep.Settings, err = h.loadTaxSettings(ctx); err != nil {
+	if rep.Settings, err = loadTaxSettings(ctx, q); err != nil {
 		return err
 	}
-	if rep.Locked, err = taxYearLockStatus(ctx, h.Pool, rep.Year); err != nil {
+	if rep.Locked, err = taxYearLockStatus(ctx, q, rep.Year); err != nil {
 		return err
 	}
 

@@ -2718,6 +2718,15 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 .tax-details[open] > summary { margin-bottom:.85rem; }
 .tax-form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:.75rem; align-items:end; margin:.75rem 0 1rem; }
 .tax-form-grid > .btn { min-height:44px; }
+.tax-review-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:.75rem; align-items:start; margin:.75rem 0 1.25rem; }
+.tax-review-grid > * { min-width:0; }
+.tax-review-wide, .tax-review-result, .tax-review-grid > [role="alert"] { grid-column:1 / -1; overflow-wrap:anywhere; }
+.tax-review .btn-row { display:flex; flex-wrap:wrap; gap:.5rem; }
+.tax-review input, .tax-review select { min-height:44px; font-size:1rem; }
+.tax-review-result:empty { display:none; }
+.tax-review-result h4 { margin:1rem 0 .5rem; }
+.tax-review-result ul { padding-inline-start:1.25rem; }
+.tax-review-result li + li { margin-top:.35rem; }
 .tax-field { display:grid; gap:.3rem; font-size:var(--text-sm); font-weight:650; }
 .tax-field input, .tax-field select { width:100%; }
 .tax-ledger { display:grid; gap:.55rem; }

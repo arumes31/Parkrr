@@ -30,16 +30,19 @@ lückenlose Gesamthistorie. Früher gelöschte Periodenzahlungen oder Zuordnunge
 können fehlen; das betrifft insbesondere ältere manuelle Rücknahmen und Stornos.
 Echte Rückzahlungen und Kautionen sind weiterhin kein eigenständiges Modell.
 
-Verlauf, Audit und aktuelle Zahlungslinks stammen aus einem gemeinsamen
-lesenden Datenbank-Snapshot. Ein zwischen Einnahmenaufstellung und Verlauf
-geänderter Einnahmenbestand (Zahlungs-IDs, Beträge, Buchungs-/Zuflussdaten oder
-Steuerobjekt-IDs) führt zum Abbruch mit Aufforderung zur Wiederholung. Änderungen
-an Zuordnungen oder Einnahmenkategorien werden damit nicht vollständig erkannt.
-Zum Beispiel kann ein paralleler Rechnungsstorno noch zu einer alten Kategorie
-in einnahmen.csv bei bereits freigegebenen Links in zuordnungen.csv führen.
-Das Gesamtpaket einschließlich Steuerzusammenfassung und Ausgaben ist noch
-kein einheitlicher Snapshot; für die endgültige Abstimmung ohne parallele
-Bearbeitung exportieren. Objekt-/Personenbezeichnungen sind aktuelle Labels.
+Alle Daten des Pakets einschließlich Einnahmen, Zuordnungen, Verlauf, Audit,
+Ausgaben, AfA, Steuerzusammenfassung und Belegen stammen aus demselben lesenden
+Datenbank-Snapshot. Währenddessen abgeschlossene Änderungen erscheinen erst im
+nächsten Export. Vor PDF-/ZIP-Erstellung und Download wird die Datenbankverbindung
+freigegeben. Belege werden dafür vorübergehend in einer privaten Datei abgelegt;
+diese wird auch bei Fehlern oder Abbruch entfernt. Das Belegvolumen ist zum Schutz
+des temporären Speichers standardmäßig auf 24 MiB pro Paket begrenzt. Für größere
+Pakete kann die Administration PARKRR_TAX_EXPORT_MAX_RECEIPT_MB (1–1024 MiB)
+zusammen mit einem entsprechend dimensionierten, geschützten TMPDIR konfigurieren.
+Das gehärtete Standard-Deployment hat nur 32 MiB /tmp; gleichzeitige Exporte
+teilen diesen Speicher. Limitüberschreitung oder Speicherfehler brechen vor dem
+Download ab, ohne gespeicherte Daten zu verändern.
+Objekt-/Personenbezeichnungen sind aktuelle Labels des Snapshots.
 Stabile IDs sind für Verknüpfungen maßgeblich. Auditbenutzer sind historische
 Protokollangaben, keine zusätzlichen Kundendaten oder Zugangsinformationen.
 `

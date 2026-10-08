@@ -199,6 +199,7 @@ compose network). Schema migrations run automatically at startup.
 | `PARKRR_PASSKEY_ONLY` | disable password login entirely (passkey sign-in only); requires `PARKRR_WEBAUTHN_RP_ID` | `false` |
 | `PARKRR_AUTO_INVOICE_CRON` | 5-field cron for the automatic invoice run (e.g. `0 6 1 * *`); empty = off; uses the same path as the manual button, billed periods are never invoiced twice | – |
 | `PARKRR_TAX_WRITES_ENABLED` | allow manual tax-book changes, receipt uploads, tax settings, payment tax metadata and year locking/unlocking; `false` keeps tax reports, simulations, receipts and exports read-only | `false` |
+| `PARKRR_TAX_EXPORT_MAX_RECEIPT_MB` | total uncompressed receipt bytes staged per tax ZIP export, integer 1–1024; a larger value requires sufficient private `TMPDIR` capacity | `24` |
 
 Tax-book activation is optional: set `PARKRR_TAX_WRITES_ENABLED=true` and restart
 the application (recreate the container to apply changed environment variables).
@@ -210,6 +211,26 @@ ordinary payment changes; unlocking requires explicit tax-write activation.
 The normal booking/payment workflow does not require using the tax module.
 E1b remains a preview, not a verified tax filing. See the
 [operator handbook](docs/betreiber-handbuch.md#steuerbereich-zuerst-nur-lesen-später-aktivieren).
+
+The optional 2025/2026 tax-review workbench compares explicitly supplied turnover
+and individual income/expense year-boundary scenarios. It works in read-only
+mode, never stores its input or changes ledger totals, and can download a local
+JSON draft. A source/reviewer label is not professional verification. There is
+no draft import or automatic adoption into the tax book.
+
+Tax ZIP exports materialize all database content in one read-only snapshot,
+including receipt bytes, then release the database connection before streaming.
+Receipts use a private temporary file, removed on completion or failure. The
+hardened deployment has a 32 MiB `/tmp`; the default 24 MiB receipt limit leaves
+headroom, but concurrent exports can still exhaust it and fail without changing
+data. Provision a private volume and set `TMPDIR` before increasing the limit.
+
+Existing automatically recorded flat-rate/recurring period receipts now block
+destructive reset/replacement/source deletion with HTTP 409. New individual
+period payments remain possible; a full reversal/rebooking workflow is pending
+a reviewed schema change. Tariff edits likewise reject unresolved legacy price
+dependencies instead of silently changing existing booking amounts. See the
+operator handbook before upgrading.
 
 ---
 

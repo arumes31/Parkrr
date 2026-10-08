@@ -145,6 +145,75 @@ geprüft werden. Der kontrollierte Import extern bestätigter AfA-/Jahreskorrekt
 und ein vollständiges jahresbezogenes E1b-Mapping sind noch nicht implementiert.
 Eine vorhandene einfache AfA-Berechnung ersetzt diese Prüfung nicht.
 
+### Optionale Jahresprüfung ohne Speicherung
+
+Unter „Jahresprüfung vorbereiten · Vorschau“ lassen sich für 2025 und 2026
+gesondert ermittelte Jahres-/Vorjahresumsätze eingeben. Leere Angaben bleiben
+unbekannt; Zahlungseingänge werden nur zum Vergleich angezeigt, nicht als
+maßgeblicher Umsatz übernommen. Die Vorschau ist keine Bestätigung der
+KU-Berechtigung. Quelle und Prüferangabe sind deine Eingaben, keine von Parkrr
+verifizierten Nachweise.
+
+„Einzelnen Jahreswechsel prüfen“ benötigt tatsächliche Zahlung, vertragliche
+Fälligkeit, wirtschaftliches Bezugsjahr und die Angabe, ob der Vorgang regelmäßig
+wiederkehrt. Einnahmen und Ausgaben werden unterstützt. Das hinterlegte
+15-Tage-Prüffenster stützt sich ergänzend auf eine archivierte BMF-Auslegung;
+es ersetzt keine aktuelle Einzelfallprüfung. Kein Ergebnis verschiebt Beträge
+in den Berichten. Der JSON-Download ist ein lokaler Prüfentwurf, kein Importformat
+für bestätigte Jahreskorrekturen. Beim Verlassen der Ansicht gehen Eingaben
+verloren, sofern du keinen Entwurf heruntergeladen hast.
+
+### Schutz bestehender Preise und Periodenzahlungen
+
+Neue normale Buchungen übernehmen den aktuellen Tarif. Bestehende Buchungen
+behalten ihren vereinbarten Betrag, auch bei künftigem Mietbeginn. Bezieht eine
+Altbuchung ihren Preis noch dynamisch aus dem Tarif, wird dessen betroffener
+Preis nicht geändert (409 mit Anzahl der abhängigen Buchungen). Bestätige solche
+Preise nach Prüfung einzeln oder lege einen neuen Tarif an. Es gibt keinen
+automatischen Preis-Backfill. „Erneut einstellen“ kopiert weiterhin bewusst den
+alten vereinbarten Preis, einschließlich Sonder- und Nullpreisen.
+
+Vorläufiger Historien-Schutz: Betrag ersetzen, Bezahlt zurücksetzen oder die
+Pauschale/Nebenkostenquelle löschen wird mit 409 abgewiesen, sobald dadurch
+vorhandene Periodenzahlungen verloren gingen. Das gilt auch für stornierte
+Historie. Betrag, Zahlungsdatum, Zuordnungen und Quelle bleiben unverändert.
+Neue einzelne Perioden können weiter bezahlt werden; eine identische aktive
+Periodenmarkierung erzeugt keinen zweiten Eingang.
+
+Der Pauschalen-Gesamtschalter setzt intern alle Perioden neu auf und ist deshalb
+bei vorhandenen Zahlungen ebenfalls gesperrt. Der Nebenkosten-Gesamtschalter darf
+neue Perioden ergänzen, aber keine vorhandenen Teilbeträge ersetzen. Für echte
+Korrekturen fehlt noch der geprüfte Perioden-Storno-/Neubuchungsablauf. Nicht als
+Umgehung den Beleg löschen oder eine zusätzliche Zahlung erfassen. Ein bloßes
+Zurücksetzen des Bezahlt-Häkchens wäre ohnehin kein tatsächlicher Geldrückfluss.
+
+### Steuer-ZIP und Ausrollprüfung
+
+Das ZIP liest alle Daten einschließlich Belegen aus demselben lesenden
+Datenbank-Snapshot. Nach dessen Materialisierung wird die Verbindung freigegeben;
+ein langsamer Download hält sie nicht offen. Fehlende Altverknüpfungen werden
+weiterhin als Lücken ausgewiesen, nicht rekonstruiert.
+
+Für Belege gilt standardmäßig ein Gesamtlimit von 24 MiB unkomprimierter Daten
+je Export: `PARKRR_TAX_EXPORT_MAX_RECEIPT_MB` (1–1024). Sie liegen während des
+Downloads in einer privaten temporären Datei. Im gehärteten Container sind
+32 MiB `/tmp` vorgesehen. Vor größeren Limits ein ausreichend großes privates
+Volume über `TMPDIR` bereitstellen; parallele Exporte benötigen entsprechend
+mehr Platz. Zu wenig Speicher beendet den Export ohne Finanzänderung.
+
+Diese Ergänzungen enthalten keine SQL-Migration und keine automatische
+Bestandskorrektur. Vor dem Ausrollen trotzdem Zielversion und bereits
+ausstehende ältere Migrationen prüfen, Finanzsummen/Legacy-Preise abgleichen,
+ein verschlüsseltes Backup erstellen und genau dieses isoliert wiederherstellen.
+Die synthetischen Restore-Tests ersetzen keine Prüfung deines tatsächlichen
+Backups. Erst Dev-Abnahme, dann gesonderte Produktionsfreigabe.
+
+Ein Rückfall auf ältere App-Versionen kann die neuen Schutzregeln wieder
+entfernen. Dabei keine neuen Zahlungen löschen und keine ältere Datenbank über
+zwischenzeitliche Vorgänge zurückspielen. Die spätere R03-Indexänderung braucht
+einen eigenen Übergangs-/Rollbackplan: alte Backfill-Abfragen dürfen nicht
+ungeprüft gegen einen geänderten Unique-Index laufen.
+
 ## 5. Kundenportal
 
 Ein Portal-Link ist ein GEHEIMNIS mit Ablaufdatum (Person → „Portal-Link"):

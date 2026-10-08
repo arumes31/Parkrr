@@ -846,26 +846,13 @@ func (h *Handler) saveAgreement(r *http.Request, id, personID int64, a models.Fl
 	return nil
 }
 
-// DeleteAgreement removes an agreement.
-// clearAgreementSettlementTx removes an agreement's auto settlement money before the
-// row is deleted: un-settle the bound extras it paid, then delete its period + extras
-// auto-payments. Without this a deleted paid Pauschale leaves orphan Zahlungseingänge
-// that still count as money-in (phantom Guthaben).
+// clearAgreementSettlementTx permits source deletion only without payment
+// history. Real receipts and their allocated extras must remain reconstructable.
 func clearAgreementSettlementTx(ctx context.Context, tx pgx.Tx, id int64) error {
-	if err := protectPeriodPaymentsTx(ctx, tx, "agreement", id); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE charges SET paid=false WHERE id IN (
-		    SELECT pa.ref_id FROM payment_allocations pa JOIN payments p ON p.id=pa.payment_id
-		     WHERE pa.kind='charge' AND p.settles_kind='agreement' AND p.settles_ref=$1 AND p.settles_period='extras')`, id); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx,
-		`DELETE FROM payments WHERE auto AND settles_kind='agreement' AND settles_ref=$1`, id)
-	return err
+	return preservePeriodPaymentHistoryTx(ctx, tx, "agreement", id)
 }
 
+// DeleteAgreement removes only an agreement without financial history.
 func (h *Handler) DeleteAgreement(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r)
 	if !ok {
@@ -906,6 +893,13 @@ func (h *Handler) DeleteAgreement(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if inv {
 		writeError(w, http.StatusConflict, "Pauschale ist fakturiert – nicht löschbar (Storno über die Rechnung)")
+		return
+	}
+	if err := clearAgreementSettlementTx(ctx, tx, id); err != nil {
+		if writeSettlementConflict(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not delete agreement")
 		return
 	}
 	// Optionally delete the covered vehicles too; otherwise they are only unbound
@@ -955,10 +949,6 @@ func (h *Handler) DeleteAgreement(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-	}
-	if err := clearAgreementSettlementTx(ctx, tx, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not delete agreement")
-		return
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM flat_rate_periods WHERE id=$1`, id); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not delete agreement")
@@ -1072,7 +1062,7 @@ func (h *Handler) SetAgreementPaid(w http.ResponseWriter, r *http.Request) {
 	}
 	ag.ID = id
 	pid := ag.PersonID
-	if err := protectPeriodPaymentsTx(ctx, tx, "agreement", id); err != nil {
+	if err := preservePeriodPaymentHistoryTx(ctx, tx, "agreement", id); err != nil {
 		if !writeSettlementConflict(w, err) {
 			serverError(w, r, "could not check payment history", err)
 		}
@@ -1099,23 +1089,9 @@ func (h *Handler) SetAgreementPaid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// "Reset all": drop the per-period rows and every real Zahlungseingang this
-	// agreement's settlement had booked (rent periods + extras), then re-derive from
-	// the new state. Also un-settles bound extras this agreement had settled — and
-	// clears any orphan a per-period toggle followed by a master toggle left behind.
+	// Only flag-only state can reach this reset: existing receipt history was
+	// checked above, before the master flag or any child state was changed.
 	if _, err := tx.Exec(ctx, `DELETE FROM flat_rate_period_payments WHERE period_id=$1`, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update agreement")
-		return
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE charges SET paid=false WHERE id IN (
-		    SELECT pa.ref_id FROM payment_allocations pa JOIN payments p ON p.id=pa.payment_id
-		     WHERE pa.kind='charge' AND p.settles_kind='agreement' AND p.settles_ref=$1 AND p.settles_period='extras')`, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update agreement")
-		return
-	}
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM payments WHERE auto AND settles_kind='agreement' AND settles_ref=$1`, id); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not update agreement")
 		return
 	}

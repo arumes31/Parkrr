@@ -241,15 +241,14 @@ func periodPaymentNote(kind, period string) string {
 	return label + " " + period + " (Slider)"
 }
 
-// recordPeriodPaymentTx books (or refreshes) the real Zahlungseingang that settles
+// recordPeriodPaymentTx books the real Zahlungseingang that settles
 // ONE Pauschale/Nebenkosten sub-period. Per-period settlements historically only
 // flipped an off-book flag; this makes the received money a first-class payment so
 // it shows in the payments list and audit like every other. The row is auto=true
-// (system-managed toggle state, deletable on un-toggle) and linked to
-// (settles_kind, settles_ref, settles_period). The payments immutability trigger
-// blocks UPDATEing an auto row's amount, so a re-mark (partial↔whole) is
-// delete-then-insert, never an upsert. A zero amount records no row — the settled
-// flag alone marks a 0-cost period paid.
+// and linked to (settles_kind, settles_ref, settles_period). Repeating the same
+// active receipt is idempotent; replacing or resetting existing history is
+// blocked until a dedicated reversal/rebooking workflow is available. A zero
+// amount records no row — the settled flag alone marks a 0-cost period paid.
 func recordPeriodPaymentTx(ctx context.Context, tx pgx.Tx, personID int64, kind string, refID int64, period string, amount float64, createdBy *int64) error {
 	// A repeated click is not a new receipt; keep its ID, actual date and metadata.
 	var existing float64
@@ -260,15 +259,10 @@ func recordPeriodPaymentTx(ctx context.Context, tx pgx.Tx, personID int64, kind 
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if err := protectPeriodPaymentsTx(ctx, tx, kind, refID, period); err != nil {
+	if err := preservePeriodPaymentHistoryTx(ctx, tx, kind, refID, period); err != nil {
 		return err
 	}
 	if err := protectCurrentReceiptTx(ctx, tx, kind, period); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM payments WHERE auto AND settles_kind=$1 AND settles_ref=$2 AND settles_period=$3`,
-		kind, refID, period); err != nil {
 		return err
 	}
 	if amount < 0.005 {
@@ -281,16 +275,10 @@ func recordPeriodPaymentTx(ctx context.Context, tx pgx.Tx, personID int64, kind 
 	return err
 }
 
-// deletePeriodPaymentTx removes the real Zahlungseingang for a sub-period toggled
-// back open (auto rows are removable wholesale, migration 035).
+// deletePeriodPaymentTx only permits a flag-only reset when no real payment
+// history exists. It deliberately never deletes an accounting receipt.
 func deletePeriodPaymentTx(ctx context.Context, tx pgx.Tx, kind string, refID int64, period string) error {
-	if err := protectPeriodPaymentsTx(ctx, tx, kind, refID, period); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx,
-		`DELETE FROM payments WHERE auto AND settles_kind=$1 AND settles_ref=$2 AND settles_period=$3`,
-		kind, refID, period)
-	return err
+	return preservePeriodPaymentHistoryTx(ctx, tx, kind, refID, period)
 }
 
 // openOwedItems enumerates a person's open individually-owed positions, oldest
@@ -1297,8 +1285,7 @@ func (h *Handler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 			})
 	})
 	if errors.Is(txErr, errPeriodManagedPayment) {
-		writeError(w, http.StatusConflict,
-			"Periodenzahlung über den Bezahlt-Schalter der Pauschale/Nebenkosten zurücksetzen.")
+		writeError(w, http.StatusConflict, periodPaymentHistoryMessage)
 		return
 	}
 	if writeSettlementConflict(w, txErr) {

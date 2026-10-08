@@ -539,8 +539,8 @@ func (h *Handler) DeleteRecurringCharge(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "Nebenkosten sind fakturiert – nicht löschbar (Storno über die Rechnung)")
 		return
 	}
-	// Remove its auto settle-payments in the same tx as the delete, so a paid-then-
-	// deleted Nebenkosten leaves no orphan Zahlungseingang (phantom money-in).
+	// Keep the source whenever it has receipt history; deleting it must not
+	// erase money-in or leave receipts without their original source.
 	// Keep what was removed: a money position must stay reconstructable afterwards.
 	var affected int64
 	var delDesc, delPeriod string
@@ -691,18 +691,7 @@ func (h *Handler) SetRecurringChargePaid(w http.ResponseWriter, r *http.Request)
 					delete(fixed, k)
 				}
 			}
-			lockedKeys := []string{}
-			for _, per := range p.ElapsedPeriodsDetailed(now) {
-				if isLocked(per.Key) {
-					lockedKeys = append(lockedKeys, per.Key)
-				}
-			}
-			if err := protectPeriodPaymentsTx(ctx, tx, "recurring", id); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx,
-				`DELETE FROM payments WHERE auto AND settles_kind='recurring' AND settles_ref=$1
-				   AND settles_period <> ALL($2::text[])`, id, lockedKeys); err != nil {
+			if err := preservePeriodPaymentHistoryTx(ctx, tx, "recurring", id); err != nil {
 				return err
 			}
 		}
@@ -732,16 +721,10 @@ func (h *Handler) SetRecurringChargePaid(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// clearRecurringSettlementTx removes a recurring charge's auto settle-payments — used
-// when it is toggled open and before it is deleted, so no orphan Zahlungseingang
-// (phantom money-in) outlives the settlement or the row.
+// clearRecurringSettlementTx refuses source deletion when a period has receipts,
+// including reversed history. No accounting evidence is removed by this helper.
 func clearRecurringSettlementTx(ctx context.Context, tx pgx.Tx, id int64) error {
-	if err := protectPeriodPaymentsTx(ctx, tx, "recurring", id); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx,
-		`DELETE FROM payments WHERE auto AND settles_kind='recurring' AND settles_ref=$1`, id)
-	return err
+	return preservePeriodPaymentHistoryTx(ctx, tx, "recurring", id)
 }
 
 // SetRecurringChargePeriodPaid settles a single elapsed sub-period: a whole
@@ -848,7 +831,8 @@ func (h *Handler) SetRecurringChargePeriodPaid(w http.ResponseWriter, r *http.Re
 		}
 		// Book/remove the real Zahlungseingang mirroring the off-book flag (Fix 1): a
 		// completed whole period or an explicit partial becomes a payments row; a
-		// toggle-off deletes it. The off-book credit skips periods with such a payment,
+		// toggle-off now preserves it by rejecting the reset. The off-book credit
+		// skips periods with such a payment,
 		// so the balance never double-counts.
 		if req.Paid {
 			if amt, ok := periodPaymentAmount(rc.AsPeriod(), req.PeriodKey, req.Amount, h.now()); ok {

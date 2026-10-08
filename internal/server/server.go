@@ -176,6 +176,8 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 	mux.Handle("GET /api/reports/tax-year.csv", admin(hf(h.TaxYearCSV)))
 	mux.Handle("GET /api/reports/tax-year.pdf", admin(hf(h.TaxYearPDF)))
 	mux.Handle("GET /api/reports/tax-year.zip", admin(hf(h.TaxYearPackage)))
+	// Stateless calculation only: usable in tax read-only mode, still admin/CSRF protected.
+	mux.Handle("POST /api/reports/tax-review/preview", admin(hf(h.TaxReviewPreview)))
 	mux.Handle("GET /api/tax/properties", admin(hf(h.ListTaxProperties)))
 	mux.Handle("POST /api/tax/properties", admin(hf(h.CreateTaxProperty)))
 	mux.Handle("PUT /api/tax/properties/{id}", admin(hf(h.UpdateTaxProperty)))

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -62,6 +63,11 @@ func validCategoryDims(req *categoryRequest) bool {
 		dimPos(req.DefaultHeightM, 15) && dimInRange(req.DefaultWeightT, 200)
 }
 
+func validCategoryPrices(req *categoryRequest) bool {
+	return req.DefaultMonthlyCost >= 0 && req.DefaultMonthlyCost <= maxMoneyAmount &&
+		req.DefaultYearlyCost >= 0 && req.DefaultYearlyCost <= maxMoneyAmount
+}
+
 // CreateCategory adds a new vehicle category (admin only).
 func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 	var req categoryRequest
@@ -78,8 +84,8 @@ func (h *Handler) CreateCategory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is too long")
 		return
 	}
-	if req.DefaultMonthlyCost < 0 || req.DefaultYearlyCost < 0 {
-		writeError(w, http.StatusBadRequest, "costs must not be negative")
+	if !validCategoryPrices(&req) {
+		writeError(w, http.StatusBadRequest, "costs are out of range")
 		return
 	}
 	if !validCategoryDims(&req) {
@@ -135,22 +141,62 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is too long")
 		return
 	}
-	if req.DefaultMonthlyCost < 0 || req.DefaultYearlyCost < 0 {
-		writeError(w, http.StatusBadRequest, "costs must not be negative")
+	if !validCategoryPrices(&req) {
+		writeError(w, http.StatusBadRequest, "costs are out of range")
 		return
 	}
 	if !validCategoryDims(&req) {
 		writeError(w, http.StatusBadRequest, "dimension out of range")
 		return
 	}
+	ctx := r.Context()
+	tx, err := h.Pool.Begin(ctx)
+	if err != nil {
+		serverError(w, r, "could not update category", err)
+		return
+	}
+	defer tx.Rollback(ctx)
 	var old models.Category
-	_ = h.Pool.QueryRow(r.Context(),
+	err = tx.QueryRow(ctx,
 		`SELECT id, name, default_monthly_cost, default_yearly_cost, rates_synced,
 		        default_length_m, default_width_m, default_height_m, default_weight_t
-		 FROM categories WHERE id=$1`, id).
+		 FROM categories WHERE id=$1 FOR UPDATE`, id).
 		Scan(&old.ID, &old.Name, &old.DefaultMonthlyCost, &old.DefaultYearlyCost, &old.RatesSynced,
 			&old.DefaultLengthM, &old.DefaultWidthM, &old.DefaultHeightM, &old.DefaultWeightT)
-	ct, err := h.Pool.Exec(r.Context(),
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "category not found")
+			return
+		}
+		serverError(w, r, "could not read category", err)
+		return
+	}
+	// Compare the amounts PostgreSQL will persist. A sub-cent input that rounds
+	// to the same tariff must not be mistaken for an effective price change.
+	req.DefaultMonthlyCost = round2(req.DefaultMonthlyCost)
+	req.DefaultYearlyCost = round2(req.DefaultYearlyCost)
+	monthlyChanged := req.DefaultMonthlyCost != old.DefaultMonthlyCost
+	yearlyChanged := req.DefaultYearlyCost != old.DefaultYearlyCost
+	if monthlyChanged || yearlyChanged {
+		var dependent int
+		if err := tx.QueryRow(ctx,
+			`SELECT count(*) FROM vehicles
+			 WHERE category_id=$1 AND rate=0 AND cost_override IS NULL
+			   AND ((billing_period='yearly' AND $2) OR (billing_period<>'yearly' AND $3))`,
+			id, yearlyChanged, monthlyChanged).Scan(&dependent); err != nil {
+			serverError(w, r, "could not check existing booking prices", err)
+			return
+		}
+		if dependent > 0 {
+			// Never reinterpret or backfill legacy prices while editing a tariff.
+			// Archived and future bookings count too: their agreement still exists.
+			writeError(w, http.StatusConflict, fmt.Sprintf(
+				"Tarifpreis nicht geändert: %d bestehende Buchung(en) beziehen ihren Preis noch aus diesem Tarif. "+
+					"Bestätige deren vereinbarten Preis einzeln oder lege einen neuen Tarif für neue Buchungen an.", dependent))
+			return
+		}
+	}
+	_, err = tx.Exec(ctx,
 		`UPDATE categories SET name=$1, default_monthly_cost=$2,
 		        default_yearly_cost=$3, rates_synced=$4,
 		        default_length_m=$5, default_width_m=$6, default_height_m=$7, default_weight_t=$8,
@@ -163,11 +209,7 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "a category with that name already exists")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "could not update category")
-		return
-	}
-	if ct.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "category not found")
+		serverError(w, r, "could not update category", err)
 		return
 	}
 	newC := old
@@ -176,7 +218,14 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 	newC.DefaultLengthM, newC.DefaultWidthM = req.DefaultLengthM, req.DefaultWidthM
 	newC.DefaultHeightM, newC.DefaultWeightT = req.DefaultHeightM, req.DefaultWeightT
 	changes := diffFields(old, newC, "created_at", "updated_at", "id")
-	h.auditChange(r, "update", "category", id, "updated tariff "+req.Name, changes)
+	if err := h.auditChangeTx(ctx, tx, r, "update", "category", id, "updated tariff "+req.Name, changes); err != nil {
+		serverError(w, r, "could not record tariff change", err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		serverError(w, r, "could not update category", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

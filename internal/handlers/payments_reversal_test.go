@@ -40,14 +40,17 @@ func TestDeletePaymentRejectsPeriodManagedSettlement(t *testing.T) {
 			t.Fatal("reversed period unexpectedly eligible for invoicing")
 		}
 	}
-	setAgreementPeriodPaidT(t, h, aid, key, false)
+	reset := periodHistoryRequest(t, h.SetAgreementPeriodPaid, aid, map[string]any{"period_key": key, "paid": false})
+	if reset.Code != http.StatusConflict {
+		t.Fatalf("period reset: %d %s", reset.Code, reset.Body.String())
+	}
 	var remains bool
 	if err := h.Pool.QueryRow(t.Context(),
 		`SELECT EXISTS(SELECT 1 FROM flat_rate_period_payments WHERE period_id=$1 AND period_key=$2)`,
 		aid, key).Scan(&remains); err != nil {
 		t.Fatal(err)
 	}
-	if remains {
-		t.Fatal("supported period toggle did not reopen the period")
+	if !remains {
+		t.Fatal("rejected period reset removed the paid state")
 	}
 }

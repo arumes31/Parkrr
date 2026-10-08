@@ -425,10 +425,12 @@ func sameOptionalDate(a, b *time.Time) bool {
 }
 
 // categoryDefaultRate returns the current Tarif default for the billing period.
+// The shared lock serializes price capture with UpdateCategory until the caller's
+// transaction commits. Category updates never lock or rewrite vehicle rows.
 func categoryDefaultRate(ctx context.Context, q rowQuerier, categoryID int64, period string) (float64, error) {
 	var monthly, yearly float64
 	if err := q.QueryRow(ctx,
-		`SELECT default_monthly_cost, default_yearly_cost FROM categories WHERE id=$1`, categoryID).
+		`SELECT default_monthly_cost, default_yearly_cost FROM categories WHERE id=$1 FOR SHARE`, categoryID).
 		Scan(&monthly, &yearly); err != nil {
 		return 0, err
 	}
@@ -558,8 +560,6 @@ func (h *Handler) UpdateVehicle(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	rate := effectiveRate(pv.req, oldRate)
-	costOverride := persistedCostOverride(pv.req, oldCostOverride)
 	// Freeze the billing-defining fields once a period is invoiced: changing
 	// rate/period/start/person would desync the period-keyed invoice_source lock
 	// (re-billing an invoiced span) or make the balance disagree with the issued
@@ -570,6 +570,11 @@ func (h *Handler) UpdateVehicle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not resolve existing vehicle rate")
 		return
 	}
+	// An omitted price also preserves legacy bookings when their category or
+	// billing period is edited. Resolve the old agreement before changing either
+	// source of the fallback; only this explicitly edited row is normalized.
+	rate := effectiveRate(pv.req, oldEffectiveRate)
+	costOverride := markZeroRate(rate, persistedCostOverride(pv.req, oldCostOverride))
 	newEffectiveRate, effectiveErr := storedEffectiveRate(r.Context(), tx, pv.req.CategoryID, pv.req.BillingPeriod, rate, costOverride)
 	if effectiveErr != nil {
 		if errors.Is(effectiveErr, pgx.ErrNoRows) {
@@ -1259,16 +1264,39 @@ func (h *Handler) DuplicateVehicle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
+	var categoryID int64
+	var period string
+	var sourceRate float64
+	var sourceOverride *float64
+	if err := tx.QueryRow(ctx,
+		`SELECT category_id, billing_period, rate, cost_override FROM vehicles WHERE id=$1`, id).
+		Scan(&categoryID, &period, &sourceRate, &sourceOverride); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "vehicle not found")
+			return
+		}
+		serverError(w, r, "could not read vehicle price", err)
+		return
+	}
+	// Re-storage deliberately copies the agreed price, including individual and
+	// free prices. A legacy fallback must become a fixed price on the NEW copy,
+	// not another booking whose amount follows future tariff changes.
+	rate, err := storedEffectiveRate(ctx, tx, categoryID, period, sourceRate, sourceOverride)
+	if err != nil {
+		serverError(w, r, "could not resolve vehicle price", err)
+		return
+	}
+	costOverride := markZeroRate(rate, sourceOverride)
 	var newID int64
 	err = tx.QueryRow(ctx,
 		`INSERT INTO vehicles (person_id, category_id, label, license_plate, notes,
 		        billing_period, rate, cost_override, start_date, status,
 		        length_m, width_m, height_m, weight_t, needs_power, planner_symbol)
 		 SELECT person_id, category_id, label, license_plate, notes,
-		        billing_period, rate, cost_override, $2, 'stored',
+		        billing_period, $3, $4, $2, 'stored',
 		        length_m, width_m, height_m, weight_t, needs_power, planner_symbol
 		 FROM vehicles WHERE id = $1
-		 RETURNING id`, id, start).Scan(&newID)
+		 RETURNING id`, id, start, rate, costOverride).Scan(&newID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "vehicle not found")
