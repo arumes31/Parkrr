@@ -12,7 +12,7 @@ const reportUrl = pathToFileURL(path.join(reportDir, 'index.html')).href;
 const output = path.join(reportDir, 'evidence');
 const followup = JSON.parse(fs.readFileSync(path.join(reportDir, 'review-followup.json'), 'utf8'));
 // Keep the previous report's evidence intact when verifying this follow-up.
-const evidencePrefix = 'readonly-review';
+const evidencePrefix = 'implementation-completion';
 const answerKey = 'parkrr.review.answers.v1';
 // Allows a test-harness-only retry without repeating the bounded visual QA pass.
 const functionalOnly = process.argv.includes('--functional-only');
@@ -38,10 +38,10 @@ async function importAnswers(page, value) {
     await page.goto(reportUrl);
     await page.locator('#progress-title').waitFor();
     const originalStatuses = await page.locator('.current-item').evaluateAll(nodes => nodes.map(n => [n.id, n.dataset.status]));
-    await check('Current inventory: 25 measures, 15 implemented / 6 partial / 4 open', async () => {
+    await check('Current inventory: 25 measures, 16 implemented / 6 partial / 3 open', async () => {
         assert.equal(originalStatuses.length, 25);
-        for (const [status, n] of [['Umgesetzt', 15], ['Teilweise', 6], ['Offen', 4]]) assert.equal(originalStatuses.filter(i => i[1] === status).length, n);
-        assert.equal(await page.locator('.current-item:visible').count(), 10);
+        for (const [status, n] of [['Umgesetzt', 16], ['Teilweise', 6], ['Offen', 3]]) assert.equal(originalStatuses.filter(i => i[1] === status).length, n);
+        assert.equal(await page.locator('.current-item:visible').count(), 9);
         assert.equal(await page.locator('#historical-audit').getAttribute('open'), null);
         assert.equal(await page.locator('h1').count(), 1);
     });
@@ -53,13 +53,18 @@ async function importAnswers(page, value) {
         assert.match(await page.locator('#answer-state-Q05').textContent(), /Preisregel freigegeben/);
         assert.match(await page.locator('#answer-state-Q06').textContent(), /Optionaler Lesemodus gewählt/);
         assert.match(await page.locator('#question-Q03 .received-answer').textContent(), /ein steuerobjekt aktuell/);
-        assert.match(await page.locator('#question-Q05 .received-answer').textContent(), /technisch noch nicht implementiert/);
+        assert.match(await page.locator('#question-Q05 .received-answer').textContent(), /lokal implementiert/);
         assert.equal(await page.locator('#answer-Q03').inputValue(), '');
         assert.match(await page.locator('#answer-count').textContent(), /Ergänzungsentwurf/);
         assert.match(await page.locator('#current-R08').textContent(), /Exportformat 3/);
-        assert.match(await page.locator('#current-R08').textContent(), /Gesamtpaket noch nicht/);
+        assert.match(await page.locator('#current-R08').textContent(), /gesamte Paket/);
+        assert.match(await page.locator('#current-R08').textContent(), /24 MiB/);
+        assert.match(await page.locator('#current-R03').textContent(), /HTTP 409/);
+        assert.doesNotMatch(await page.locator('#current-R03').textContent(), /Lösch-\/Ersetzpfad bestehen/);
+        assert.match(await page.locator('#current-R05').textContent(), /2025\/2026/);
+        assert.match(await page.locator('#current-R10').textContent(), /keine Speicherung/);
     });
-    await check('Test profile supersedes current-KU assumption; approved tariff rule is not an implementation', async () => {
+    await check('Test profile stays unverified; completed tariff rule stays linked to its decision', async () => {
         assert.equal(await page.locator('#profile-summary').textContent(), followup.profileSummary);
         const profile = await page.locator('#profile-summary').textContent();
         for (const fact of [/Testbetrieb/, /eigenen Namen/, /späteren Echtbetrieb vorgesehen/, /2025/, /Strom als Pauschale/]) assert.match(profile, fact);
@@ -68,8 +73,10 @@ async function importAnswers(page, value) {
         assert.match(await page.locator('#question-Q02 .received-answer').textContent(), /auch nicht null Euro/);
         assert.equal(await page.locator('.answer-history').count(), 4);
         assert.equal(await page.locator('.answer-history[open]').count(), 0);
-        assert.equal(await page.locator('#current-R24').getAttribute('data-work'), 'technical');
-        assert.equal(await page.locator('#current-R24').getAttribute('data-status'), 'Offen');
+        assert.equal(await page.locator('#current-R24').getAttribute('data-work'), '');
+        assert.equal(await page.locator('#current-R24').getAttribute('data-status'), 'Umgesetzt');
+        assert.match(await page.locator('#current-R24').textContent(), /Entscheidung und Grenzen/);
+        assert.doesNotMatch(await page.locator('#current-R24').textContent(), /Was noch fehlt/);
         assert.match(await page.locator('#question-Q05 .received-answer').textContent(), /auch bei künftigem Mietbeginn/);
         assert.doesNotMatch(await page.locator('#question-Q05 .received-answer').textContent(), /noch nicht freigegeben/);
         assert.doesNotMatch(await page.locator('#question-Q06').textContent(), /Empfehlung · noch nicht freigegeben/);
@@ -77,12 +84,12 @@ async function importAnswers(page, value) {
         assert.match(await page.locator('#optional-tax').textContent(), /direkte API-Aufrufe/);
         assert.match(await page.locator('#optional-tax').textContent(), /fehlen weiterhin/);
     });
-    await check('Open work groups cover all 10 unfinished measures without counting deferred work as implemented', async () => {
+    await check('Open work groups cover all 9 unfinished measures without counting deferred work as implemented', async () => {
         assert.equal(await page.locator('.work-group').count(), 3);
-        assert.match(await page.locator('#open-work').textContent(), /8 relevante Restpunkte/);
+        assert.match(await page.locator('#open-work').textContent(), /7 relevante Restpunkte/);
         const grouped = await page.locator('.work-group a[href^="#current-"]').evaluateAll(nodes => nodes.map(n => n.hash.slice(1)));
         assert.deepEqual([...grouped].sort(), originalStatuses.filter(i => i[1] !== 'Umgesetzt').map(i => i[0]).sort());
-        for (const [group, count] of [['technical', 5], ['decision', 3], ['deferred', 2]]) {
+        for (const [group, count] of [['technical', 4], ['decision', 3], ['deferred', 2]]) {
             await page.locator('#progress-search').fill('should be cleared');
             await page.locator(`#work-${group} summary`).click();
             await page.locator(`[data-work-filter="${group}"]`).click();
@@ -99,7 +106,7 @@ async function importAnswers(page, value) {
         assert.equal(await page.locator('.current-item:visible').count(), 25);
     });
     await check('Status filters, search, empty state and reset', async () => {
-        for (const [filter, count] of [['Umgesetzt', 15], ['Teilweise', 6], ['Offen', 4], ['all', 25], ['unfinished', 10]]) {
+        for (const [filter, count] of [['Umgesetzt', 16], ['Teilweise', 6], ['Offen', 3], ['unfinished', 9], ['all', 25]]) {
             await page.locator(`[data-progress-filter="${filter}"]`).click();
             assert.equal(await page.locator('.current-item:visible').count(), count);
             assert.equal(await page.locator('[data-progress-filter][aria-pressed="true"]').count(), 1);
@@ -113,13 +120,16 @@ async function importAnswers(page, value) {
     });
     await check('Question links reveal related measures and hidden implemented items', async () => {
         await page.locator('[data-progress-filter="Offen"]').click();
-        await page.locator('#current-R24 summary').click();
-        await page.locator('#current-R24 a[href="#question-Q05"]').click();
+        assert.equal(await page.locator('#current-R24').isVisible(), false);
+        await page.evaluate(() => location.hash = 'question-Q05');
         await page.locator('#question-Q05[open]').waitFor();
         assert.equal(await page.locator('#question-Q05').getAttribute('open'), '');
         await page.locator('#question-Q05 a[href="#current-R24"]').click();
         await page.locator('#current-R24[open]').waitFor();
         assert.equal(await page.locator('#current-R24').getAttribute('open'), '');
+        assert.equal(await page.locator('#current-R24').isVisible(), true);
+        await page.locator('#current-R24 a[href="#question-Q05"]').click();
+        assert.equal(await page.locator('#question-Q05').isVisible(), true);
         await page.evaluate(() => location.hash = 'current-R01');
         await page.locator('#current-R01[open]').waitFor();
         assert.equal(await page.locator('#current-R01').isVisible(), true);
@@ -212,7 +222,7 @@ async function importAnswers(page, value) {
     await check('Print expands all details and restores filters and disclosure states', async () => {
         await page.locator('#historical-audit > summary').click();
         await page.locator('[data-progress-filter="Offen"]').click();
-        await page.locator('#progress-search').fill('R24');
+        await page.locator('#progress-search').fill('R12');
         const prior = await page.locator('details').evaluateAll(nodes => nodes.map(n => [n.open, n.hidden]));
         await page.evaluate(() => dispatchEvent(new Event('beforeprint')));
         assert.equal(await page.locator('details:not([open])').count(), 0);
