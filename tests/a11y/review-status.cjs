@@ -12,7 +12,7 @@ const reportUrl = pathToFileURL(path.join(reportDir, 'index.html')).href;
 const output = path.join(reportDir, 'evidence');
 const followup = JSON.parse(fs.readFileSync(path.join(reportDir, 'review-followup.json'), 'utf8'));
 // Keep the previous report's evidence intact when verifying this follow-up.
-const evidencePrefix = 'test-profile';
+const evidencePrefix = 'readonly-review';
 const answerKey = 'parkrr.review.answers.v1';
 // Allows a test-harness-only retry without repeating the bounded visual QA pass.
 const functionalOnly = process.argv.includes('--functional-only');
@@ -51,7 +51,7 @@ async function importAnswers(page, value) {
         assert.match(await page.locator('#answer-state-Q01').textContent(), /Testprofil geklärt/);
         assert.match(await page.locator('#answer-state-Q02').textContent(), /Leistungsumfang geklärt/);
         assert.match(await page.locator('#answer-state-Q05').textContent(), /Preisregel freigegeben/);
-        assert.match(await page.locator('#answer-state-Q06').textContent(), /Vorschlag zur Bestätigung/);
+        assert.match(await page.locator('#answer-state-Q06').textContent(), /Optionaler Lesemodus gewählt/);
         assert.match(await page.locator('#question-Q03 .received-answer').textContent(), /ein steuerobjekt aktuell/);
         assert.match(await page.locator('#question-Q05 .received-answer').textContent(), /technisch noch nicht implementiert/);
         assert.equal(await page.locator('#answer-Q03').inputValue(), '');
@@ -66,13 +66,16 @@ async function importAnswers(page, value) {
         const q01 = await page.locator('#question-Q01 .received-answer').textContent();
         assert.match(q01, /weder ein bestätigter aktueller Umsatzsteuerstatus noch ein tatsächlicher Vermietungsbeginn 2025/);
         assert.match(await page.locator('#question-Q02 .received-answer').textContent(), /auch nicht null Euro/);
-        assert.equal(await page.locator('.answer-history').count(), 3);
+        assert.equal(await page.locator('.answer-history').count(), 4);
         assert.equal(await page.locator('.answer-history[open]').count(), 0);
         assert.equal(await page.locator('#current-R24').getAttribute('data-work'), 'technical');
         assert.equal(await page.locator('#current-R24').getAttribute('data-status'), 'Offen');
         assert.match(await page.locator('#question-Q05 .received-answer').textContent(), /auch bei künftigem Mietbeginn/);
         assert.doesNotMatch(await page.locator('#question-Q05 .received-answer').textContent(), /noch nicht freigegeben/);
-        assert.match(await page.locator('#question-Q06').textContent(), /Empfehlung · noch nicht freigegeben/);
+        assert.doesNotMatch(await page.locator('#question-Q06').textContent(), /Empfehlung · noch nicht freigegeben/);
+        assert.match(await page.locator('#optional-tax').textContent(), /PARKRR_TAX_WRITES_ENABLED=true/);
+        assert.match(await page.locator('#optional-tax').textContent(), /direkte API-Aufrufe/);
+        assert.match(await page.locator('#optional-tax').textContent(), /fehlen weiterhin/);
     });
     await check('Open work groups cover all 10 unfinished measures without counting deferred work as implemented', async () => {
         assert.equal(await page.locator('.work-group').count(), 3);
@@ -156,7 +159,8 @@ async function importAnswers(page, value) {
         assert.match(text, /kein Rechnungsablauf/);
         assert.match(text, /Synthetischer QA-Entwurf/);
         assert.match(text, /Bereits übermittelt: ein steuerobjekt/);
-        assert.match(text, /Empfehlung \(nicht freigegeben\)/);
+        assert.doesNotMatch(text, /Empfehlung \(nicht freigegeben\)/);
+        assert.match(text, /Lesemodus/);
         assert.ok(text.includes('Aktuelles Profil: ' + followup.profileSummary));
         assert.match(text, /Überholte Angabe \(nicht aktuell\)/);
         assert.doesNotMatch(text, /Bereits bekannt: aktuell Kleinunternehmerregelung/);
@@ -232,6 +236,11 @@ async function importAnswers(page, value) {
             }
             await page.evaluate(() => document.documentElement.classList.remove('light'));
             await page.screenshot({ path: path.join(output, `${evidencePrefix}-report-${name}.png`) });
+            await page.locator('#optional-tax > details > summary').click();
+            await page.locator('#optional-tax').scrollIntoViewIfNeeded();
+            assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'activation instructions overflow');
+            await page.screenshot({ path: path.join(output, `${evidencePrefix}-mode-${name}.png`) });
+            await page.locator('#optional-tax > details > summary').click();
             await page.locator('#work-technical summary').click();
             await page.locator('#open-work').scrollIntoViewIfNeeded();
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'open work overflow');
@@ -262,7 +271,7 @@ async function importAnswers(page, value) {
             return {
                 duplicate: ids.filter((id, i) => ids.indexOf(id) !== i),
                 missing: [...document.querySelectorAll('a[href^="#"]')].map(a => a.hash.slice(1)).filter(id => !document.getElementById(id)),
-                marker: /__(?:PROGRESS|IMPLEMENTATION|REPORT_DATA|FONT|BEFORE_TAX|CODE_COMMIT)[A-Z_]*__/.test(document.documentElement.innerHTML)
+                marker: /__(?:PROGRESS|IMPLEMENTATION|REPORT_DATA|FONT|BEFORE_TAX|CODE_COMMIT|REVIEW_DATE)[A-Z_]*__/.test(document.documentElement.innerHTML)
             };
         });
         assert.deepEqual(errors, { duplicate: [], missing: [], marker: false });
