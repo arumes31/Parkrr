@@ -12,7 +12,7 @@ const reportUrl = pathToFileURL(path.join(reportDir, 'index.html')).href;
 const output = path.join(reportDir, 'evidence');
 const followup = JSON.parse(fs.readFileSync(path.join(reportDir, 'review-followup.json'), 'utf8'));
 // Keep the previous report's evidence intact when verifying this follow-up.
-const evidencePrefix = 'implementation-completion';
+const evidencePrefix = 'annual-import-20261009';
 const answerKey = 'parkrr.review.answers.v1';
 // Allows a test-harness-only retry without repeating the bounded visual QA pass.
 const functionalOnly = process.argv.includes('--functional-only');
@@ -38,9 +38,9 @@ async function importAnswers(page, value) {
     await page.goto(reportUrl);
     await page.locator('#progress-title').waitFor();
     const originalStatuses = await page.locator('.current-item').evaluateAll(nodes => nodes.map(n => [n.id, n.dataset.status]));
-    await check('Current inventory: 25 measures, 16 implemented / 6 partial / 3 open', async () => {
+    await check('Current inventory: 25 measures, 16 implemented / 7 partial / 2 open', async () => {
         assert.equal(originalStatuses.length, 25);
-        for (const [status, n] of [['Umgesetzt', 16], ['Teilweise', 6], ['Offen', 3]]) assert.equal(originalStatuses.filter(i => i[1] === status).length, n);
+        for (const [status, n] of [['Umgesetzt', 16], ['Teilweise', 7], ['Offen', 2]]) assert.equal(originalStatuses.filter(i => i[1] === status).length, n);
         assert.equal(await page.locator('.current-item:visible').count(), 9);
         assert.equal(await page.locator('#historical-audit').getAttribute('open'), null);
         assert.equal(await page.locator('h1').count(), 1);
@@ -63,6 +63,8 @@ async function importAnswers(page, value) {
         assert.doesNotMatch(await page.locator('#current-R03').textContent(), /Lösch-\/Ersetzpfad bestehen/);
         assert.match(await page.locator('#current-R05').textContent(), /2025\/2026/);
         assert.match(await page.locator('#current-R10').textContent(), /keine Speicherung/);
+        assert.equal(await page.locator('#current-R12').getAttribute('data-status'), 'Teilweise');
+        assert.match(await page.locator('#current-R12').textContent(), /Importvorschau/);
     });
     await check('Test profile stays unverified; completed tariff rule stays linked to its decision', async () => {
         assert.equal(await page.locator('#profile-summary').textContent(), followup.profileSummary);
@@ -106,7 +108,7 @@ async function importAnswers(page, value) {
         assert.equal(await page.locator('.current-item:visible').count(), 25);
     });
     await check('Status filters, search, empty state and reset', async () => {
-        for (const [filter, count] of [['Umgesetzt', 16], ['Teilweise', 6], ['Offen', 3], ['unfinished', 9], ['all', 25]]) {
+        for (const [filter, count] of [['Umgesetzt', 16], ['Teilweise', 7], ['Offen', 2], ['unfinished', 9], ['all', 25]]) {
             await page.locator(`[data-progress-filter="${filter}"]`).click();
             assert.equal(await page.locator('.current-item:visible').count(), count);
             assert.equal(await page.locator('[data-progress-filter][aria-pressed="true"]').count(), 1);
@@ -221,7 +223,7 @@ async function importAnswers(page, value) {
     });
     await check('Print expands all details and restores filters and disclosure states', async () => {
         await page.locator('#historical-audit > summary').click();
-        await page.locator('[data-progress-filter="Offen"]').click();
+        await page.locator('[data-progress-filter="Teilweise"]').click();
         await page.locator('#progress-search').fill('R12');
         const prior = await page.locator('details').evaluateAll(nodes => nodes.map(n => [n.open, n.hidden]));
         await page.evaluate(() => dispatchEvent(new Event('beforeprint')));
@@ -246,11 +248,11 @@ async function importAnswers(page, value) {
             }
             await page.evaluate(() => document.documentElement.classList.remove('light'));
             await page.screenshot({ path: path.join(output, `${evidencePrefix}-report-${name}.png`) });
-            await page.locator('#optional-tax > details > summary').click();
+            for (const summary of await page.locator('#optional-tax > details > summary').all()) await summary.click();
             await page.locator('#optional-tax').scrollIntoViewIfNeeded();
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'activation instructions overflow');
             await page.screenshot({ path: path.join(output, `${evidencePrefix}-mode-${name}.png`) });
-            await page.locator('#optional-tax > details > summary').click();
+            for (const summary of await page.locator('#optional-tax > details > summary').all()) await summary.click();
             await page.locator('#work-technical summary').click();
             await page.locator('#open-work').scrollIntoViewIfNeeded();
             assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'open work overflow');
