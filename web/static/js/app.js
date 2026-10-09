@@ -1,5 +1,6 @@
 import { createAPI } from './api.js';
 import { createTaxReview } from './tax-review.js';
+import { createTaxImport } from './tax-import.js';
 
 /* Parkrr SPA – vanilla JS, no external dependencies. */
 (() => {
@@ -3074,7 +3075,8 @@ import { createTaxReview } from './tax-review.js';
             el('div', { class: 'tax-limit-head' }, el('h3', {}, 'Kleinunternehmer · Umsatzprüfung'), el('b', {}, 'Nicht geprüft')),
             el('div', { class: 'card-meta' }, eur(rep.total_by_date) + ' erfasste Zahlungseingänge · kein Nachweis der Umsatzgrenze'),
             el('p', { class: 'card-meta' }, 'Leistungsumsätze, weitere unternehmerische Umsätze und das Vorjahr müssen gesondert geprüft werden. Parkrr ändert daraus weder Steuersatz noch bestehende Beträge.'));
-        page.append(limitCard, createTaxReview(rep, { el, field: taxField, api, eur }));
+        page.append(limitCard, createTaxReview(rep, { el, field: taxField, api, eur }),
+            createTaxImport(rep, { el, field: taxField, api, eur }));
 
         const ruleCheck = el('input', { type: 'checkbox', id: 'tax_rule_full' }); ruleCheck.checked = taxRule;
         ruleCheck.addEventListener('change', () => { taxRule = ruleCheck.checked; render(); });

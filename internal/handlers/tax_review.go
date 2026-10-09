@@ -125,13 +125,23 @@ func (h *Handler) TaxReviewPreview(w http.ResponseWriter, r *http.Request) {
 }
 
 func decodeTaxReview(w http.ResponseWriter, r *http.Request, req *taxReviewRequest) error {
+	return decodeTaxPreview(
+		w,
+		r,
+		req,
+		maxTaxReviewBody,
+	)
+}
+
+// Both preview contracts reject ambiguous fields before decoding their own schema.
+func decodeTaxPreview(w http.ResponseWriter, r *http.Request, req any, maxBytes int64) error {
 	if ct := r.Header.Get("Content-Type"); ct != "" {
 		mt, _, err := mime.ParseMediaType(ct)
 		if err != nil || mt != "application/json" {
 			return errNotJSON
 		}
 	}
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxTaxReviewBody))
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes))
 	if err != nil {
 		return fmt.Errorf("read tax preview: %w", err)
 	}

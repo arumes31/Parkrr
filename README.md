@@ -218,6 +218,15 @@ mode, never stores its input or changes ledger totals, and can download a local
 JSON draft. A source/reviewer label is not professional verification. There is
 no draft import or automatic adoption into the tax book.
 
+A separate annual-value import preview accepts bounded UTF-8 JSON files for
+2025/2026 with explicit object, source and reviewer labels. It validates exact
+signed correction amounts and non-negative external depreciation, rejects
+ambiguous/duplicate fields and IDs within the file, and shows totals separately.
+It does not verify provenance or match existing entries, persist imports, change
+tax totals or provide complete E1b mapping. Admin and CSRF protection still apply
+in read-only mode; repeat previews are stateless. The downloadable example is
+synthetic. See the handbook's import-preview section for the file contract.
+
 Tax ZIP exports materialize all database content in one read-only snapshot,
 including receipt bytes, then release the database connection before streaming.
 Receipts use a private temporary file, removed on completion or failure. The

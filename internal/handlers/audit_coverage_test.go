@@ -476,6 +476,7 @@ var auditExemptHandlers = map[string]string{
 	"BackupValidateS3":     "read-only S3 download plus decrypt and pg_restore --list, changes nothing",
 	"BackupS3Test":         "read-only connection test, changes nothing",
 	"TaxReviewPreview":     "stateless calculation of supplied values; nil-receiver tests prove no database access or persisted state, so an audit write would violate the read-only contract",
+	"TaxImportPreview":     "stateless validation of external entries; nil-receiver and replay tests prove no database access or persisted import state",
 	"ClientError":          "forwards a browser error to slog, touches no domain data",
 	"ReorderPhotos":        "reine Darstellungsreihenfolge derselben Fotos — kein Inhalt entsteht, ändert sich oder verschwindet; Upload und Löschen der Fotos selbst sind auditiert",
 }

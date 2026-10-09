@@ -141,8 +141,8 @@ der Steuer-Schreibfunktionen nötig; der Lesemodus umgeht diesen Schutz nicht.
 
 Die Aktivierung ist keine steuerliche Abnahme. E1b bleibt eine Vorschau,
 KU-Voraussetzungen und maßgebliche Jahres-/Vorjahresumsätze müssen fachlich
-geprüft werden. Der kontrollierte Import extern bestätigter AfA-/Jahreskorrekturen
-und ein vollständiges jahresbezogenes E1b-Mapping sind noch nicht implementiert.
+geprüft werden. Eine Importvorschau für externe AfA-/Jahreskorrekturen ist vorhanden;
+die dauerhafte Übernahme und ein vollständiges jahresbezogenes E1b-Mapping fehlen.
 Eine vorhandene einfache AfA-Berechnung ersetzt diese Prüfung nicht.
 
 ### Optionale Jahresprüfung ohne Speicherung
@@ -162,6 +162,46 @@ es ersetzt keine aktuelle Einzelfallprüfung. Kein Ergebnis verschiebt Beträge
 in den Berichten. Der JSON-Download ist ein lokaler Prüfentwurf, kein Importformat
 für bestätigte Jahreskorrekturen. Beim Verlassen der Ansicht gehen Eingaben
 verloren, sofern du keinen Entwurf heruntergeladen hast.
+
+### Externe Jahreswerte als Datei prüfen
+
+„Externe Jahreswerte prüfen · Importvorschau“ ist eine getrennte, standardmäßig
+eingeklappte Ansicht für Administratoren. Sie funktioniert auch im Lesemodus und
+bei abgeschlossenen Jahren, weil sie keine Steuerdaten liest oder schreibt.
+Wähle ein vorhandenes Steuerobjekt und eine UTF-8-JSON-Datei (maximal 64 KiB,
+1 bis 100 Einträge). Bei genau einem Objekt ist es vorausgewählt. Erst „Datei
+prüfen“ sendet den Inhalt an den eigenen Parkrr-Server, nicht an einen externen
+Dienst. Jahr und Objekt der geprüften Datei müssen zur Ansicht passen.
+
+Die Beispieldatei enthält erfundene Werte und Herkunftsangaben; vor einer echten
+Prüfung vollständig ersetzen. Dateiformat Version 1: `year` (2025 oder 2026),
+`property_id`, `source`, `reviewer` und `entries`. Jeder Eintrag enthält eine
+eindeutige `external_id` (1–64 Zeichen: Buchstaben/Ziffern, danach auch `._:-`),
+`kind`, `amount_eur` als Dezimaltext und `description`. Herkunft, Prüferangabe
+und Beschreibung sind einzeilig, nicht leer und jeweils höchstens 1000 UTF-8-Bytes.
+
+- `income_adjustment`: positive oder negative Einnahmenkorrektur.
+- `expense_adjustment`: positive oder negative Werbungskostenkorrektur.
+- `external_depreciation`: nicht negativer externer AfA-Wert, **kein Zusatz** zur
+  bereits in Parkrr erfassten AfA.
+
+Beträge benötigen einen Dezimalpunkt und höchstens zwei Nachkommastellen,
+keine Tausendertrennung oder Exponentialnotation; zum Beispiel `"-20.00"`.
+Einzelbeträge und endgültige Gruppensummen sind auf jeweils eine Milliarde EUR
+im Betrag begrenzt. Doppelte JSON-Felder, unbekannte Felder, doppelte externe IDs
+innerhalb der Datei und ungenaue Beträge werden abgewiesen. Die Vorschau zeigt
+drei getrennte Summen, keinen neuen Jahresüberschuss. Bestehende Zahlungen,
+Werbungskosten, AfA, E1b und ZIP-Exporte bleiben unverändert.
+
+Quelle und Prüferangabe sind nicht verifiziert. Die API prüft keine Existenz der
+Objekt-ID; die Oberfläche gleicht sie mit dem gewählten vorhandenen Objekt ab.
+Es gibt keinen Abgleich gegen Bestandsdaten oder früher geprüfte Dateien.
+Wiederholtes Prüfen erzeugt keinen Eintrag. „Vorschau herunterladen“ sichert einen
+Prüfnachweis im Format `parkrr-tax-import-preview`, kein FinanzOnline- oder
+Übernahmeformat. Zum erneuten Prüfen die ursprüngliche Eingabedatei verwenden.
+Eine neue Datei, eine andere Objektwahl oder „Auswahl verwerfen“ entfernt das
+bisherige Ergebnis; nach einem Fehler bleibt die Auswahl für einen Retry erhalten.
+Beim Verlassen der Ansicht wird nichts lokal gespeichert.
 
 ### Schutz bestehender Preise und Periodenzahlungen
 
