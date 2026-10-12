@@ -155,9 +155,36 @@ test('shallow and unmerged repositories fail closed', t => {
   fs.unlinkSync(path.join(r.dir, '.git/shallow'));
   const blob = r.git('rev-parse', 'HEAD:app.js');
   r.git('update-index', '--force-remove', 'app.js');
-  const result = spawnSync('git', ['update-index', '--index-info'], { cwd: r.dir, input: `100644 ${blob} 1\tapp.js\n`, encoding: 'utf8', windowsHide: true });
+  const result = spawnSync('git', ['update-index', '--index-info'], { cwd: r.dir, env: r.env, input: `100644 ${blob} 1\tapp.js\n`, encoding: 'utf8', windowsHide: true });
   assert.equal(result.status, 0);
   blocked(r.check());
+});
+
+test('isolated Git commands leave an inherited external index untouched', t => {
+  const external = repository(t);
+  external.stage('sentinel.txt', 'unrelated temporary repository\n');
+  const originalIndex = path.join(external.dir, '.git/index');
+  const externalIndex = path.join(external.dir, 'disposable-external-index');
+  fs.copyFileSync(originalIndex, externalIndex);
+  const before = fs.readFileSync(externalIndex);
+  // Run the actual mutating test in a child, not a duplicate implementation.
+  // Poison only that child's environment, pointing solely at disposable data.
+  const childEnv = {
+    ...external.env,
+    GIT_DIR: path.join(external.dir, '.git'),
+    GIT_WORK_TREE: external.dir,
+    GIT_INDEX_FILE: externalIndex,
+  };
+  delete childEnv.NODE_TEST_CONTEXT; // Start a new runner, not its parent's worker.
+  const result = spawnSync(process.execPath, ['--test', '--test-name-pattern', '^shallow and unmerged repositories fail closed$', __filename], {
+    cwd: external.dir,
+    env: childEnv,
+    encoding: 'utf8', windowsHide: true,
+  });
+  assert.ok(fs.readFileSync(externalIndex).equals(before), 'child must not mutate an inherited foreign index');
+  assert.ok(fs.readFileSync(originalIndex).equals(before), 'original external index must also remain intact');
+  passed(result);
+  assert.match(result.stdout, /shallow and unmerged repositories fail closed/, 'targeted child test actually ran');
 });
 
 test('real pre-push hook allows a clean local push and rejects a removed embedded image', t => {

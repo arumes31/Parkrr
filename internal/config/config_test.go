@@ -99,6 +99,49 @@ func TestLoadRejectsShortSecret(t *testing.T) {
 	}
 }
 
+func TestLoadTaxExportReceiptLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  int64
+	}{
+		{name: "default", want: DefaultTaxExportMaxReceiptBytes},
+		{name: "blank", value: " \t", want: DefaultTaxExportMaxReceiptBytes},
+		{name: "minimum", value: "1", want: 1 << 20},
+		{name: "trimmed", value: " 25 ", want: 25 << 20},
+		{name: "maximum", value: "1024", want: 1024 << 20},
+		{name: "zero", value: "0"},
+		{name: "negative", value: "-1"},
+		{name: "above maximum", value: "1025"},
+		{name: "units", value: "25MB"},
+		{name: "fraction", value: "1.5"},
+		{name: "overflow", value: "9223372036854775808"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setRequired(t)
+			t.Setenv("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB", tc.value)
+			cfg, err := Load()
+			if tc.want == 0 {
+				if err == nil || cfg != nil || !strings.Contains(err.Error(), "PARKRR_TAX_EXPORT_MAX_RECEIPT_MB") {
+					t.Fatalf("invalid export limit must fail startup: config=%v, err=%v", cfg != nil, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.TaxExportMaxReceiptBytes != tc.want {
+				t.Fatalf("limit = %d, want %d", cfg.TaxExportMaxReceiptBytes, tc.want)
+			}
+			// Serving requests must not reinterpret a changed process environment.
+			t.Setenv("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB", "invalid-after-startup")
+			if cfg.TaxExportMaxReceiptBytes != tc.want {
+				t.Fatal("validated configuration changed after startup")
+			}
+		})
+	}
+}
+
 func TestLoadSessionSecretLengthBoundary(t *testing.T) {
 	t.Setenv("PARKRR_ADMIN_PASSWORD", "admin-password")
 	// One byte under the floor is rejected.

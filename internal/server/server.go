@@ -97,7 +97,7 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 	mux.HandleFunc("POST /api/portal/requests", h.PortalCreateRequest)
 
 	// --- Auth (protected) ---
-	mux.Handle("POST /api/auth/logout", authed(hf(ah.Logout)))
+	mux.Handle("POST /api/auth/logout", authMgr.RequireLogout(hf(ah.Logout)))
 	mux.Handle("GET /api/auth/me", authed(hf(ah.Me)))
 	mux.Handle("POST /api/auth/change-password", authed(hf(ah.ChangePassword)))
 	mux.Handle("GET /api/auth/sessions", authed(hf(ah.ListSessions)))

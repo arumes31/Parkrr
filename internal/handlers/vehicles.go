@@ -1051,21 +1051,9 @@ func (h *Handler) MarkPaid(w http.ResponseWriter, r *http.Request) {
 	if !ensureVehicleWritable(w, archived, scanErr) {
 		return
 	}
-	// P2.3: keep the money in step — record the auto-payment while still open (so
-	// its amount is visible in openOwedItems), then flip the flag, all in ONE
-	// transaction so a failure between them can't leave a phantom payment/credit.
-	// The owed amount is read BEFORE the tx (openOwedItems uses the pool; reading
-	// it while holding the tx's connection can deadlock the pool under
-	// concurrency).
-	var amt float64
-	var bound []boundCharge
-	if req.Paid && !curPaid {
-		var err error
-		if amt, bound, err = h.toggleOwed(r, "vehicle", id, personID); err != nil {
-			writeError(w, http.StatusInternalServerError, "could not record payment")
-			return
-		}
-	}
+	// P2.3: read the owed amount and record the auto-payment while still open,
+	// then flip the flag in the same transaction. Read through tx after taking
+	// the person/row locks so the amount is current without another pool connection.
 	today := businessDay(h.now())
 	newThrough := curThrough // unchanged unless the flag flips
 	failMsg := "could not update payment status"
@@ -1085,6 +1073,8 @@ func (h *Handler) MarkPaid(w http.ResponseWriter, r *http.Request) {
 			return &settlementConflictError{msg: "Gefährt wurde zwischenzeitlich geändert – bitte neu laden"}
 		}
 		newThrough = curThrough
+		var amt float64
+		var bound []boundCharge
 		if req.Paid && !curPaid {
 			var err error
 			amt, bound, err = h.toggleOwedFrom(r, tx, "vehicle", id, personID)

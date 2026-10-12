@@ -61,6 +61,7 @@ func startAppGeneration(
 	}
 	apiHandler.Restore = restores
 	apiHandler.TaxWritesEnabled = cfg.TaxWritesEnabled
+	apiHandler.TaxExportMaxReceiptBytes = cfg.TaxExportMaxReceiptBytes
 	apiHandler.Readiness = handlers.ReadinessConfig{
 		SMTPFromConfigured: strings.TrimSpace(cfg.SMTPFrom) != "",
 		Require2FA:         cfg.Require2FA,

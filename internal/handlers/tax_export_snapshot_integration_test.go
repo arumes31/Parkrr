@@ -72,7 +72,12 @@ func TestTaxExportSnapshotConcurrentCommit(t *testing.T) {
 			return ctx.Err()
 		}
 	}}
-	snapshot, err := buildTaxExportSnapshot(ctx, db, 2090)
+	snapshot, err := buildTaxExportSnapshot(
+		ctx,
+		db,
+		2090,
+		defaultTaxExportReceiptBytes,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +114,12 @@ func TestTaxExportSnapshotConcurrentCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTaxExportTempEmpty(t, dir)
-	next, err := buildTaxExportSnapshot(ctx, h.Pool, 2090)
+	next, err := buildTaxExportSnapshot(
+		ctx,
+		h.Pool,
+		2090,
+		defaultTaxExportReceiptBytes,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +139,12 @@ func TestTaxExportSnapshotCommitFailureCleanup(t *testing.T) {
 	createTaxExportSnapshotFixture(t, h)
 	commitErr := errors.New("commit unavailable")
 	db := &taxSnapshotHookDB{pool: h.Pool, commitErr: commitErr}
-	snapshot, err := buildTaxExportSnapshot(t.Context(), db, 2090)
+	snapshot, err := buildTaxExportSnapshot(
+		t.Context(),
+		db,
+		2090,
+		defaultTaxExportReceiptBytes,
+	)
 	if snapshot != nil || !errors.Is(err, commitErr) || !db.tx.isRolledBack {
 		t.Fatalf("failed commit exposed snapshot or leaked transaction: %v, %v", snapshot, err)
 	}
@@ -182,8 +197,8 @@ func TestTaxExportSnapshotReleasesConnectionBeforeResponse(t *testing.T) {
 
 func TestTaxExportSnapshotSizeLimitBeforeHeaders(t *testing.T) {
 	dir := taxExportTestTempDir(t)
-	t.Setenv("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB", "1")
 	h := testHandler(t)
+	h.TaxExportMaxReceiptBytes = 1 << 20
 	f := createTaxExportSnapshotFixture(t, h)
 	// The original 3-byte receipt makes the combined size exceed the 1 MiB
 	// configured allowance. No blobs should be fetched or response ZIP started.
@@ -349,7 +364,12 @@ func (w *taxSnapshotResponseWriter) Write(data []byte) (int, error) {
 func TestTaxExportSnapshotTempPermissions(t *testing.T) {
 	dir := taxExportTestTempDir(t)
 	h := testHandler(t)
-	snapshot, err := buildTaxExportSnapshot(t.Context(), h.Pool, 2090)
+	snapshot, err := buildTaxExportSnapshot(
+		t.Context(),
+		h.Pool,
+		2090,
+		defaultTaxExportReceiptBytes,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -396,16 +396,10 @@ type boundCharge struct {
 	total float64
 }
 
-// toggleOwed computes what a paid-toggle's auto-payment must cover: the item's
+// toggleOwedFrom computes what a paid-toggle's auto-payment must cover: the item's
 // own open amount plus (vehicle only) its bound open charges. Only standalone,
-// still-open items are in openOwedItems; that's their owed amount. Reads via the
-// pool — call BEFORE opening the write tx: openOwedItems uses the pool, and
-// reading it while holding the tx's connection can deadlock the pool under
-// concurrency (see settlePaymentTx).
-func (h *Handler) toggleOwed(r *http.Request, kind string, refID, personID int64) (float64, []boundCharge, error) {
-	return h.toggleOwedFrom(r, h.Pool, kind, refID, personID)
-}
-
+// still-open items are in openOwedItemsFrom; that's their owed amount. Paid-toggle
+// callers pass their transaction after acquiring the person and item row locks.
 func (h *Handler) toggleOwedFrom(r *http.Request, q dbQuerier, kind string, refID, personID int64) (float64, []boundCharge, error) {
 	ctx := r.Context()
 	items, err := h.openOwedItemsFrom(r, q, personID)
@@ -1288,16 +1282,17 @@ func (h *Handler) DeletePayment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, periodPaymentHistoryMessage)
 		return
 	}
+	if isRetryableTxError(txErr) {
+		// Rolled back atomically by Postgres — nothing was reversed; safe to repeat.
+		// Keep this ahead of the generic settlement-conflict response.
+		writeError(w, http.StatusConflict, "Gleichzeitige Änderung an dieser Zahlung – bitte erneut versuchen")
+		return
+	}
 	if writeSettlementConflict(w, txErr) {
 		return
 	}
 	if errors.Is(txErr, errPaymentNotFound) || (txErr == nil && !deleted) {
 		writeError(w, http.StatusNotFound, "payment not found")
-		return
-	}
-	if isRetryableTxError(txErr) {
-		// Rolled back atomically by Postgres — nothing was reversed; safe to repeat.
-		writeError(w, http.StatusConflict, "Gleichzeitige Änderung an dieser Zahlung – bitte erneut versuchen")
 		return
 	}
 	if txErr != nil {

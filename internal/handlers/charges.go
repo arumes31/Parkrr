@@ -727,20 +727,9 @@ func (h *Handler) SetChargePaid(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	// P2.3: record the auto-payment while still open, then flip the flag — all in
-	// ONE transaction so a failure between them can't leave a phantom
-	// payment/credit. The owed amount is read BEFORE the tx (openOwedItems uses
-	// the pool; reading it while holding the tx's connection can deadlock the
-	// pool under concurrency).
-	var amt float64
-	var bound []boundCharge
-	if req.Paid && !curPaid {
-		var err error
-		if amt, bound, err = h.toggleOwed(r, "charge", id, personID); err != nil {
-			writeError(w, http.StatusInternalServerError, "could not record payment")
-			return
-		}
-	}
+	// P2.3: read the owed amount and record the auto-payment while still open,
+	// then flip the flag in the same transaction. Read through tx after taking
+	// the person/row locks so the amount is current without another pool connection.
 	failMsg := "could not update charge"
 	if err := pgx.BeginFunc(r.Context(), h.Pool, func(tx pgx.Tx) error {
 		// CreateInvoice's per-person lock, then the state checks (BIL-05).
@@ -756,6 +745,8 @@ func (h *Handler) SetChargePaid(w http.ResponseWriter, r *http.Request) {
 		if lockedPerson != personID || boundVehicle != nil {
 			return &settlementConflictError{msg: "Zusatzkosten wurden zwischenzeitlich geändert – bitte neu laden"}
 		}
+		var amt float64
+		var bound []boundCharge
 		if req.Paid && !curPaid {
 			var err error
 			amt, bound, err = h.toggleOwedFrom(r, tx, "charge", id, personID)
@@ -765,7 +756,7 @@ func (h *Handler) SetChargePaid(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Paid != curPaid {
 			// A charge on an active invoice is settled through that invoice, in both
-			// directions: "bezahlt" would book no payment (toggleOwed sees nothing
+			// directions: "bezahlt" would book no payment (toggleOwedFrom sees nothing
 			// open) yet write paid=true, so after a Storno the charge could never be
 			// billed again while the balance still owed it (BIL-03).
 			if inv, err := periodInvoicedTx(r.Context(), tx, "charge", id, ""); err != nil {

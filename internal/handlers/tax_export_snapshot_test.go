@@ -36,7 +36,12 @@ func TestBuildTaxExportSnapshotFailureCleanup(t *testing.T) {
 			if tc.isCanceled {
 				cancel()
 			}
-			snapshot, err := buildTaxExportSnapshot(ctx, db, 2090)
+			snapshot, err := buildTaxExportSnapshot(
+				ctx,
+				db,
+				2090,
+				defaultTaxExportReceiptBytes,
+			)
 			if snapshot != nil || err == nil {
 				t.Fatalf("snapshot escaped failed read: %v, %v", snapshot, err)
 			}
@@ -64,7 +69,12 @@ func TestBuildTaxExportSnapshotTempUnavailable(t *testing.T) {
 		t.Setenv(key, dir)
 	}
 	db := &taxSnapshotFailureDB{}
-	if snapshot, err := buildTaxExportSnapshot(t.Context(), db, 2090); err == nil || snapshot != nil {
+	if snapshot, err := buildTaxExportSnapshot(
+		t.Context(),
+		db,
+		2090,
+		defaultTaxExportReceiptBytes,
+	); err == nil || snapshot != nil {
 		t.Fatalf("unavailable spool accepted: %v, %v", snapshot, err)
 	}
 	if db.isBegun {
@@ -88,10 +98,15 @@ func TestSpoolTaxExportReceiptsLimitsAndFailures(t *testing.T) {
 		{name: "iteration", total: 3, writer: io.Discard, rowErr: iterationErr, wantErr: iterationErr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB", "")
 			rows := &taxSnapshotReceiptRows{data: []byte("PDF"), err: tc.rowErr}
 			q := &taxSnapshotReceiptDB{total: tc.total, rows: rows}
-			if _, err := spoolTaxExportReceipts(t.Context(), q, 2090, tc.writer); !errors.Is(err, tc.wantErr) {
+			if _, err := spoolTaxExportReceipts(
+				t.Context(),
+				q,
+				2090,
+				tc.writer,
+				defaultTaxExportReceiptBytes,
+			); !errors.Is(err, tc.wantErr) {
 				t.Fatalf("lost failure: %v, want %v", err, tc.wantErr)
 			}
 			if tc.total > defaultTaxExportReceiptBytes {
@@ -105,29 +120,34 @@ func TestSpoolTaxExportReceiptsLimitsAndFailures(t *testing.T) {
 	}
 }
 
-func TestTaxExportReceiptByteLimit(t *testing.T) {
+func TestSpoolTaxExportReceiptsConfiguredLimit(t *testing.T) {
+	// The environment is validated by config.Load, never during an export.
+	t.Setenv("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB", "invalid-after-startup")
 	for _, tc := range []struct {
-		name  string
-		value string
-		want  int64
+		name    string
+		limit   int64
+		wantErr bool
 	}{
-		{name: "default", want: defaultTaxExportReceiptBytes},
-		{name: "small volume", value: "1", want: 1 << 20},
-		{name: "dedicated volume", value: "1024", want: 1024 << 20},
-		{name: "zero", value: "0"},
-		{name: "negative", value: "-1"},
-		{name: "over maximum", value: "1025"},
-		{name: "invalid", value: "unbounded"},
+		{name: "over limit", limit: 2, wantErr: true},
+		{name: "exact limit", limit: 3},
+		{name: "below limit", limit: 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB", tc.value)
-			got, err := taxExportReceiptByteLimit()
-			if tc.want == 0 {
-				if err == nil {
-					t.Fatal("invalid resource limit accepted")
+			q := &taxSnapshotReceiptDB{total: 3, rows: &taxSnapshotReceiptRows{data: []byte("PDF")}}
+			var dst bytes.Buffer
+			entries, err := spoolTaxExportReceipts(
+				t.Context(),
+				q,
+				2090,
+				&dst,
+				tc.limit,
+			)
+			if tc.wantErr {
+				if !errors.Is(err, errTaxExportReceiptLimit) || q.isQueried || dst.Len() != 0 {
+					t.Fatalf("configured limit not enforced before fetching blobs: %v", err)
 				}
-			} else if err != nil || got != tc.want {
-				t.Fatalf("limit %d, %v; want %d", got, err, tc.want)
+			} else if err != nil || len(entries) != 1 || dst.String() != "PDF" {
+				t.Fatalf("valid configured export rejected: %v", err)
 			}
 		})
 	}
@@ -185,6 +205,10 @@ type taxSnapshotFailureTx struct {
 
 func (t *taxSnapshotFailureTx) QueryRow(context.Context, string, ...any) pgx.Row {
 	return taxSnapshotFailureRow{err: t.queryErr}
+}
+
+func (t *taxSnapshotFailureTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, t.queryErr
 }
 
 func (t *taxSnapshotFailureTx) Rollback(ctx context.Context) error {

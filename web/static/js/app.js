@@ -4886,9 +4886,13 @@ import { createTaxImport } from './tax-import.js';
 
     async function deleteHandoverTemplate(template) {
         if (!await confirmDialog('Übergabevorlage löschen?', '„' + template.name + '“ wird dauerhaft entfernt. Bereits erstellte Protokolle bleiben unverändert.', 'Löschen')) return;
-        await api.del('/handover-templates/' + template.id);
-        toast('Übergabevorlage gelöscht', 'success');
-        render();
+        try {
+            await api.del('/handover-templates/' + template.id);
+            toast('Übergabevorlage gelöscht', 'success');
+            render();
+        } catch (error) {
+            toast(error?.message || 'Löschen fehlgeschlagen. Bitte erneut versuchen.', 'error');
+        }
     }
     function lightbox(photoId) {
         const dlg = el('dialog', { class: 'lightbox' }, el('img', { src: '/api/photos/' + photoId, alt: '' }));

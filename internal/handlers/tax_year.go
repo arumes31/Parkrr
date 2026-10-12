@@ -497,7 +497,12 @@ func (h *Handler) TaxYearPDF(w http.ResponseWriter, r *http.Request) {
 // and every immutable receipt attached to an expense of the selected year.
 func (h *Handler) TaxYearPackage(w http.ResponseWriter, r *http.Request) {
 	year := parseYearParam(r, h.now().Year()-1)
-	snapshot, err := buildTaxExportSnapshot(r.Context(), h.Pool, year)
+	snapshot, err := buildTaxExportSnapshot(
+		r.Context(),
+		h.Pool,
+		year,
+		h.TaxExportMaxReceiptBytes,
+	)
 	if err != nil {
 		if errors.Is(err, errTaxExportReceiptLimit) {
 			writeError(w, http.StatusUnprocessableEntity, "Die Belege überschreiten das konfigurierte Export-Speicherlimit (Standard: 24 MiB). Einzelbelege bleiben unverändert verfügbar. Für größere Pakete muss die Administration das Speicherlimit und den temporären Speicher anpassen.")

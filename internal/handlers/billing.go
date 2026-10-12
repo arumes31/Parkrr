@@ -1129,18 +1129,18 @@ func (h *Handler) CancelInvoice(w http.ResponseWriter, r *http.Request) {
 				"cancels_invoice": map[string]any{"old": nil, "new": o.number},
 			})
 	})
+	// A concurrent reversal can roll the Storno back atomically (BIL-07).
+	// Keep the retry advice ahead of the generic settlement-conflict response.
+	if isRetryableTxError(txErr) {
+		writeError(w, http.StatusConflict, "Gleichzeitige Änderung an dieser Rechnung – bitte erneut versuchen")
+		return
+	}
 	if writeSettlementConflict(w, txErr) {
 		return
 	}
 	if txErr != nil {
 		if errors.Is(txErr, errAlreadyCanceled) {
 			writeError(w, http.StatusConflict, "Rechnung ist bereits storniert")
-			return
-		}
-		// A deadlock with a concurrent payment reversal rolled the Storno back
-		// atomically — nothing was written; say so instead of an opaque 500 (BIL-07).
-		if isRetryableTxError(txErr) {
-			writeError(w, http.StatusConflict, "Gleichzeitige Änderung an dieser Rechnung – bitte erneut versuchen")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "could not cancel invoice")

@@ -8,16 +8,17 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/preining/parkrr/internal/config"
 )
 
 // The hardened deployment reserves 32 MiB for /tmp. Fail before the response
 // starts rather than filling that volume or retaining every receipt in RAM.
-const defaultTaxExportReceiptBytes int64 = 24 << 20
+const defaultTaxExportReceiptBytes = config.DefaultTaxExportMaxReceiptBytes
 
 var errTaxExportReceiptLimit = errors.New("tax export receipts exceed temporary storage limit")
 
@@ -35,21 +36,33 @@ type taxExportReceipt struct {
 }
 
 type taxExportSnapshot struct {
-	Report   taxYearReport
-	History  taxPaymentHistory
-	Receipts []taxExportReceipt
-	spool    *os.File
+	Report    taxYearReport
+	History   taxPaymentHistory
+	Receipts  []taxExportReceipt
+	spool     *os.File
+	byteLimit int64
 }
 
 // buildTaxExportSnapshot materializes every database-backed export component
 // before releasing its one read-only snapshot. Only raw receipt bytes go to a
 // private temporary file; PDF/ZIP compression and slow clients hold no DB rows.
-func buildTaxExportSnapshot(ctx context.Context, db taxExportBeginner, year int) (out *taxExportSnapshot, err error) {
+func buildTaxExportSnapshot(
+	ctx context.Context,
+	db taxExportBeginner,
+	year int,
+	byteLimit int64,
+) (out *taxExportSnapshot, err error) {
+	if byteLimit == 0 {
+		byteLimit = defaultTaxExportReceiptBytes
+	}
+	if byteLimit < 0 {
+		return nil, errors.New("tax export receipt limit must be positive")
+	}
 	spool, err := os.CreateTemp("", "parkrr-tax-export-*")
 	if err != nil {
 		return nil, fmt.Errorf("create tax receipt spool: %w", err)
 	}
-	snapshot := &taxExportSnapshot{spool: spool}
+	snapshot := &taxExportSnapshot{spool: spool, byteLimit: byteLimit}
 	retained := false
 	defer func() {
 		if !retained {
@@ -82,7 +95,13 @@ func readTaxExportSnapshotTx(ctx context.Context, db taxExportBeginner, year int
 	if snapshot.History, err = loadTaxPaymentHistory(ctx, tx, snapshot.Report); err != nil {
 		return fmt.Errorf("read tax export history: %w", err)
 	}
-	if snapshot.Receipts, err = spoolTaxExportReceipts(ctx, tx, year, snapshot.spool); err != nil {
+	if snapshot.Receipts, err = spoolTaxExportReceipts(
+		ctx,
+		tx,
+		year,
+		snapshot.spool,
+		snapshot.byteLimit,
+	); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -91,11 +110,13 @@ func readTaxExportSnapshotTx(ctx context.Context, db taxExportBeginner, year int
 	return nil
 }
 
-func spoolTaxExportReceipts(ctx context.Context, q dbQuerier, year int, dst io.Writer) ([]taxExportReceipt, error) {
-	limit, err := taxExportReceiptByteLimit()
-	if err != nil {
-		return nil, err
-	}
+func spoolTaxExportReceipts(
+	ctx context.Context,
+	q dbQuerier,
+	year int,
+	dst io.Writer,
+	limit int64,
+) ([]taxExportReceipt, error) {
 	// Check total size before reading bytea values, within the same snapshot.
 	var total int64
 	if err := q.QueryRow(ctx, `SELECT COALESCE(sum(octet_length(a.data)),0)
@@ -151,20 +172,6 @@ func spoolTaxExportReceipts(ctx context.Context, q dbQuerier, year int, dst io.W
 		return nil, fmt.Errorf("iterate tax export receipts: %w", err)
 	}
 	return entries, nil
-}
-
-// A larger limit needs a suitably sized, private TMPDIR volume. A bad setting
-// fails closed, and ENOSPC (including competing exports) still aborts preheaders.
-func taxExportReceiptByteLimit() (int64, error) {
-	value := strings.TrimSpace(os.Getenv("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB"))
-	if value == "" {
-		return defaultTaxExportReceiptBytes, nil
-	}
-	mb, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || mb < 1 || mb > 1024 {
-		return 0, errors.New("parkrr_tax_export_max_receipt_mb must be an integer from 1 to 1024")
-	}
-	return mb << 20, nil
 }
 
 func (s *taxExportSnapshot) close() error {

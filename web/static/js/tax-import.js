@@ -107,8 +107,8 @@ export function createTaxImport(rep, { el, field, api, eur }) {
             }
             let jsonText;
             try {
-                // Fatal decoding prevents silently replacing invalid bytes; preserve duplicate keys for the server.
-                jsonText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await selectedFile.arrayBuffer());
+                // Consume a leading UTF-8 BOM, reject invalid bytes, and preserve duplicate keys for the server.
+                jsonText = new TextDecoder('utf-8', { fatal: true }).decode(await selectedFile.arrayBuffer());
             } catch {
                 throw new Error('Die Datei ist nicht als UTF-8 lesbar. Bitte als UTF-8-JSON speichern und erneut auswählen.');
             }

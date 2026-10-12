@@ -12,6 +12,9 @@ import (
 	"time"
 )
 
+// DefaultTaxExportMaxReceiptBytes leaves headroom in the hardened 32 MiB /tmp volume.
+const DefaultTaxExportMaxReceiptBytes int64 = 24 << 20
+
 // Config holds all runtime configuration for the application.
 type Config struct {
 	// HTTP
@@ -102,6 +105,9 @@ type Config struct {
 	// TaxWritesEnabled opts into tax-ledger mutations. Reports and exports remain
 	// available when false; activation is an operator decision, never a UI setting.
 	TaxWritesEnabled bool
+
+	// TaxExportMaxReceiptBytes bounds receipt spooling; validated once at startup.
+	TaxExportMaxReceiptBytes int64
 
 	// PasskeyOnly schaltet den Passwort-Login ab: Anmeldung nur noch per Passkey
 	// (Hundert 42). Verlangt eingerichtetes WebAuthn (PARKRR_WEBAUTHN_RP_ID),
@@ -196,6 +202,15 @@ func Load() (*Config, error) {
 		S3Region:    os.Getenv("PARKRR_S3_REGION"),
 		S3Prefix:    getenv("PARKRR_S3_PREFIX", "parkrr/"),
 		S3UseSSL:    getenvBool("PARKRR_S3_USE_SSL", true),
+	}
+
+	cfg.TaxExportMaxReceiptBytes = DefaultTaxExportMaxReceiptBytes
+	if value := strings.TrimSpace(os.Getenv("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB")); value != "" {
+		mb, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || mb < 1 || mb > 1024 {
+			return nil, fmt.Errorf("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB must be an integer from 1 to 1024")
+		}
+		cfg.TaxExportMaxReceiptBytes = mb << 20
 	}
 
 	// Allow assembling the DB URL from discrete parts (docker-compose friendly).
