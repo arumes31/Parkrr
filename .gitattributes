@@ -5,6 +5,9 @@ graphify-out/graph.json merge=graphify
 *.yml text eol=lf
 *.yaml text eol=lf
 
+# Git hooks must also run under POSIX shells after a Windows checkout.
+.githooks/* text eol=lf
+
 # Web-Assets von jeder Zeilenenden-Umschreibung ausnehmen. Ein Editor auf Windows
 # hatte web/static/index.html komplett von CRLF auf LF umgeschrieben: aus einer
 # Einfügung von 12 Zeilen wurde ein Diff über 278, und jede Zeile zeigte seither auf

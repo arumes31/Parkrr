@@ -1,0 +1,6 @@
+#!/bin/sh
+# Install alongside existing hooks; do not replace post-commit/post-checkout.
+set -eu
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+exec node scripts/check-local-artifacts.cjs --index

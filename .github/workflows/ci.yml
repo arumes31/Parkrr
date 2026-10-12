@@ -176,5 +176,7 @@ jobs:
           persist-credentials: false
       # Pure geometry and isolated SPA auth tests via Node's built-in test runner
       # (preinstalled on the runner — no extra action or running backend).
+      - name: Reject local-only screenshots, mockups and review artifacts
+        run: node scripts/check-local-artifacts.cjs --index
       - name: Run frontend unit tests
         run: node --test tests/geometry/geometry.test.js tests/frontend/*.test.js

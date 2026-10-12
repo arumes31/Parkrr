@@ -28,27 +28,14 @@ per vehicle — monthly or yearly, prorated to the day.
 
 ---
 
-## 📸 Screenshots
+## Local previews
 
-> The screenshots follow your theme automatically — **light on GitHub's light theme, dark on its dark theme**.
+Screenshots, mockups and generated review reports are local-only. They are not
+distributed through Git or Docker build contexts. Product icons and vehicle
+artwork remain versioned; deterministic test fixtures remain part of the tests.
 
-<table>
-<tr>
-<td align="center"><b>Login</b></td>
-<td align="center"><b>Dashboard</b></td>
-<td align="center"><b>Gefährte</b></td>
-<td align="center"><b>Person</b></td>
-</tr>
-<tr>
-<td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/01-login-dark.png"><img alt="Login screen" src="docs/screenshots/01-login.png" width="200"></picture></td>
-<td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/02-dashboard-dark.png"><img alt="Dashboard overview" src="docs/screenshots/02-dashboard.png" width="200"></picture></td>
-<td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/03-vehicles-dark.png"><img alt="Vehicle list with status sliders" src="docs/screenshots/03-vehicles.png" width="200"></picture></td>
-<td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/04-person-dark.png"><img alt="Person detail with balance" src="docs/screenshots/04-person.png" width="200"></picture></td>
-</tr>
-</table>
-
-<p align="center"><b>Garagenplaner (Stellplatzverwaltung)</b> — a to-scale floor plan per hall, vehicles placed on their spots</p>
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/06-planner-dark.png"><img alt="Garagenplaner: to-scale hall floor plan with vehicles placed on their spots" src="docs/screenshots/06-planner.png" width="760"></picture></p>
+See [local artifact policy and Git guards](docs/local-artifacts.md) for checks,
+hook installation, and the separate handling required for existing Git history.
 
 ---
 
@@ -253,10 +240,6 @@ as soon as `PARKRR_WEBAUTHN_RP_ID` is set (requires HTTPS, e.g. via your proxy �
 PARKRR_WEBAUTHN_RP_ID=parkrr.example.com
 PARKRR_WEBAUTHN_ORIGINS=https://parkrr.example.com
 ```
-
-<div align="center">
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/05-settings-dark.png"><img src="docs/screenshots/05-settings.png" width="300" alt="Settings with the Passkeys card"></picture>
-</div>
 
 - **Enroll:** **Settings → Passkeys → "+ Passkey hinzufügen"** (after a normal login).
 - **Sign in:** the **"Mit Passkey anmelden"** button on the login screen —

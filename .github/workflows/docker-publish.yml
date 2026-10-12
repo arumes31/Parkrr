@@ -16,6 +16,8 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Keep generated build records local to the runner, not GitHub artifacts.
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 # Serialize runs per ref: a newer push cancels an in-flight run, so a slower older
 # build can never overwrite a newer image tag, and superseded checks stop cleanly
