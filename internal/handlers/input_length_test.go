@@ -26,6 +26,7 @@ import (
 // their own.
 func TestInputLengthValidation(t *testing.T) {
 	h := &Handler{}
+	taxHandler := &Handler{TaxWritesEnabled: true}
 
 	longName := strings.Repeat("a", maxNameLen+1)
 	longEmail := strings.Repeat("b", maxEmailLen+1)
@@ -35,6 +36,9 @@ func TestInputLengthValidation(t *testing.T) {
 	longCron := strings.Repeat("*", maxCronLen+1)
 	longDate := strings.Repeat("2", maxDateLen+1)
 	longNumericParam := strings.Repeat("2", maxNumericParamLen+1)
+	longTaxID := strings.Repeat("0", maxNumericParamLen) + "1"
+	longTaxYear := strings.Repeat("0", maxNumericParamLen-3) + "2025"
+	longPaddedDate := "2025-01-01" + strings.Repeat(" ", maxDateLen-9)
 	longSearchQuery := strings.Repeat("q", maxSearchQueryLen+1)
 	longSessionHandle := strings.Repeat("s", maxSessionHandleLen+1)
 	ah := &AuthHandler{Handler: h}
@@ -134,6 +138,24 @@ func TestInputLengthValidation(t *testing.T) {
 			body:       userRequest{Username: "testuser", Email: longEmail},
 			wantStatus: http.StatusBadRequest,
 			errMsg:     "E-Mail ist ungültig oder zu lang",
+		},
+		{
+			name:       "UpdatePerson: First Name too long",
+			path:       "/api/persons/1",
+			method:     "PUT",
+			body:       personRequest{FirstName: longName},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "Name ist zu lang",
+		},
+		{
+			name:   "CreateAgreement: Note too long",
+			path:   "/api/persons/1/agreements",
+			method: "POST",
+			body: agreementRequest{
+				Amount: floatPtr(10), StartDate: "2023-01-01", Note: longNote,
+			},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "note is too long",
 		},
 		{
 			name:       "CreateAgreement: NewVehicles Label too long",
@@ -353,7 +375,7 @@ func TestInputLengthValidation(t *testing.T) {
 		},
 		{
 			name:       "EndingSoon: days parameter too long",
-			path:       "/api/vehicles/ending-soon?days=" + longDate,
+			path:       "/api/vehicles/ending-soon?days=" + longNumericParam,
 			method:     "GET",
 			body:       nil,
 			wantStatus: http.StatusBadRequest,
@@ -387,6 +409,97 @@ func TestInputLengthValidation(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 			errMsg:     "handle is too long",
 		},
+		{
+			name:   "CreateHandover: SignerName too long",
+			path:   "/api/vehicles/1/handovers",
+			method: "POST",
+			body: struct {
+				Direction  string `json:"direction"`
+				SignerName string `json:"signer_name"`
+			}{Direction: "einlagerung", SignerName: longName},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "Name zu lang",
+		},
+		{
+			name:       "CreateGarage: Name too long",
+			path:       "/api/garages",
+			method:     "POST",
+			body:       garageRequest{Name: longName},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "name is too long",
+		},
+		{
+			name:       "CreateHall: Name too long",
+			path:       "/api/garages/1/halls",
+			method:     "POST",
+			body:       hallRequest{Name: longName},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "name is too long",
+		},
+		{
+			name:       "CreateSpot: Label too long",
+			path:       "/api/halls/1/spots",
+			method:     "POST",
+			body:       spotRequest{Label: longName},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "label is too long",
+		},
+		{
+			name:       "CreateWallTemplate: Name too long",
+			path:       "/api/wall-templates",
+			method:     "POST",
+			body:       wallTemplateReq{Name: longName},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "name is too long",
+		},
+		{
+			name:       "ReverseTaxExpense: id parameter too long",
+			path:       "/api/tax/expenses/" + longTaxID + "/reverse",
+			method:     "POST",
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "invalid id",
+		},
+		{
+			name:       "LockTaxYear: year parameter too long",
+			path:       "/api/tax/years/" + longTaxYear + "/lock",
+			method:     "POST",
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "Ungültiges Steuerjahr",
+		},
+		{
+			name:   "CreateTaxExpense: PaidOn too long",
+			path:   "/api/tax/expenses",
+			method: "POST",
+			body: taxExpenseRequest{
+				PropertyID: 1, CategoryID: 1, PaidOn: longPaddedDate,
+				Amount: 10, Description: "Valid", PaymentMethod: "bar",
+			},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "Ungültige Ausgabe",
+		},
+		{
+			name:   "CreateTaxRecurring: StartOn too long",
+			path:   "/api/tax/recurring",
+			method: "POST",
+			body: taxRecurringRequest{
+				PropertyID: 1, CategoryID: 1, Description: "Valid", Amount: 10,
+				PaymentMethod: "bar", Frequency: "monthly", DueDay: 1, DueMonth: 1,
+				StartOn: longPaddedDate,
+			},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "Ungültige wiederkehrende Ausgabe",
+		},
+		{
+			name:   "CreateTaxAsset: InServiceOn too long",
+			path:   "/api/tax/assets",
+			method: "POST",
+			body: taxAssetRequest{
+				PropertyID: 1, Name: "Valid", InServiceOn: longPaddedDate,
+				DepreciableBasis: 100, UsefulLifeYears: 5,
+			},
+			wantStatus: http.StatusBadRequest,
+			errMsg:     "Ungültiges Wirtschaftsgut",
+		},
 	}
 
 	for _, tt := range tests {
@@ -409,9 +522,25 @@ func TestInputLengthValidation(t *testing.T) {
 			case "UpdateUser: Email too long":
 				req.SetPathValue("id", "1")
 				h.UpdateUser(w, req)
-			case "CreateAgreement: NewVehicles Label too long", "CreateAgreement: NewVehicles LicensePlate too long", "CreateAgreement: EditVehicles Label too long", "CreateAgreement: EditVehicles LicensePlate too long":
+			case "UpdatePerson: First Name too long":
+				req.SetPathValue("id", "1")
+				h.UpdatePerson(w, req)
+			case "CreateAgreement: Note too long", "CreateAgreement: NewVehicles Label too long", "CreateAgreement: NewVehicles LicensePlate too long", "CreateAgreement: EditVehicles Label too long", "CreateAgreement: EditVehicles LicensePlate too long":
 				req.SetPathValue("id", "1")
 				h.CreateAgreement(w, req)
+			case "CreateHandover: SignerName too long":
+				req.SetPathValue("id", "1")
+				h.CreateHandover(w, req)
+			case "CreateGarage: Name too long":
+				h.CreateGarage(w, req)
+			case "CreateHall: Name too long":
+				req.SetPathValue("id", "1")
+				h.CreateHall(w, req)
+			case "CreateSpot: Label too long":
+				req.SetPathValue("id", "1")
+				h.CreateSpot(w, req)
+			case "CreateWallTemplate: Name too long":
+				h.CreateWallTemplate(w, req)
 			case "CreateRecurringCharge: Description too long":
 				req.SetPathValue("id", "1")
 				h.CreateRecurringCharge(w, req)
@@ -453,6 +582,18 @@ func TestInputLengthValidation(t *testing.T) {
 			case "RevokeSession: handle parameter too long":
 				req.SetPathValue("handle", longSessionHandle)
 				ah.RevokeSession(w, req)
+			case "ReverseTaxExpense: id parameter too long":
+				req.SetPathValue("id", longTaxID)
+				taxHandler.ReverseTaxExpense(w, req)
+			case "LockTaxYear: year parameter too long":
+				req.SetPathValue("year", longTaxYear)
+				taxHandler.LockTaxYear(w, req)
+			case "CreateTaxExpense: PaidOn too long":
+				taxHandler.CreateTaxExpense(w, req)
+			case "CreateTaxRecurring: StartOn too long":
+				taxHandler.CreateTaxRecurring(w, req)
+			case "CreateTaxAsset: InServiceOn too long":
+				taxHandler.CreateTaxAsset(w, req)
 			}
 
 			if w.Code != tt.wantStatus {

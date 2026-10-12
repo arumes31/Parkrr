@@ -28,27 +28,14 @@ per vehicle — monthly or yearly, prorated to the day.
 
 ---
 
-## 📸 Screenshots
+## Local previews
 
-> The screenshots follow your theme automatically — **light on GitHub's light theme, dark on its dark theme**.
+Screenshots, mockups and generated review reports are local-only. They are not
+distributed through Git or Docker build contexts. Product icons and vehicle
+artwork remain versioned; deterministic test fixtures remain part of the tests.
 
-<table>
-<tr>
-<td align="center"><b>Login</b></td>
-<td align="center"><b>Dashboard</b></td>
-<td align="center"><b>Gefährte</b></td>
-<td align="center"><b>Person</b></td>
-</tr>
-<tr>
-<td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/01-login-dark.png"><img alt="Login screen" src="docs/screenshots/01-login.png" width="200"></picture></td>
-<td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/02-dashboard-dark.png"><img alt="Dashboard overview" src="docs/screenshots/02-dashboard.png" width="200"></picture></td>
-<td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/03-vehicles-dark.png"><img alt="Vehicle list with status sliders" src="docs/screenshots/03-vehicles.png" width="200"></picture></td>
-<td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/04-person-dark.png"><img alt="Person detail with balance" src="docs/screenshots/04-person.png" width="200"></picture></td>
-</tr>
-</table>
-
-<p align="center"><b>Garagenplaner (Stellplatzverwaltung)</b> — a to-scale floor plan per hall, vehicles placed on their spots</p>
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/06-planner-dark.png"><img alt="Garagenplaner: to-scale hall floor plan with vehicles placed on their spots" src="docs/screenshots/06-planner.png" width="760"></picture></p>
+See [local artifact policy and Git guards](docs/local-artifacts.md) for checks,
+hook installation, and the separate handling required for existing Git history.
 
 ---
 
@@ -91,7 +78,10 @@ per vehicle — monthly or yearly, prorated to the day.
   re-opens exactly what it had covered.
 - **Austrian tax-year ledger** — track cash-basis income and immutable expenses
   with receipts, recurring costs, properties, straight-line depreciation and
-  E1b previews; lock a completed year and export a complete adviser ZIP.
+  E1b previews. Read-only by default: inspect existing records, simulate the
+  year boundary, and export adviser files without adopting a bookkeeping workflow.
+  Explicit opt-in enables manual tax entries and year closing; it does not
+  activate invoicing or import externally verified annual adjustments.
 - **Statistics & charts** — revenue/month, status distribution, paid/open, and
   cost per person by month and year (local SVG charts).
 - **CSV import & export** — bulk-import people from a CSV (with a downloadable
@@ -195,6 +185,48 @@ compose network). Schema migrations run automatically at startup.
 | `PARKRR_REQUIRE_2FA` | require verified TOTP/recovery-code or passkey proof for each session; unenrolled accounts can only reach setup, and existing unverified sessions must sign in again | `false` |
 | `PARKRR_PASSKEY_ONLY` | disable password login entirely (passkey sign-in only); requires `PARKRR_WEBAUTHN_RP_ID` | `false` |
 | `PARKRR_AUTO_INVOICE_CRON` | 5-field cron for the automatic invoice run (e.g. `0 6 1 * *`); empty = off; uses the same path as the manual button, billed periods are never invoiced twice | – |
+| `PARKRR_TAX_WRITES_ENABLED` | allow manual tax-book changes, receipt uploads, tax settings, payment tax metadata and year locking/unlocking; `false` keeps tax reports, simulations, receipts and exports read-only | `false` |
+| `PARKRR_TAX_EXPORT_MAX_RECEIPT_MB` | total uncompressed receipt bytes staged per tax ZIP export, integer 1–1024; a larger value requires sufficient private `TMPDIR` capacity | `24` |
+
+Tax-book activation is optional: set `PARKRR_TAX_WRITES_ENABLED=true` and restart
+the application (recreate the container to apply changed environment variables).
+Use the same setting on every app replica. Activation does not book anything,
+issue invoices, import annual corrections, or recalculate agreed prices.
+Returning to `false` blocks further tax changes, but preserves existing expenses,
+depreciation, assignments and closed-year locks. Those locks continue protecting
+ordinary payment changes; unlocking requires explicit tax-write activation.
+The normal booking/payment workflow does not require using the tax module.
+E1b remains a preview, not a verified tax filing. See the
+[operator handbook](docs/betreiber-handbuch.md#steuerbereich-zuerst-nur-lesen-später-aktivieren).
+
+The optional 2025/2026 tax-review workbench compares explicitly supplied turnover
+and individual income/expense year-boundary scenarios. It works in read-only
+mode, never stores its input or changes ledger totals, and can download a local
+JSON draft. A source/reviewer label is not professional verification. There is
+no draft import or automatic adoption into the tax book.
+
+A separate annual-value import preview accepts bounded UTF-8 JSON files for
+2025/2026 with explicit object, source and reviewer labels. It validates exact
+signed correction amounts and non-negative external depreciation, rejects
+ambiguous/duplicate fields and IDs within the file, and shows totals separately.
+It does not verify provenance or match existing entries, persist imports, change
+tax totals or provide complete E1b mapping. Admin and CSRF protection still apply
+in read-only mode; repeat previews are stateless. The downloadable example is
+synthetic. See the handbook's import-preview section for the file contract.
+
+Tax ZIP exports materialize all database content in one read-only snapshot,
+including receipt bytes, then release the database connection before streaming.
+Receipts use a private temporary file, removed on completion or failure. The
+hardened deployment has a 32 MiB `/tmp`; the default 24 MiB receipt limit leaves
+headroom, but concurrent exports can still exhaust it and fail without changing
+data. Provision a private volume and set `TMPDIR` before increasing the limit.
+
+Existing automatically recorded flat-rate/recurring period receipts now block
+destructive reset/replacement/source deletion with HTTP 409. New individual
+period payments remain possible; a full reversal/rebooking workflow is pending
+a reviewed schema change. Tariff edits likewise reject unresolved legacy price
+dependencies instead of silently changing existing booking amounts. See the
+operator handbook before upgrading.
 
 ---
 
@@ -208,10 +240,6 @@ as soon as `PARKRR_WEBAUTHN_RP_ID` is set (requires HTTPS, e.g. via your proxy �
 PARKRR_WEBAUTHN_RP_ID=parkrr.example.com
 PARKRR_WEBAUTHN_ORIGINS=https://parkrr.example.com
 ```
-
-<div align="center">
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/05-settings-dark.png"><img src="docs/screenshots/05-settings.png" width="300" alt="Settings with the Passkeys card"></picture>
-</div>
 
 - **Enroll:** **Settings → Passkeys → "+ Passkey hinzufügen"** (after a normal login).
 - **Sign in:** the **"Mit Passkey anmelden"** button on the login screen —

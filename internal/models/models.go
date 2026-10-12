@@ -513,9 +513,10 @@ type Category struct {
 
 // Vehicle is a stored conveyance belonging to a Person.
 //
-// Rate is the effective price per billing period, locked onto the vehicle when
-// it is created/edited. Because pricing reads Rate (not the live category), a
-// later Tarif change never re-prices existing vehicles. CostOverride is legacy.
+// Rate is normally the effective price per billing period, locked onto the
+// vehicle when it is created or edited. CostOverride is also the compatibility
+// marker for deliberate zero-price rows; only old rate=0/override=NULL records
+// retain their historical live-category fallback.
 type Vehicle struct {
 	ID            int64      `json:"id"`
 	PersonID      int64      `json:"person_id"`
@@ -661,9 +662,10 @@ type SessionInfo struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// EffectiveRateFor returns the rate that applies to this vehicle. The rate is
-// locked onto the vehicle (Rate), so changing a Tarif never re-prices existing
-// vehicles. cat is only a fallback for legacy rows created before Rate existed.
+// EffectiveRateFor returns the rate that applies to this vehicle. Rate is the
+// locked price for current rows. CostOverride and the category defaults remain
+// compatibility fallbacks for legacy rows whose rate was never backfilled.
+// A deliberate free booking is represented by a zero CostOverride pointer.
 func (v *Vehicle) EffectiveRateFor(cat Category) float64 {
 	if v.Rate != 0 {
 		return v.Rate

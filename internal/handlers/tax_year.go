@@ -5,13 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
-	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/preining/parkrr/internal/auth"
@@ -59,6 +60,7 @@ type taxYearGroup struct {
 // taxYearReport is the JSON shape of GET /api/reports/tax-year.
 type taxYearReport struct {
 	Year                  int                   `json:"year"`
+	WriteEnabled          bool                  `json:"write_enabled"`
 	TotalByDate           float64               `json:"total_by_date"`
 	TotalWithRule         float64               `json:"total_with_rule"`
 	Count                 int                   `json:"count"`
@@ -139,11 +141,25 @@ func taxRuleYear(paidOn time.Time, kind, period string) int {
 // year to 15 Jan of the next and aggregates the year by payment date, with the
 // 15-day-rule alternative alongside.
 func (h *Handler) buildTaxYearReport(ctx context.Context, year int) (taxYearReport, error) {
-	rep := taxYearReport{Year: year, ByMonth: make([]float64, 12), ShiftedIn: []taxYearPayment{}, ShiftedOut: []taxYearPayment{}, ReviewPayments: []taxYearPayment{}, E1B: []taxE1BLine{}}
+	report, err := buildTaxYearReport(ctx, h.Pool, year)
+	report.WriteEnabled = h.TaxWritesEnabled
+	return report, err
+}
+
+// buildTaxYearReport uses the caller's read source so an export can share a snapshot.
+func buildTaxYearReport(ctx context.Context, q dbQuerier, year int) (taxYearReport, error) {
+	rep := taxYearReport{
+		Year:           year,
+		ByMonth:        make([]float64, 12),
+		ShiftedIn:      []taxYearPayment{},
+		ShiftedOut:     []taxYearPayment{},
+		ReviewPayments: []taxYearPayment{},
+		E1B:            []taxE1BLine{},
+	}
 	from := time.Date(year-1, time.December, 17, 0, 0, 0, 0, time.UTC)
 	to := time.Date(year+1, time.January, 15, 0, 0, 0, 0, time.UTC)
 
-	if err := h.Pool.QueryRow(ctx,
+	if err := q.QueryRow(ctx,
 		`SELECT count(*), COALESCE(sum(p.amount), 0) FROM payments p
 		  LEFT JOIN payment_tax_metadata m ON m.payment_id=p.id
 		  WHERE p.reversed AND COALESCE(m.received_on,p.paid_on) >= make_date($1, 1, 1)
@@ -152,7 +168,7 @@ func (h *Handler) buildTaxYearReport(ctx context.Context, year int) (taxYearRepo
 		return rep, err
 	}
 
-	rows, err := h.Pool.Query(ctx,
+	rows, err := q.Query(ctx,
 		`SELECT p.id, COALESCE(m.received_on,p.paid_on), p.paid_on, p.person_id,
 		        trim(per.first_name || ' ' || per.last_name), p.amount, p.method,
 		        p.auto, COALESCE(p.settles_kind, ''), COALESCE(p.settles_period, ''),
@@ -185,7 +201,7 @@ func (h *Handler) buildTaxYearReport(ctx context.Context, year int) (taxYearRepo
 	if err := rows.Err(); err != nil {
 		return rep, err
 	}
-	if err := h.splitTaxKinds(ctx, all); err != nil {
+	if err := splitTaxKinds(ctx, q, all); err != nil {
 		return rep, err
 	}
 
@@ -238,7 +254,7 @@ func (h *Handler) buildTaxYearReport(ctx context.Context, year int) (taxYearRepo
 		rep.ByMethod = append(rep.ByMethod, taxYearGroup{Key: m, Label: label, Amount: round2(v)})
 	}
 	sort.Slice(rep.ByMethod, func(i, j int) bool { return rep.ByMethod[i].Amount > rep.ByMethod[j].Amount })
-	if err := h.addTaxBook(ctx, &rep); err != nil {
+	if err := addTaxBook(ctx, q, &rep); err != nil {
 		return rep, err
 	}
 	// With multiple tax objects every payment needs an explicit assignment in
@@ -257,7 +273,7 @@ func (h *Handler) buildTaxYearReport(ctx context.Context, year int) (taxYearRepo
 // splitTaxKinds attributes each payment to what it settled: a period payment to
 // its kind; otherwise its allocations, its invoice payments, and the unassigned
 // rest as credit. Invoice lines carry no kind, so invoice money stays one group.
-func (h *Handler) splitTaxKinds(ctx context.Context, ps []taxYearPayment) error {
+func splitTaxKinds(ctx context.Context, q dbQuerier, ps []taxYearPayment) error {
 	ids := make([]int64, 0, len(ps))
 	for i := range ps {
 		ps[i].kindSplit = map[string]float64{}
@@ -271,7 +287,7 @@ func (h *Handler) splitTaxKinds(ctx context.Context, ps []taxYearPayment) error 
 		return nil
 	}
 	assigned := map[int64]map[string]float64{}
-	rows, err := h.Pool.Query(ctx,
+	rows, err := q.Query(ctx,
 		`SELECT payment_id, kind, sum(amount) FROM payment_allocations WHERE payment_id = ANY($1) GROUP BY 1, 2
 		 UNION ALL
 		 SELECT payment_id, 'invoice', sum(amount) FROM invoice_payments WHERE payment_id = ANY($1) GROUP BY 1`, ids)
@@ -333,12 +349,13 @@ func (h *Handler) TaxYearCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	header := []string{"zuflussdatum", "buchungstag", "steuerobjekt", "person", "betrag_eur", "art", "periode", "zahlungsart", "ueber_schalter",
-		"jahr_nach_zahlungsdatum", "jahr_nach_15_tage_regel"}
+		"jahr_nach_zahlungsdatum", "jahr_nach_15_tage_regel", "payment_id", "person_id", "steuerobjekt_id"}
 	rows := make([][]string, 0, len(rep.payments))
 	for _, p := range rep.payments {
 		rows = append(rows, []string{csvDate(p.PaidOn), csvDate(p.BookedOn), p.Property, p.Person, csvMoney(p.Amount), taxKindText(p),
 			p.Period, taxMethodLabels[p.Method], boolJaNein(p.Slider),
-			strconv.Itoa(p.PaidOn.Year()), strconv.Itoa(p.RuleYear)})
+			strconv.Itoa(p.PaidOn.Year()), strconv.Itoa(p.RuleYear), strconv.FormatInt(p.ID, 10),
+			strconv.FormatInt(p.PersonID, 10), strconv.FormatInt(p.PropertyID, 10)})
 	}
 	writeCSVDownload(w, r, "einnahmen-"+strconv.Itoa(year), header, rows, h.now())
 }
@@ -480,27 +497,32 @@ func (h *Handler) TaxYearPDF(w http.ResponseWriter, r *http.Request) {
 // and every immutable receipt attached to an expense of the selected year.
 func (h *Handler) TaxYearPackage(w http.ResponseWriter, r *http.Request) {
 	year := parseYearParam(r, h.now().Year()-1)
-	rep, err := h.buildTaxYearReport(r.Context(), year)
+	snapshot, err := buildTaxExportSnapshot(
+		r.Context(),
+		h.Pool,
+		year,
+		h.TaxExportMaxReceiptBytes,
+	)
 	if err != nil {
+		if errors.Is(err, errTaxExportReceiptLimit) {
+			writeError(w, http.StatusUnprocessableEntity, "Die Belege überschreiten das konfigurierte Export-Speicherlimit (Standard: 24 MiB). Einzelbelege bleiben unverändert verfügbar. Für größere Pakete muss die Administration das Speicherlimit und den temporären Speicher anpassen.")
+			return
+		}
 		serverError(w, r, "Exportpaket konnte nicht erstellt werden", err)
 		return
 	}
+	defer func() {
+		if err := snapshot.close(); err != nil {
+			auth.SetRequestError(r.Context(), err)
+			slog.Error("tax export spool cleanup failed", "err", err)
+		}
+	}()
+	rep, history := snapshot.Report, snapshot.History
 	pdfBytes, err := buildTaxPackagePDF(rep, taxRuleParam(r), h.now())
 	if err != nil {
 		serverError(w, r, "Exportpaket konnte nicht erstellt werden", err)
 		return
 	}
-	receipts, err := h.Pool.Query(r.Context(), `
-		SELECT a.id,a.expense_id,a.filename,a.data
-		  FROM tax_expense_receipts a JOIN tax_expenses e ON e.id=a.expense_id
-		 WHERE e.paid_on >= make_date($1,1,1) AND e.paid_on < make_date($1+1,1,1)
-		 ORDER BY e.paid_on,e.id,a.id`, year)
-	if err != nil {
-		serverError(w, r, "Belege konnten nicht geladen werden", err)
-		return
-	}
-	defer receipts.Close()
-
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="parkrr-steuerjahr-`+strconv.Itoa(year)+`.zip"`)
 	zw := zip.NewWriter(w)
@@ -522,35 +544,63 @@ func (h *Handler) TaxYearPackage(w http.ResponseWriter, r *http.Request) {
 		_ = zw.Close()
 		return
 	}
-	receiptCount := 0
-	for receipts.Next() {
-		var receiptID, expenseID int64
-		var filename string
-		var data []byte
-		if err := receipts.Scan(&receiptID, &expenseID, &filename, &data); err != nil {
-			auth.SetRequestError(r.Context(), err)
-			_ = zw.Close()
-			return
-		}
-		base := safeDownloadFilename(filepath.Base(filename))
-		if base == "" || base == "." {
-			base = "beleg"
-		}
-		name := fmt.Sprintf("belege/ausgabe-%d-%d-%s", expenseID, receiptID, strings.ReplaceAll(base, "/", "_"))
-		if err := writeBytes(name, data); err != nil {
-			auth.SetRequestError(r.Context(), err)
-			_ = zw.Close()
-			return
-		}
-		receiptCount++
-	}
-	if err := receipts.Err(); err != nil {
+	if err := writeBytes("zuordnungen.csv", history.Links.Bytes()); err != nil {
 		auth.SetRequestError(r.Context(), err)
 		_ = zw.Close()
 		return
 	}
-	manifest := fmt.Sprintf("Parkrr Steuerjahr %d\nZahlungen: %d\nAusgabenbuchungen: %d\nBelege: %d\nErstellt: %s\n\nE1b-Zuordnungen sind eine Vorschau. Keine Steuerberatung.\n",
-		year, rep.Count, len(rep.Expenses), receiptCount, h.now().Format("02.01.2006 15:04"))
+	if err := writeBytes("zahlungsverlauf.csv", history.Payments.Bytes()); err != nil {
+		auth.SetRequestError(r.Context(), err)
+		_ = zw.Close()
+		return
+	}
+	if err := writeBytes("zahlungsaudit.csv", history.Audit.Bytes()); err != nil {
+		auth.SetRequestError(r.Context(), err)
+		_ = zw.Close()
+		return
+	}
+	for _, receipt := range snapshot.Receipts {
+		entry, err := zw.Create(receipt.Path)
+		if err != nil {
+			auth.SetRequestError(r.Context(), err)
+			_ = zw.Close()
+			return
+		}
+		reader := taxExportContextReader{ctx: r.Context(), src: io.NewSectionReader(snapshot.spool, receipt.offset, receipt.size)}
+		if _, err := io.Copy(entry, reader); err != nil {
+			auth.SetRequestError(r.Context(), err)
+			_ = zw.Close()
+			return
+		}
+	}
+	metadata, err := json.MarshalIndent(map[string]any{
+		"format": "parkrr-tax-export", "version": 3, "year": year,
+		"income_basis": "receipt_date", "rule_simulation": taxRuleParam(r),
+		"income_by_receipt_date": rep.TotalByDate, "expense_total": rep.ExpenseTotal,
+		"depreciation_total": rep.DepreciationTotal, "receipts": snapshot.Receipts,
+		"package_single_snapshot": true,
+		"payment_history": map[string]any{
+			"rows": history.Count, "reversed": history.Reversed,
+			"reversals_without_allocation_evidence": history.Unverified,
+			"meaning":                               "documentary_history_not_additional_income_or_refunds",
+			"read_consistency":                      "entire_package_database_content_shares_repeatable_read_snapshot",
+			"package_single_snapshot":               true,
+			"legacy_history_complete":               false,
+		},
+	}, "", "  ")
+	if err != nil {
+		auth.SetRequestError(r.Context(), err)
+		_ = zw.Close()
+		return
+	}
+	if err := writeBytes("manifest.json", metadata); err != nil {
+		auth.SetRequestError(r.Context(), err)
+		_ = zw.Close()
+		return
+	}
+	manifest := fmt.Sprintf("Parkrr Steuerjahr %d · Exportformat 3\nZahlungen: %d\nAusgabenbuchungen: %d\nBelege: %d\nErstellt: %s\n\nE1b-Zuordnungen sind eine unvollständige Vorschau, keine abgabefertige Erklärung. Keine Steuerberatung.\nZuordnungen sind Verknüpfungen, keine zusätzlichen Einnahmen; Beträge nicht zu einnahmen.csv addieren.\nDie optionale Jahreswechsel-Regel ist eine unbestätigte Simulation für Einnahmen, nicht für Ausgaben.\n",
+		year, rep.Count, len(rep.Expenses), len(snapshot.Receipts), h.now().Format("02.01.2006 15:04"))
+	manifest += taxPaymentHistoryReadme
 	if err := writeBytes("LESE_MICH.txt", []byte(manifest)); err != nil {
 		auth.SetRequestError(r.Context(), err)
 	}
@@ -641,9 +691,10 @@ func writeTaxPackageCSVs(zw *zip.Writer, rep taxYearReport, rule bool) error {
 	incomeRows := make([][]string, 0, len(rep.payments))
 	for _, p := range rep.payments {
 		incomeRows = append(incomeRows, []string{csvDate(p.PaidOn), csvDate(p.BookedOn), p.Property, p.Person,
-			csvMoney(p.Amount), taxKindText(p), p.Period, taxMethodLabels[p.Method], boolJaNein(p.Slider), strconv.Itoa(p.RuleYear)})
+			csvMoney(p.Amount), taxKindText(p), p.Period, taxMethodLabels[p.Method], boolJaNein(p.Slider), strconv.Itoa(p.RuleYear),
+			strconv.FormatInt(p.ID, 10), strconv.FormatInt(p.PersonID, 10), strconv.FormatInt(p.PropertyID, 10)})
 	}
-	if err := writeCSV("einnahmen.csv", []string{"zuflussdatum", "buchungstag", "steuerobjekt", "person", "betrag_eur", "art", "periode", "zahlungsart", "ueber_schalter", "regeljahr"}, incomeRows); err != nil {
+	if err := writeCSV("einnahmen.csv", []string{"zuflussdatum", "buchungstag", "steuerobjekt", "person", "betrag_eur", "art", "periode", "zahlungsart", "ueber_schalter", "regeljahr", "payment_id", "person_id", "steuerobjekt_id"}, incomeRows); err != nil {
 		return err
 	}
 	expenseRows := make([][]string, 0, len(rep.Expenses))
@@ -653,17 +704,19 @@ func writeTaxPackageCSVs(zw *zip.Writer, rep taxYearReport, rule bool) error {
 			reverses = strconv.FormatInt(*e.ReversesID, 10)
 		}
 		expenseRows = append(expenseRows, []string{e.PaidOn, e.Property, e.Category, e.E1BCode, csvMoney(e.Amount),
-			csvMoney(e.VATAmount), e.Payee, e.Description, e.PaymentMethod, reverses, strconv.Itoa(e.ReceiptCount)})
+			csvMoney(e.VATAmount), e.Payee, e.Description, e.PaymentMethod, reverses, strconv.Itoa(e.ReceiptCount),
+			strconv.FormatInt(e.ID, 10), strconv.FormatInt(e.PropertyID, 10), strconv.FormatInt(e.CategoryID, 10)})
 	}
-	if err := writeCSV("werbungskosten.csv", []string{"zahlungsdatum", "steuerobjekt", "kategorie", "e1b_kennzahl", "betrag_eur", "ust_eur", "empfaenger", "beschreibung", "zahlungsart", "storniert_id", "belege"}, expenseRows); err != nil {
+	if err := writeCSV("werbungskosten.csv", []string{"zahlungsdatum", "steuerobjekt", "kategorie", "e1b_kennzahl", "betrag_eur", "ust_eur", "empfaenger", "beschreibung", "zahlungsart", "storniert_id", "belege", "expense_id", "steuerobjekt_id", "kategorie_id"}, expenseRows); err != nil {
 		return err
 	}
 	assetRows := make([][]string, 0, len(rep.Assets))
 	for _, a := range rep.Assets {
 		assetRows = append(assetRows, []string{a.Property, a.Name, a.InServiceOn, csvMoney(a.DepreciableBasis),
-			strconv.FormatFloat(a.UsefulLifeYears, 'f', 2, 64), boolJaNein(a.HalfYearRule), a.DisposedOn, csvMoney(a.YearDepreciation), a.Notes})
+			strconv.FormatFloat(a.UsefulLifeYears, 'f', 2, 64), boolJaNein(a.HalfYearRule), a.DisposedOn, csvMoney(a.YearDepreciation), a.Notes,
+			strconv.FormatInt(a.ID, 10), strconv.FormatInt(a.PropertyID, 10)})
 	}
-	if err := writeCSV("anlageverzeichnis.csv", []string{"steuerobjekt", "wirtschaftsgut", "in_betrieb", "bemessungsgrundlage_eur", "nutzungsdauer_jahre", "halbjahresregel", "ausgeschieden_am", "afa_im_jahr_eur", "notiz"}, assetRows); err != nil {
+	if err := writeCSV("anlageverzeichnis.csv", []string{"steuerobjekt", "wirtschaftsgut", "in_betrieb", "bemessungsgrundlage_eur", "nutzungsdauer_jahre", "halbjahresregel", "ausgeschieden_am", "afa_im_jahr_eur", "notiz", "asset_id", "steuerobjekt_id"}, assetRows); err != nil {
 		return err
 	}
 	e1bRows := make([][]string, 0, len(rep.E1B))
@@ -672,9 +725,9 @@ func writeTaxPackageCSVs(zw *zip.Writer, rep taxYearReport, rule bool) error {
 		propertyNames[p.ID] = p.Name
 	}
 	for _, e := range rep.E1B {
-		e1bRows = append(e1bRows, []string{propertyNames[e.PropertyID], e.Code, e.Label, csvMoney(taxE1BAmount(rep, e, rule))})
+		e1bRows = append(e1bRows, []string{propertyNames[e.PropertyID], e.Code, e.Label, csvMoney(taxE1BAmount(rep, e, rule)), strconv.FormatInt(e.PropertyID, 10)})
 	}
-	return writeCSV("e1b-vorschau.csv", []string{"steuerobjekt", "kennzahl", "bezeichnung", "betrag_eur"}, e1bRows)
+	return writeCSV("e1b-vorschau.csv", []string{"steuerobjekt", "kennzahl", "bezeichnung", "betrag_eur", "steuerobjekt_id"}, e1bRows)
 }
 
 // taxE1BAmount selects the 15-day-rule income amount when the export requests it.

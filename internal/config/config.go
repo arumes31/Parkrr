@@ -4,11 +4,16 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// DefaultTaxExportMaxReceiptBytes leaves headroom in the hardened 32 MiB /tmp volume.
+const DefaultTaxExportMaxReceiptBytes int64 = 24 << 20
 
 // Config holds all runtime configuration for the application.
 type Config struct {
@@ -97,6 +102,13 @@ type Config struct {
 	// (Hundert 16). Der Lauf nutzt denselben Pfad wie der "+ Rechnung"-Knopf.
 	AutoInvoiceCron string
 
+	// TaxWritesEnabled opts into tax-ledger mutations. Reports and exports remain
+	// available when false; activation is an operator decision, never a UI setting.
+	TaxWritesEnabled bool
+
+	// TaxExportMaxReceiptBytes bounds receipt spooling; validated once at startup.
+	TaxExportMaxReceiptBytes int64
+
 	// PasskeyOnly schaltet den Passwort-Login ab: Anmeldung nur noch per Passkey
 	// (Hundert 42). Verlangt eingerichtetes WebAuthn (PARKRR_WEBAUTHN_RP_ID),
 	// sonst bricht der Start ab — eine Installation ohne einen einzigen
@@ -168,19 +180,20 @@ func Load() (*Config, error) {
 		BackupDir:      os.Getenv("PARKRR_BACKUP_DIR"),
 		BrowserRestore: getenvBool("PARKRR_BROWSER_RESTORE", false),
 
-		SMTPHost:        os.Getenv("PARKRR_SMTP_HOST"),
-		SMTPPort:        getenvInt("PARKRR_SMTP_PORT", 587),
-		SMTPUsername:    os.Getenv("PARKRR_SMTP_USERNAME"),
-		SMTPPassword:    os.Getenv("PARKRR_SMTP_PASSWORD"),
-		SMTPFrom:        os.Getenv("PARKRR_SMTP_FROM"),
-		SMTPFromName:    getenv("PARKRR_SMTP_FROM_NAME", "Parkrr"),
-		SMTPTLS:         getenv("PARKRR_SMTP_TLS", "starttls"),
-		AlertEmail:      splitList(os.Getenv("PARKRR_ALERT_EMAIL")),
-		Require2FA:      getenvBool("PARKRR_REQUIRE_2FA", false),
-		PasskeyOnly:     getenvBool("PARKRR_PASSKEY_ONLY", false),
-		AutoInvoiceCron: os.Getenv("PARKRR_AUTO_INVOICE_CRON"),
-		PublicBaseURL:   os.Getenv("PARKRR_PUBLIC_BASE_URL"),
-		TimeZone:        os.Getenv("PARKRR_TIMEZONE"),
+		SMTPHost:         os.Getenv("PARKRR_SMTP_HOST"),
+		SMTPPort:         getenvInt("PARKRR_SMTP_PORT", 587),
+		SMTPUsername:     os.Getenv("PARKRR_SMTP_USERNAME"),
+		SMTPPassword:     os.Getenv("PARKRR_SMTP_PASSWORD"),
+		SMTPFrom:         os.Getenv("PARKRR_SMTP_FROM"),
+		SMTPFromName:     getenv("PARKRR_SMTP_FROM_NAME", "Parkrr"),
+		SMTPTLS:          getenv("PARKRR_SMTP_TLS", "starttls"),
+		AlertEmail:       splitList(os.Getenv("PARKRR_ALERT_EMAIL")),
+		Require2FA:       getenvBool("PARKRR_REQUIRE_2FA", false),
+		PasskeyOnly:      getenvBool("PARKRR_PASSKEY_ONLY", false),
+		AutoInvoiceCron:  os.Getenv("PARKRR_AUTO_INVOICE_CRON"),
+		TaxWritesEnabled: getenvBool("PARKRR_TAX_WRITES_ENABLED", false),
+		PublicBaseURL:    os.Getenv("PARKRR_PUBLIC_BASE_URL"),
+		TimeZone:         os.Getenv("PARKRR_TIMEZONE"),
 
 		S3Endpoint:  os.Getenv("PARKRR_S3_ENDPOINT"),
 		S3Bucket:    os.Getenv("PARKRR_S3_BUCKET"),
@@ -191,6 +204,15 @@ func Load() (*Config, error) {
 		S3UseSSL:    getenvBool("PARKRR_S3_USE_SSL", true),
 	}
 
+	cfg.TaxExportMaxReceiptBytes = DefaultTaxExportMaxReceiptBytes
+	if value := strings.TrimSpace(os.Getenv("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB")); value != "" {
+		mb, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || mb < 1 || mb > 1024 {
+			return nil, fmt.Errorf("PARKRR_TAX_EXPORT_MAX_RECEIPT_MB must be an integer from 1 to 1024")
+		}
+		cfg.TaxExportMaxReceiptBytes = mb << 20
+	}
+
 	// Allow assembling the DB URL from discrete parts (docker-compose friendly).
 	if cfg.DatabaseURL == "" {
 		host := getenv("PARKRR_DB_HOST", "db")
@@ -199,8 +221,12 @@ func Load() (*Config, error) {
 		pass := getenv("PARKRR_DB_PASSWORD", "parkrr")
 		name := getenv("PARKRR_DB_NAME", "parkrr")
 		ssl := getenv("PARKRR_DB_SSLMODE", "disable")
-		cfg.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-			user, pass, host, port, name, ssl)
+		dbURL := url.URL{
+			Scheme: "postgres", User: url.UserPassword(user, pass),
+			Host: net.JoinHostPort(host, port), Path: "/" + name,
+			RawQuery: url.Values{"sslmode": {ssl}}.Encode(),
+		}
+		cfg.DatabaseURL = dbURL.String()
 		// Surface the silent defaults — fine on a private Docker network, a footgun
 		// once the DB is exposed or on a separate host.
 		if pass == "parkrr" {

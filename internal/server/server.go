@@ -97,7 +97,7 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 	mux.HandleFunc("POST /api/portal/requests", h.PortalCreateRequest)
 
 	// --- Auth (protected) ---
-	mux.Handle("POST /api/auth/logout", authed(hf(ah.Logout)))
+	mux.Handle("POST /api/auth/logout", authMgr.RequireLogout(hf(ah.Logout)))
 	mux.Handle("GET /api/auth/me", authed(hf(ah.Me)))
 	mux.Handle("POST /api/auth/change-password", authed(hf(ah.ChangePassword)))
 	mux.Handle("GET /api/auth/sessions", authed(hf(ah.ListSessions)))
@@ -176,6 +176,9 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 	mux.Handle("GET /api/reports/tax-year.csv", admin(hf(h.TaxYearCSV)))
 	mux.Handle("GET /api/reports/tax-year.pdf", admin(hf(h.TaxYearPDF)))
 	mux.Handle("GET /api/reports/tax-year.zip", admin(hf(h.TaxYearPackage)))
+	// Stateless calculation only: usable in tax read-only mode, still admin/CSRF protected.
+	mux.Handle("POST /api/reports/tax-review/preview", admin(hf(h.TaxReviewPreview)))
+	mux.Handle("POST /api/reports/tax-import/preview", admin(hf(h.TaxImportPreview)))
 	mux.Handle("GET /api/tax/properties", admin(hf(h.ListTaxProperties)))
 	mux.Handle("POST /api/tax/properties", admin(hf(h.CreateTaxProperty)))
 	mux.Handle("PUT /api/tax/properties/{id}", admin(hf(h.UpdateTaxProperty)))
@@ -239,6 +242,10 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 	// --- Handover protocols (Übergabeprotokoll) ---
 	mux.Handle("GET /api/vehicles/{id}/handovers", authed(hf(h.ListHandovers)))
 	mux.Handle("POST /api/vehicles/{id}/handovers", editor(hf(h.CreateHandover)))
+	mux.Handle("GET /api/handover-templates", authed(hf(h.ListHandoverTemplates)))
+	mux.Handle("POST /api/handover-templates", editor(hf(h.CreateHandoverTemplate)))
+	mux.Handle("PUT /api/handover-templates/{id}", editor(hf(h.UpdateHandoverTemplate)))
+	mux.Handle("DELETE /api/handover-templates/{id}", editor(hf(h.DeleteHandoverTemplate)))
 	mux.Handle("GET /api/handovers/{id}/signature", authed(hf(h.GetHandoverSignature)))
 	mux.Handle("GET /api/handovers/{id}/pdf", authed(hf(h.HandoverPDF)))
 	// Ein unterschriebenes Übergabeprotokoll ist ein Beleg: nur Admins dürfen es
@@ -303,6 +310,7 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 
 	// --- Stats ---
 	mux.Handle("GET /api/overview", authed(hf(h.Overview)))
+	mux.Handle("GET /api/overview/forecast", authed(hf(h.OverviewForecast)))
 	mux.Handle("GET /api/occupancy", authed(hf(h.Occupancy)))
 	mux.Handle("GET /api/vehicles/ending-soon", authed(hf(h.EndingSoon)))
 
@@ -326,6 +334,7 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 	// Verzeichnis noch Bucket noch Dateiliste — dafür bleibt /status admin-only.
 	mux.Handle("GET /api/backup/health", editor(hf(h.BackupHealth)))
 	mux.Handle("GET /api/backup/status", admin(hf(h.BackupStatus)))
+	mux.Handle("GET /api/admin/readiness", admin(hf(h.OperationalReadiness)))
 	mux.Handle("POST /api/backup/schedule", admin(hf(h.SaveBackupSchedule)))
 	mux.Handle("POST /api/backup/run", admin(hf(h.RunScheduledBackup)))
 	mux.Handle("GET /api/backup/file/{name}", admin(hf(h.BackupDownloadFile)))

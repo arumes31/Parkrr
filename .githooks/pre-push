@@ -1,0 +1,6 @@
+#!/bin/sh
+# Git supplies ALL outgoing ref updates on stdin; preserve that stream.
+set -eu
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+exec node scripts/check-local-artifacts.cjs --pre-push

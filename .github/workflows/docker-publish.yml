@@ -16,6 +16,8 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Keep generated build records local to the runner, not GitHub artifacts.
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 # Serialize runs per ref: a newer push cancels an in-flight run, so a slower older
 # build can never overwrite a newer image tag, and superseded checks stop cleanly
@@ -99,7 +101,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
           cache: true
 
       - name: Download & verify modules
@@ -111,7 +113,8 @@ jobs:
         run: go vet ./...
 
       - name: Test (race)
-        run: go test -race ./...
+        # Packages share a disposable database; restore tests temporarily alter its schema.
+        run: go test -race -p 1 ./...
 
       - name: Verify large backup restore under hardened limits
         run: bash scripts/test-backup-restore.sh

@@ -80,6 +80,7 @@ func TestTaxE1BAmountUsesSelectedRule(t *testing.T) {
 // TestCreateTaxAssetRejectsAnyLockedAffectedYear covers bounded and open asset ranges.
 func TestCreateTaxAssetRejectsAnyLockedAffectedYear(t *testing.T) {
 	h := testHandler(t)
+	h.TaxWritesEnabled = true
 	ctx := context.Background()
 	var propertyID int64
 	if err := h.Pool.QueryRow(ctx, `SELECT id FROM tax_properties ORDER BY is_default DESC,id LIMIT 1`).Scan(&propertyID); err != nil {
@@ -128,6 +129,7 @@ func TestCreateTaxAssetRejectsAnyLockedAffectedYear(t *testing.T) {
 // TestCreateTaxExpenseIdempotency verifies replay, fingerprint, and actor scoping.
 func TestCreateTaxExpenseIdempotency(t *testing.T) {
 	h := testHandler(t)
+	h.TaxWritesEnabled = true
 	ctx := context.Background()
 	const year = 2092
 	var propertyID, categoryID int64
@@ -213,6 +215,7 @@ func TestCreateTaxExpenseIdempotency(t *testing.T) {
 // TestCreateTaxExpenseWaitsForConcurrentYearLock proves lock checks serialize with lock writes.
 func TestCreateTaxExpenseWaitsForConcurrentYearLock(t *testing.T) {
 	h := testHandler(t)
+	h.TaxWritesEnabled = true
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	const year = 2094
@@ -279,6 +282,7 @@ func taxJSONRequest(t *testing.T, method, target string, body any) *http.Request
 // TestTaxBookFlow exercises the expense, receipt, asset, reversal, lock, and export lifecycle.
 func TestTaxBookFlow(t *testing.T) {
 	h := testHandler(t)
+	h.TaxWritesEnabled = true
 	ctx := context.Background()
 	const year = 2098
 	if err := purgeExec(ctx, h.Pool, `DELETE FROM tax_expense_receipts a USING tax_expenses e WHERE a.expense_id=e.id AND EXTRACT(YEAR FROM e.paid_on)=$1`, year); err != nil {
@@ -395,6 +399,61 @@ func TestTaxBookFlow(t *testing.T) {
 	if rep.ExpenseTotal != 120 || rep.DepreciationTotal != 50 || rep.Surplus != -170 {
 		t.Fatalf("totals expense %.2f depreciation %.2f surplus %.2f", rep.ExpenseTotal, rep.DepreciationTotal, rep.Surplus)
 	}
+	if !rep.WriteEnabled {
+		t.Fatal("activated report must expose write capability")
+	}
+
+	// A separate read-only handler sees every existing amount and attachment;
+	// activation changes permission, never what is counted in reports.
+	readonly := New(h.Pool)
+	readonlyRep, err := readonly.buildTaxYearReport(ctx, year)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if readonlyRep.WriteEnabled {
+		t.Fatal("default report must expose read-only capability")
+	}
+	readonlyRep.WriteEnabled = rep.WriteEnabled
+	beforeJSON, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterJSON, err := json.Marshal(readonlyRep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeJSON, afterJSON) {
+		t.Fatal("read-only mode changed existing report data or amounts")
+	}
+	for _, read := range []struct {
+		name    string
+		handler http.HandlerFunc
+		id      int64
+	}{
+		{name: "properties", handler: readonly.ListTaxProperties},
+		{name: "categories", handler: readonly.ListTaxCategories},
+		{name: "settings", handler: readonly.GetTaxSettings},
+		{name: "expenses", handler: readonly.ListTaxExpenses},
+		{name: "recurring", handler: readonly.ListTaxRecurring},
+		{name: "assets", handler: readonly.ListTaxAssets},
+		{name: "receipt list", handler: readonly.ListTaxReceipts, id: created.ID},
+		{name: "receipt file", handler: readonly.GetTaxReceipt, id: receipt.ID},
+		{name: "report", handler: readonly.TaxYear},
+		{name: "csv", handler: readonly.TaxYearCSV},
+		{name: "pdf", handler: readonly.TaxYearPDF},
+	} {
+		t.Run("read only "+read.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/tax-read?year=2098", nil)
+			if read.id != 0 {
+				request.SetPathValue("id", strconv.FormatInt(read.id, 10))
+			}
+			response := httptest.NewRecorder()
+			read.handler(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("read-only GET: %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/tax/expenses/1/reverse", nil)
 	req.SetPathValue("id", strconv.FormatInt(created.ID, 10))
@@ -428,7 +487,7 @@ func TestTaxBookFlow(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	h.TaxYearPackage(rec, httptest.NewRequest(http.MethodGet, "/api/reports/tax-year.zip?year=2098", nil))
+	readonly.TaxYearPackage(rec, httptest.NewRequest(http.MethodGet, "/api/reports/tax-year.zip?year=2098", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("zip: %d %s", rec.Code, rec.Body.String())
 	}

@@ -56,7 +56,7 @@ func mkRecurring(t *testing.T, h *Handler, pid int64, amount float64, start stri
 }
 
 // TestRecurringMasterSliderBooksPayment: the Nebenkosten master slider now books a
-// real Zahlungseingang per completed period and reverses cleanly on "offen".
+// real Zahlungseingang per completed period and preserves it on reset attempts.
 func TestRecurringMasterSliderBooksPayment(t *testing.T) {
 	h := testHandler(t)
 	pid := createIntegrationPerson(t, h)
@@ -76,16 +76,19 @@ func TestRecurringMasterSliderBooksPayment(t *testing.T) {
 			before.Balance, after.Balance)
 	}
 
-	setRecurringMasterPaid(t, h, rid, false)
+	reset := periodHistoryRequest(t, h.SetRecurringChargePaid, rid, map[string]any{"paid": false})
+	if reset.Code != http.StatusConflict {
+		t.Fatalf("reset: %d %s", reset.Code, reset.Body.String())
+	}
 	back := personStatsT(t, h, pid)
-	if math.Abs(back.Balance-before.Balance) > 0.05 {
-		t.Errorf("un-toggle must restore balance: before=%.2f back=%.2f", before.Balance, back.Balance)
+	if math.Abs(back.Balance-after.Balance) > 0.05 {
+		t.Errorf("rejected reset changed balance: paid=%.2f after=%.2f", after.Balance, back.Balance)
 	}
 	var n int
 	_ = h.Pool.QueryRow(t.Context(),
 		`SELECT count(*) FROM payments WHERE settles_kind='recurring' AND settles_ref=$1`, rid).Scan(&n)
-	if n != 0 {
-		t.Errorf("un-toggle must remove the recurring settle payments, got %d", n)
+	if n != 3 {
+		t.Errorf("rejected reset must preserve three recurring receipts, got %d", n)
 	}
 }
 
@@ -139,8 +142,8 @@ func TestDeleteSettledAgreementIsBlocked(t *testing.T) {
 	}
 }
 
-// TestDeleteRecurringClearsSettlementPayments: same for a paid Nebenkosten.
-func TestDeleteRecurringClearsSettlementPayments(t *testing.T) {
+// TestDeleteRecurringPreservesSettlementPayments protects a paid source.
+func TestDeleteRecurringPreservesSettlementPayments(t *testing.T) {
 	h := testHandler(t)
 	pid := createIntegrationPerson(t, h)
 	rid := mkRecurring(t, h, pid, 20, firstOfMonthMonthsAgo(3).Format("2006-01-02"))
@@ -157,14 +160,14 @@ func TestDeleteRecurringClearsSettlementPayments(t *testing.T) {
 	dreq.SetPathValue("id", strconv.FormatInt(rid, 10))
 	drec := httptest.NewRecorder()
 	h.DeleteRecurringCharge(drec, dreq)
-	if drec.Code != http.StatusOK {
+	if drec.Code != http.StatusConflict {
 		t.Fatalf("delete recurring: %d %s", drec.Code, drec.Body.String())
 	}
 
 	var post int
 	_ = h.Pool.QueryRow(t.Context(),
 		`SELECT count(*) FROM payments WHERE settles_kind='recurring' AND settles_ref=$1`, rid).Scan(&post)
-	if post != 0 {
-		t.Errorf("deleting the Nebenkosten must remove its settle payments, %d remain", post)
+	if post != pre {
+		t.Errorf("rejected deletion must preserve its %d receipts, got %d", pre, post)
 	}
 }

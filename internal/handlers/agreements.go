@@ -243,11 +243,12 @@ func createVehiclesTx(ctx context.Context, tx pgx.Tx, personID int64, period str
 			return nil, err
 		}
 		label, plate := trim(nv.Label), trim(nv.LicensePlate)
+		costOverride := markZeroRate(rate, nil)
 		var id int64
 		if err := tx.QueryRow(ctx,
-			`INSERT INTO vehicles (person_id, category_id, label, license_plate, billing_period, rate, start_date, status)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,'stored') RETURNING id`,
-			personID, nv.CategoryID, label, plate, period, rate, start).Scan(&id); err != nil {
+			`INSERT INTO vehicles (person_id, category_id, label, license_plate, billing_period, rate, cost_override, start_date, status)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'stored') RETURNING id`,
+			personID, nv.CategoryID, label, plate, period, rate, costOverride, start).Scan(&id); err != nil {
 			return nil, err
 		}
 		out = append(out, createdVehicle{id: id, label: label, plate: plate})
@@ -652,6 +653,9 @@ func (h *Handler) saveAgreement(r *http.Request, id, personID int64, a models.Fl
 	defer func() { _ = tx.Rollback(ctx) }()
 	// Serialize the overlap check and write for this person. The lock is held to
 	// commit, so two concurrent creates/updates cannot both validate a stale view.
+	if err := lockInvoicePersonTx(ctx, tx, personID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx,
 		`SELECT pg_advisory_xact_lock(hashtextextended('parkrr.agreement-person:' || ($1::bigint)::text, 0))`, personID); err != nil {
 		return err
@@ -759,6 +763,13 @@ func (h *Handler) saveAgreement(r *http.Request, id, personID int64, a models.Fl
 			return errAgreementSettled
 		}
 		retract, rerr := h.endDateRetractsBelowInvoiced(ctx, tx, "agreement", id, a.EndDate)
+		if err := h.guardInvoicedPartialExtension(ctx, tx, "agreement", id, oldEnd, a.EndDate, oldPeriod); err != nil {
+			var conflict *settlementConflictError
+			if errors.As(err, &conflict) {
+				return errAgreementInvoiced
+			}
+			return err
+		}
 		if rerr != nil {
 			return rerr
 		}
@@ -835,23 +846,13 @@ func (h *Handler) saveAgreement(r *http.Request, id, personID int64, a models.Fl
 	return nil
 }
 
-// DeleteAgreement removes an agreement.
-// clearAgreementSettlementTx removes an agreement's auto settlement money before the
-// row is deleted: un-settle the bound extras it paid, then delete its period + extras
-// auto-payments. Without this a deleted paid Pauschale leaves orphan Zahlungseingänge
-// that still count as money-in (phantom Guthaben).
+// clearAgreementSettlementTx permits source deletion only without payment
+// history. Real receipts and their allocated extras must remain reconstructable.
 func clearAgreementSettlementTx(ctx context.Context, tx pgx.Tx, id int64) error {
-	if _, err := tx.Exec(ctx,
-		`UPDATE charges SET paid=false WHERE id IN (
-		    SELECT pa.ref_id FROM payment_allocations pa JOIN payments p ON p.id=pa.payment_id
-		     WHERE pa.kind='charge' AND p.settles_kind='agreement' AND p.settles_ref=$1 AND p.settles_period='extras')`, id); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx,
-		`DELETE FROM payments WHERE auto AND settles_kind='agreement' AND settles_ref=$1`, id)
-	return err
+	return preservePeriodPaymentHistoryTx(ctx, tx, "agreement", id)
 }
 
+// DeleteAgreement removes only an agreement without financial history.
 func (h *Handler) DeleteAgreement(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(r)
 	if !ok {
@@ -868,6 +869,9 @@ func (h *Handler) DeleteAgreement(w http.ResponseWriter, r *http.Request) {
 
 	// Lock the principal before checking its financial references. Settlement,
 	// optional child deletion, and every audit row commit as one state transition.
+	if !lockFinancialSource(w, r, tx, "agreement", id, 0) {
+		return
+	}
 	var settlementLocked bool
 	var pid int64
 	if err := tx.QueryRow(ctx,
@@ -889,6 +893,13 @@ func (h *Handler) DeleteAgreement(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if inv {
 		writeError(w, http.StatusConflict, "Pauschale ist fakturiert – nicht löschbar (Storno über die Rechnung)")
+		return
+	}
+	if err := clearAgreementSettlementTx(ctx, tx, id); err != nil {
+		if writeSettlementConflict(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "could not delete agreement")
 		return
 	}
 	// Optionally delete the covered vehicles too; otherwise they are only unbound
@@ -938,10 +949,6 @@ func (h *Handler) DeleteAgreement(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-	}
-	if err := clearAgreementSettlementTx(ctx, tx, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not delete agreement")
-		return
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM flat_rate_periods WHERE id=$1`, id); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not delete agreement")
@@ -1055,6 +1062,12 @@ func (h *Handler) SetAgreementPaid(w http.ResponseWriter, r *http.Request) {
 	}
 	ag.ID = id
 	pid := ag.PersonID
+	if err := preservePeriodPaymentHistoryTx(ctx, tx, "agreement", id); err != nil {
+		if !writeSettlementConflict(w, err) {
+			serverError(w, r, "could not check payment history", err)
+		}
+		return
+	}
 	if req.Paid {
 		periods := ag.ElapsedPeriodsDetailed(h.now())
 		if len(periods) == 0 {
@@ -1076,23 +1089,9 @@ func (h *Handler) SetAgreementPaid(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// "Reset all": drop the per-period rows and every real Zahlungseingang this
-	// agreement's settlement had booked (rent periods + extras), then re-derive from
-	// the new state. Also un-settles bound extras this agreement had settled — and
-	// clears any orphan a per-period toggle followed by a master toggle left behind.
+	// Only flag-only state can reach this reset: existing receipt history was
+	// checked above, before the master flag or any child state was changed.
 	if _, err := tx.Exec(ctx, `DELETE FROM flat_rate_period_payments WHERE period_id=$1`, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update agreement")
-		return
-	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE charges SET paid=false WHERE id IN (
-		    SELECT pa.ref_id FROM payment_allocations pa JOIN payments p ON p.id=pa.payment_id
-		     WHERE pa.kind='charge' AND p.settles_kind='agreement' AND p.settles_ref=$1 AND p.settles_period='extras')`, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "could not update agreement")
-		return
-	}
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM payments WHERE auto AND settles_kind='agreement' AND settles_ref=$1`, id); err != nil {
 		writeError(w, http.StatusInternalServerError, "could not update agreement")
 		return
 	}
@@ -1105,6 +1104,9 @@ func (h *Handler) SetAgreementPaid(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if err := recordPeriodPaymentTx(ctx, tx, pid, "agreement", id, per.Key, per.Cost, createdBy); err != nil {
+				if writeSettlementConflict(w, err) {
+					return
+				}
 				writeError(w, http.StatusInternalServerError, "could not update agreement")
 				return
 			}
@@ -1227,6 +1229,9 @@ func (h *Handler) settleAgreementExtrasTx(ctx context.Context, tx pgx.Tx, ag mod
 	}
 	if round2(total) < 0.005 {
 		return nil
+	}
+	if err := protectCurrentReceiptTx(ctx, tx, "agreement", "extras"); err != nil {
+		return err
 	}
 
 	var payID int64
@@ -1382,10 +1387,16 @@ func (h *Handler) SetAgreementPeriodPaid(w http.ResponseWriter, r *http.Request)
 		// stays off-book (its cost isn't final); its payment is booked once complete.
 		if amt, ok := periodPaymentAmount(a, key, req.Amount, h.now()); ok {
 			if err := recordPeriodPaymentTx(r.Context(), tx, a.PersonID, "agreement", id, key, amt, createdByFrom(r.Context())); err != nil {
+				if writeSettlementConflict(w, err) {
+					return
+				}
 				writeError(w, http.StatusInternalServerError, "could not update payment")
 				return
 			}
 		} else if err := deletePeriodPaymentTx(r.Context(), tx, "agreement", id, key); err != nil {
+			if writeSettlementConflict(w, err) {
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "could not update payment")
 			return
 		}
@@ -1413,6 +1424,9 @@ func (h *Handler) SetAgreementPeriodPaid(w http.ResponseWriter, r *http.Request)
 		// Periods materialized from a cleared master flag stay off-book (no payment to
 		// delete), so this only drops the one the toggle created.
 		if err := deletePeriodPaymentTx(r.Context(), tx, "agreement", id, key); err != nil {
+			if writeSettlementConflict(w, err) {
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "could not update payment")
 			return
 		}

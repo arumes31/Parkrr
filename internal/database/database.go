@@ -288,6 +288,11 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) (retErr error) {
 		}
 
 		err = pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+			if name == "031_concurrency_guards.sql" {
+				if err := preflightSettlementUniqueness(ctx, tx); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
 				return err
 			}
@@ -300,6 +305,24 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) (retErr error) {
 		}
 	}
 
+	return nil
+}
+
+// preflightSettlementUniqueness stops legacy upgrades before migration 031 can
+// delete duplicate allocation evidence. Never rewrite an applied migration.
+func preflightSettlementUniqueness(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, `LOCK TABLE payment_allocations, invoice_source IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return fmt.Errorf("lock legacy settlement evidence: %w", err)
+	}
+	var allocations, sources int
+	if err := tx.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM (SELECT 1 FROM payment_allocations GROUP BY kind, ref_id HAVING count(*) > 1) a),
+		(SELECT count(*) FROM (SELECT 1 FROM invoice_source GROUP BY kind, ref_id, period_key HAVING count(*) > 1) s)`).Scan(&allocations, &sources); err != nil {
+		return fmt.Errorf("inspect legacy settlement evidence: %w", err)
+	}
+	if allocations > 0 || sources > 0 {
+		return fmt.Errorf("legacy settlement conflicts: %d allocation groups, %d invoice-source groups; upgrade stopped without deleting evidence; export conflicting IDs, back up and resolve explicitly before retrying", allocations, sources)
+	}
 	return nil
 }
 

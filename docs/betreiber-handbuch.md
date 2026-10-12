@@ -25,6 +25,51 @@ Es gibt genau drei Stellen, die ein Betreiber regelmäßig ansieht:
 Wer `PARKRR_ALERT_EMAIL` gesetzt hat, bekommt Punkt 1 als Mail, wenn ein
 geplantes Backup fehlschlägt — dann reicht der Blick in den Posteingang.
 
+### Dashboard: Jahresauswahl und Umsatzprognose
+
+Die Jahresauswahl enthält Jahre mit Mietzeiträumen, Pauschalen, Zusatzkosten oder
+Zahlungen sowie immer das aktuelle Serverjahr. Die Pfeile überspringen echte
+Datenlücken; die Jahreszahl ist auch direkt auswählbar. Eine kostenlose Buchung
+ist ein Vorgang und verschwindet nicht wegen 0 € Umsatz. Mehrjährige Verträge
+berücksichtigen alle betroffenen Jahre, auch bei archivierten Vorgängen. Das
+Installationsdatum ist keine Grenze für nachgetragene historische Daten.
+
+Im Umsatzdiagramm lässt sich zwischen **Monat** und **Jahr** wechseln.
+**Prognose anzeigen** ist zunächst ausgeschaltet. Erst eingeschaltet ergänzt sie
+die bisher aufgelaufenen Mieterlöse um erwartete Restbeträge aus bestehenden
+Vereinbarungen. Die Monatswerte und die Jahresdarstellung verwenden dieselben
+Beträge. Das nächste Jahr ist nur innerhalb dieser Planung auswählbar; die
+übrigen Dashboard-Kennzahlen bleiben beim ausgewählten tatsächlichen Datenjahr.
+
+Cent-Rundungen werden je Vertrags- oder Kostenquelle über die Monatsgrenzen
+fortgeschrieben. Dadurch bleibt die Jahressumme erhalten, ohne Rundungsreste
+auf andere Verträge oder Monate zu verteilen. Tatsächliche Gutschriften behalten
+ihren negativen Betrag; die Vorschau erzeugt keine künstlichen Gutschriften.
+
+Unter **Annahmen & Details** sind Reservierungen und der Vorjahresvergleich
+separat zuschaltbar. Reservierungen sind geplante Mieterlöse, keine garantierten
+Zahlungen. Die Vorschau verwendet Mietbeginn und Mietende; widersprüchliche
+Reservierungsdaten werden als Prüfhinweis ausgewiesen. Verträge ohne Enddatum
+werden nur für den gewählten Prognosezeitraum unverändert fortgeführt. Befristete
+Verträge werden nicht automatisch verlängert. Bei Pauschalen wird die
+zugeordnete Fahrzeugmiete nicht zusätzlich gezählt, auch nicht automatisch nach
+Ablauf der Pauschale. Erfasste laufende Zusatzkosten und bereits datierte
+Einmalposten fließen ein; das reine Strombedarf-Häkchen erzeugt keinen Preis.
+
+Der Vorjahresvergleich ist eine getrennte Referenz, keine zusätzlich erwartete
+Buchung. Er fehlt ausdrücklich, wenn kein Datenjahr vorhanden oder das
+Vergleichsjahr noch nicht abgeschlossen ist. Historische Werte beruhen auf den
+vorhandenen Vertragsdaten, nicht auf vollständig eingefrorenen damaligen
+Vertragsständen. Testjahre eignen sich nicht als Nachweis einer Saisonalität.
+Die bisherige einfache Jahreshochrechnung heißt **Lineare Hochrechnung**.
+
+**Keine Geldbewegung:** Die Prognose liest Daten, speichert keine Beträge und
+ändert weder Preise, Zahlungen, offene Forderungen, Rechnungen noch Steuerwerte.
+Sie prognostiziert Mieterlöse, nicht den Zeitpunkt tatsächlicher Zahlungseingänge.
+Ein Rechnungsablauf ist dafür nicht erforderlich. Die Erweiterung benötigt keine
+neue Datenbankmigration. Ein späteres Update muss trotzdem auf sonstige bereits
+ausstehende Migrationen geprüft werden.
+
 ## 2. Backups: einrichten, prüfen, wiederherstellen
 
 **Einrichten:** `PARKRR_BACKUP_KEY` setzen (mindestens 32 Zeichen, getrennt vom
@@ -109,6 +154,152 @@ Wiederherstellung des Backups von vor dem Update (deshalb Schritt 1).
 | `PARKRR_AUTO_INVOICE_CRON` | Automatischer Rechnungslauf (z. B. `0 6 1 * *`). Nutzt denselben Pfad wie der „+ Rechnung"-Knopf; abgerechnete Perioden werden nie doppelt fakturiert. Vorher die Verkäufer-Pflichtangaben (Abrechnung → Einstellungen) vollständig ausfüllen, sonst bricht der Lauf mit klarer Meldung ab. |
 | `PARKRR_TIMEZONE` | Geschäftszeitzone (z. B. `Europe/Vienna`). Wichtig, wenn der Container in UTC läuft: zwischen 00:00 und 02:00 Wiener Zeit ist in UTC noch gestern — Zahlungen bekämen das Datum von gestern. |
 | `PARKRR_ALERT_EMAIL` | Betriebsalarme (fehlgeschlagene Backups) per Mail. Braucht konfiguriertes SMTP. |
+
+### Steuerbereich: zuerst nur lesen, später aktivieren
+
+Der Steuerbereich ist standardmäßig im **Lesemodus**. Administratoren können
+Jahre wechseln, vorhandene Einnahmen, Ausgaben, Anlagen und Belege prüfen,
+die unverbindliche Jahreswechsel-Simulation ansehen und CSV, PDF oder ZIP
+herunterladen. Der normale Ablauf „Buchung → bezahlt markieren → abholen“
+setzt weder den Steuerbereich noch einen Rechnungsprozess voraus.
+
+Schreibaktionen sind auch serverseitig gesperrt: Ausgaben und Vorlagen anlegen,
+Ausgaben stornieren, Belege hochladen, Anlagen erfassen, Steuerobjekte und
+Einstellungen ändern, Zahlungen steuerlich zuordnen sowie Jahre sperren oder
+entsperren. Der Lesemodus ist kein leerer Demodatenbestand: bereits vorhandene
+Ausgaben, AfA und Zuordnungen gehen weiterhin in die Vorschau ein.
+
+**Später aktivieren:** `PARKRR_TAX_WRITES_ENABLED=true` in der
+App-Konfiguration setzen und die Anwendung neu starten. Bei Docker den
+App-Container mit der geänderten Konfiguration neu erstellen; ein bloßes
+`docker restart` übernimmt keine geänderten Umgebungsvariablen. Bei mehreren
+App-Replikaten denselben Wert auf allen Replikaten setzen. Anschließend ist die
+Bearbeitung für Administratoren freigegeben. Es werden dadurch keine Rechnungen,
+Ausgaben oder Importe erzeugt und keine vereinbarten Preise neu berechnet.
+Eine Freigabe in dieser Dokumentation aktiviert keine laufende Instanz.
+
+**Wieder nur lesen:** auf `false` zurückstellen und genauso neu starten bzw.
+neu erstellen. Daten werden dabei weder gelöscht noch zurückgesetzt.
+Bereits abgeschlossene Steuerjahre bleiben gesperrt und schützen weiterhin
+auch normale Zahlungskorrekturen. Zum Entsperren ist die bewusste Aktivierung
+der Steuer-Schreibfunktionen nötig; der Lesemodus umgeht diesen Schutz nicht.
+
+Die Aktivierung ist keine steuerliche Abnahme. E1b bleibt eine Vorschau,
+KU-Voraussetzungen und maßgebliche Jahres-/Vorjahresumsätze müssen fachlich
+geprüft werden. Eine Importvorschau für externe AfA-/Jahreskorrekturen ist vorhanden;
+die dauerhafte Übernahme und ein vollständiges jahresbezogenes E1b-Mapping fehlen.
+Eine vorhandene einfache AfA-Berechnung ersetzt diese Prüfung nicht.
+
+### Optionale Jahresprüfung ohne Speicherung
+
+Unter „Jahresprüfung vorbereiten · Vorschau“ lassen sich für 2025 und 2026
+gesondert ermittelte Jahres-/Vorjahresumsätze eingeben. Leere Angaben bleiben
+unbekannt; Zahlungseingänge werden nur zum Vergleich angezeigt, nicht als
+maßgeblicher Umsatz übernommen. Die Vorschau ist keine Bestätigung der
+KU-Berechtigung. Quelle und Prüferangabe sind deine Eingaben, keine von Parkrr
+verifizierten Nachweise.
+
+„Einzelnen Jahreswechsel prüfen“ benötigt tatsächliche Zahlung, vertragliche
+Fälligkeit, wirtschaftliches Bezugsjahr und die Angabe, ob der Vorgang regelmäßig
+wiederkehrt. Einnahmen und Ausgaben werden unterstützt. Das hinterlegte
+15-Tage-Prüffenster stützt sich ergänzend auf eine archivierte BMF-Auslegung;
+es ersetzt keine aktuelle Einzelfallprüfung. Kein Ergebnis verschiebt Beträge
+in den Berichten. Der JSON-Download ist ein lokaler Prüfentwurf, kein Importformat
+für bestätigte Jahreskorrekturen. Beim Verlassen der Ansicht gehen Eingaben
+verloren, sofern du keinen Entwurf heruntergeladen hast.
+
+### Externe Jahreswerte als Datei prüfen
+
+„Externe Jahreswerte prüfen · Importvorschau“ ist eine getrennte, standardmäßig
+eingeklappte Ansicht für Administratoren. Sie funktioniert auch im Lesemodus und
+bei abgeschlossenen Jahren, weil sie keine Steuerdaten liest oder schreibt.
+Wähle ein vorhandenes Steuerobjekt und eine UTF-8-JSON-Datei (maximal 64 KiB,
+1 bis 100 Einträge). Bei genau einem Objekt ist es vorausgewählt. Erst „Datei
+prüfen“ sendet den Inhalt an den eigenen Parkrr-Server, nicht an einen externen
+Dienst. Jahr und Objekt der geprüften Datei müssen zur Ansicht passen.
+
+Die Beispieldatei enthält erfundene Werte und Herkunftsangaben; vor einer echten
+Prüfung vollständig ersetzen. Dateiformat Version 1: `year` (2025 oder 2026),
+`property_id`, `source`, `reviewer` und `entries`. Jeder Eintrag enthält eine
+eindeutige `external_id` (1–64 Zeichen: Buchstaben/Ziffern, danach auch `._:-`),
+`kind`, `amount_eur` als Dezimaltext und `description`. Herkunft, Prüferangabe
+und Beschreibung sind einzeilig, nicht leer und jeweils höchstens 1000 UTF-8-Bytes.
+
+- `income_adjustment`: positive oder negative Einnahmenkorrektur.
+- `expense_adjustment`: positive oder negative Werbungskostenkorrektur.
+- `external_depreciation`: nicht negativer externer AfA-Wert, **kein Zusatz** zur
+  bereits in Parkrr erfassten AfA.
+
+Beträge benötigen einen Dezimalpunkt und höchstens zwei Nachkommastellen,
+keine Tausendertrennung oder Exponentialnotation; zum Beispiel `"-20.00"`.
+Einzelbeträge und endgültige Gruppensummen sind auf jeweils eine Milliarde EUR
+im Betrag begrenzt. Doppelte JSON-Felder, unbekannte Felder, doppelte externe IDs
+innerhalb der Datei und ungenaue Beträge werden abgewiesen. Die Vorschau zeigt
+drei getrennte Summen, keinen neuen Jahresüberschuss. Bestehende Zahlungen,
+Werbungskosten, AfA, E1b und ZIP-Exporte bleiben unverändert.
+
+Quelle und Prüferangabe sind nicht verifiziert. Die API prüft keine Existenz der
+Objekt-ID; die Oberfläche gleicht sie mit dem gewählten vorhandenen Objekt ab.
+Es gibt keinen Abgleich gegen Bestandsdaten oder früher geprüfte Dateien.
+Wiederholtes Prüfen erzeugt keinen Eintrag. „Vorschau herunterladen“ sichert einen
+Prüfnachweis im Format `parkrr-tax-import-preview`, kein FinanzOnline- oder
+Übernahmeformat. Zum erneuten Prüfen die ursprüngliche Eingabedatei verwenden.
+Eine neue Datei, eine andere Objektwahl oder „Auswahl verwerfen“ entfernt das
+bisherige Ergebnis; nach einem Fehler bleibt die Auswahl für einen Retry erhalten.
+Beim Verlassen der Ansicht wird nichts lokal gespeichert.
+
+### Schutz bestehender Preise und Periodenzahlungen
+
+Neue normale Buchungen übernehmen den aktuellen Tarif. Bestehende Buchungen
+behalten ihren vereinbarten Betrag, auch bei künftigem Mietbeginn. Bezieht eine
+Altbuchung ihren Preis noch dynamisch aus dem Tarif, wird dessen betroffener
+Preis nicht geändert (409 mit Anzahl der abhängigen Buchungen). Bestätige solche
+Preise nach Prüfung einzeln oder lege einen neuen Tarif an. Es gibt keinen
+automatischen Preis-Backfill. „Erneut einstellen“ kopiert weiterhin bewusst den
+alten vereinbarten Preis, einschließlich Sonder- und Nullpreisen.
+
+Vorläufiger Historien-Schutz: Betrag ersetzen, Bezahlt zurücksetzen oder die
+Pauschale/Nebenkostenquelle löschen wird mit 409 abgewiesen, sobald dadurch
+vorhandene Periodenzahlungen verloren gingen. Das gilt auch für stornierte
+Historie. Betrag, Zahlungsdatum, Zuordnungen und Quelle bleiben unverändert.
+Neue einzelne Perioden können weiter bezahlt werden; eine identische aktive
+Periodenmarkierung erzeugt keinen zweiten Eingang.
+
+Der Pauschalen-Gesamtschalter setzt intern alle Perioden neu auf und ist deshalb
+bei vorhandenen Zahlungen ebenfalls gesperrt. Der Nebenkosten-Gesamtschalter darf
+neue Perioden ergänzen, aber keine vorhandenen Teilbeträge ersetzen. Für echte
+Korrekturen fehlt noch der geprüfte Perioden-Storno-/Neubuchungsablauf. Nicht als
+Umgehung den Beleg löschen oder eine zusätzliche Zahlung erfassen. Ein bloßes
+Zurücksetzen des Bezahlt-Häkchens wäre ohnehin kein tatsächlicher Geldrückfluss.
+
+### Steuer-ZIP und Ausrollprüfung
+
+Das ZIP liest alle Daten einschließlich Belegen aus demselben lesenden
+Datenbank-Snapshot. Nach dessen Materialisierung wird die Verbindung freigegeben;
+ein langsamer Download hält sie nicht offen. Fehlende Altverknüpfungen werden
+weiterhin als Lücken ausgewiesen, nicht rekonstruiert.
+
+Für Belege gilt standardmäßig ein Gesamtlimit von 24 MiB unkomprimierter Daten
+je Export: `PARKRR_TAX_EXPORT_MAX_RECEIPT_MB` (ganze Zahl von 1–1024). Ein leerer
+Wert nutzt den Standard; ein ungültiger Wert verhindert den Anwendungsstart,
+statt unbemerkt ein anderes Limit zu verwenden. Die Belege liegen während des
+Downloads in einer privaten temporären Datei. Im gehärteten Container sind
+32 MiB `/tmp` vorgesehen. Vor größeren Limits ein ausreichend großes privates
+Volume über `TMPDIR` bereitstellen; parallele Exporte benötigen entsprechend
+mehr Platz. Zu wenig Speicher beendet den Export ohne Finanzänderung.
+
+Diese Ergänzungen enthalten keine SQL-Migration und keine automatische
+Bestandskorrektur. Vor dem Ausrollen trotzdem Zielversion und bereits
+ausstehende ältere Migrationen prüfen, Finanzsummen/Legacy-Preise abgleichen,
+ein verschlüsseltes Backup erstellen und genau dieses isoliert wiederherstellen.
+Die synthetischen Restore-Tests ersetzen keine Prüfung deines tatsächlichen
+Backups. Erst Dev-Abnahme, dann gesonderte Produktionsfreigabe.
+
+Ein Rückfall auf ältere App-Versionen kann die neuen Schutzregeln wieder
+entfernen. Dabei keine neuen Zahlungen löschen und keine ältere Datenbank über
+zwischenzeitliche Vorgänge zurückspielen. Die spätere R03-Indexänderung braucht
+einen eigenen Übergangs-/Rollbackplan: alte Backfill-Abfragen dürfen nicht
+ungeprüft gegen einen geänderten Unique-Index laufen.
 
 ## 5. Kundenportal
 

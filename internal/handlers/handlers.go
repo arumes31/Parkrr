@@ -46,6 +46,11 @@ type Handler struct {
 	// den Start, wenn dabei kein WebAuthn eingerichtet ist — sonst käme niemand
 	// mehr hinein.
 	PasskeyOnly bool
+	// TaxWritesEnabled is configured once before serving requests. Its zero value
+	// keeps the optional tax ledger read-only without disabling ordinary payments.
+	TaxWritesEnabled bool
+	// TaxExportMaxReceiptBytes is frozen before serving; zero uses the safe default.
+	TaxExportMaxReceiptBytes int64
 	// BackupKey (if set) enables the encrypted-backup endpoint; DatabaseURL is
 	// the connection string handed to pg_dump; BackupDir holds scheduled backups.
 	BackupKey   string
@@ -62,6 +67,8 @@ type Handler struct {
 	// PublicBaseURL is the externally reachable base (e.g. https://parkrr.example.com),
 	// used to build links in outgoing e-mail. Empty falls back to a relative hint.
 	PublicBaseURL string
+	// Readiness contains non-secret runtime facts for the admin checklist.
+	Readiness ReadinessConfig
 	// Auth is the session manager, used here only for RequestIsHTTPS so scheme
 	// detection (e.g. in the QR label) honors the trusted-proxy CIDR gate. May be
 	// nil in tests that construct a bare Handler.
@@ -212,7 +219,11 @@ const maxJSONBody = 1 << 20 // 1 MiB
 
 // pathID extracts the positive int64 "id" path value.
 func pathID(r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	s := r.PathValue("id")
+	if !validNumericParamLength(s) {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || id <= 0 {
 		return 0, false
 	}

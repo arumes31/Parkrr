@@ -1,3 +1,8 @@
+import { createAPI } from './api.js';
+import { createTaxReview } from './tax-review.js';
+import { createTaxImport } from './tax-import.js';
+import { createRevenueChart } from './revenue-chart.js';
+
 /* Parkrr SPA – vanilla JS, no external dependencies. */
 (() => {
     'use strict';
@@ -183,35 +188,12 @@
     const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     // ---------- API ----------
-    const api = {
-        async request(method, path, body, headers = {}) {
-            // Fail fast on write attempts while offline with a friendly message
-            // rather than a confusing network error.
-            if (method !== 'GET' && typeof navigator !== 'undefined' && navigator.onLine === false) {
-                throw new Error(t('offline.action'));
-            }
-            const opts = { method, headers: { Accept: 'application/json', ...headers }, credentials: 'same-origin' };
-            if (body !== undefined) {
-                opts.headers['Content-Type'] = 'application/json';
-                opts.body = JSON.stringify(body);
-            }
-            if (method !== 'GET') opts.headers['X-CSRF-Token'] = getCookie('parkrr_csrf');
-            const seq = ++reqSeq;
-            return handle(await fetch('/api' + path, opts), path, seq);
-        },
-        async upload(path, formData, method = 'POST') {
-            const seq = ++reqSeq;
-            const res = await fetch('/api' + path, {
-                method, body: formData, credentials: 'same-origin',
-                headers: { 'X-CSRF-Token': getCookie('parkrr_csrf') },
-            });
-            return handle(res, path, seq);
-        },
-        get: (p) => api.request('GET', p),
-        post: (p, b, headers) => api.request('POST', p, b, headers),
-        put: (p, b) => api.request('PUT', p, b),
-        del: (p) => api.request('DELETE', p),
-    };
+    const api = createAPI({
+        getCookie,
+        handle: (response, path, sequence) => handle(response, path, sequence),
+        nextSequence: () => ++reqSeq,
+        offlineMessage: t('offline.action'),
+    });
     // One Idempotency-Key per create dialog, so a retry after a lost response
     // returns the first result instead of booking twice. randomUUID needs a
     // secure context; plain-HTTP deployments fall back to 16 random bytes as hex,
@@ -404,11 +386,12 @@
         });
         return data ? data.password : null;
     }
-    async function withStepUp(doCall) {
+    async function withStepUp(doCall, { allowPassword = true } = {}) {
         try {
             return await doCall('');
         } catch (e) {
             if (!e || (e.message || '') !== 'reauth_required') throw e;
+            if (!allowPassword) throw new Error('Bitte erneut mit einem Passkey anmelden und die Aktion danach wiederholen.');
             const pw = await promptStepUpPassword();
             if (!pw) throw Object.assign(new Error('Abgebrochen'), { cancelled: true });
             return await doCall(pw);
@@ -466,6 +449,7 @@
     function formModal({ title, fields, submitLabel = 'Speichern', onRender = null, save = null, danger = null }) {
         return new Promise((resolve) => {
             const dlg = $('#modal');
+            dlg.classList.remove('modal-booking');
             dlg.classList.toggle('modal-wide', fields.length >= 4);
             $('#modal-title').textContent = title;
             $('#modal-submit').textContent = submitLabel;
@@ -682,6 +666,7 @@
     // acknowledgement before one-time content (e.g. backup codes) disappears.
     function contentModal(title, buildBody, { closeLabel = 'Schließen', canClose = null, hideCancel = false } = {}) {
         const dlg = $('#modal');
+        dlg.classList.remove('modal-booking');
         dlg.classList.remove('modal-wide');
         $('#modal-title').textContent = title;
         $('#modal-submit').style.display = 'none';
@@ -772,7 +757,7 @@
     }
 
     // Shared hover tooltip positioned over the chart (viewBox coords -> pixels).
-    function chartTip(box, svg, W, H) {
+    function chartTip(box, svg) {
         // Rein visuell: derselbe Wert geht fuer Screenreader ueber den aria-live-Ansager
         // in chartA11y hinaus. Ohne aria-hidden wuerde er jetzt doppelt angesagt, seit
         // die Huelle eine Gruppe statt eines Bildes ist.
@@ -780,10 +765,13 @@
         box.append(tip);
         return {
             show: (vx, vy, html) => {
-                const r = svg.getBoundingClientRect();
+                const matrix = svg.getScreenCTM();
+                if (!matrix) return;
+                const point = new DOMPoint(vx, vy).matrixTransform(matrix);
+                const r = box.getBoundingClientRect();
                 tip.innerHTML = html;
-                tip.style.left = (vx / W * r.width) + 'px';
-                tip.style.top = (vy / H * r.height) + 'px';
+                tip.style.left = (point.x - r.left) + 'px';
+                tip.style.top = (point.y - r.top) + 'px';
                 tip.style.opacity = 1;
             },
             hide: () => { tip.style.opacity = 0; },
@@ -832,7 +820,7 @@
         // property write is not — and it still overrides the flat --primary from CSS.
         const cLine = box.querySelector('.c-line');
         if (cLine) cLine.style.stroke = `url(#as-${id})`;
-        const tip = chartTip(box, svg, W, H);
+        const tip = chartTip(box, svg);
         if (hi >= 0 && !REDUCE_MOTION()) {
             const el2 = box.querySelector('.c-line');
             const len = el2.getTotalLength();
@@ -842,7 +830,10 @@
         const overlay = svg.querySelector('.c-overlay');
         const at = (ev) => {
             if (hi < 0) return;
-            const r = svg.getBoundingClientRect(); const px = (ev.clientX - r.left) / r.width * W;
+            const matrix = svg.getScreenCTM();
+            if (!matrix) return;
+            // Height limits can letterbox the SVG; use its rendered coordinate system.
+            const px = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(matrix.inverse()).x;
             let i = Math.round((px - pl) / (iw / (n - 1 || 1))); i = Math.max(0, Math.min(hi, i));
             const cx = x(i), cy = y(values[i]);
             cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.style.opacity = 1;
@@ -886,7 +877,7 @@
           <defs><linearGradient id="bf-${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--chart-c2)"/><stop offset="1" stop-color="var(--chart-c1)"/></linearGradient></defs>
           <g>${grid}</g><g>${bars}</g><g>${lab}</g></svg>`;
         const svg = box.querySelector('svg');
-        const tip = chartTip(box, svg, W, H);
+        const tip = chartTip(box, svg);
         const marks = svg.querySelectorAll('.c-bar');
         marks.forEach((b) => {
             const focus = () => {
@@ -1178,8 +1169,11 @@
     let pendingSpotFocus = null;
     function parseHash() {
         const raw = (location.hash || '#/dashboard').replace(/^#\/?/, '');
-        const [name, id] = raw.split('/');
-        return { name: name || 'dashboard', id: id ? Number(id) : null };
+        const splitAt = raw.indexOf('?');
+        const path = splitAt >= 0 ? raw.slice(0, splitAt) : raw;
+        const search = splitAt >= 0 ? raw.slice(splitAt + 1) : '';
+        const [name, id] = path.split('/');
+        return { name: name || 'dashboard', id: id ? Number(id) : null, query: new URLSearchParams(search) };
     }
     // garage/hall sind Unteransichten des Planers und markieren denselben Reiter.
     const TAB_FOR = { dashboard: 'dashboard', persons: 'persons', person: 'persons', vehicles: 'vehicles', vehicle: 'vehicles', tariffs: 'tariffs',
@@ -1187,6 +1181,16 @@
     function navigate(path) {
         if (('#/' + path) === location.hash) render();
         else location.hash = '#/' + path;
+    }
+    function updateRouteQuery(changes) {
+        const parsed = parseHash();
+        for (const [key, value] of Object.entries(changes)) {
+            if (value == null || value === '' || value === false) parsed.query.delete(key);
+            else parsed.query.set(key, String(value));
+        }
+        const base = [parsed.name, parsed.id].filter((value) => value != null).join('/');
+        const search = parsed.query.toString();
+        navigate(base + (search ? '?' + search : ''));
     }
     // Loading placeholder: a few shimmering rows instead of a bare "Lädt…".
     function skeleton(rows = 4) {
@@ -1220,14 +1224,20 @@
     // Reitern, und es war die Ursache der wechselnd fehlschlagenden Oberflächentests.
     // Die Befehlspalette löst dasselbe Problem seit jeher mit einer Sequenznummer.
     let renderSeq = 0;
+    let routeLayoutCleanup = null;
+    function clearRouteLayout() {
+        if (routeLayoutCleanup) routeLayoutCleanup();
+        routeLayoutCleanup = null;
+    }
     async function render() {
         const mySeq = ++renderSeq;
+        clearRouteLayout();
         const portalToken = consumePortalToken();
         if (portalToken) { await renderPortal(portalToken); return; }
         if (state.user && !$('#portal-view').hidden) {
             ++portalRenderSeq; $('#portal-view').hidden = true; $('#app-view').hidden = false;
         }
-        const { name, id } = parseHash();
+        const { name, id, query } = parseHash();
         const routeName = id != null && (name === 'persons' || name === 'vehicles') ? name.slice(0, -1) : name;
         $$('.tab').forEach((t) => {
             const on = t.dataset.route === (TAB_FOR[routeName] || TAB_FOR[name]);
@@ -1251,7 +1261,7 @@
         page.append(skeleton());
         const fn = routes[routeName] || routes.dashboard;
         try {
-            await fn(page, id);
+            await fn(page, id, query);
             if (mySeq !== renderSeq) return; // überholt: eine neuere Route hat die Seite schon
             finishRouteLayout(page, routeName);
             window.scrollTo(0, 0);
@@ -1320,9 +1330,15 @@
             const cards = [...page.children].filter(n => n.classList.contains('card'));
             const controls = cards.find(n => ['Status & Zahlung', 'Archiviert'].includes(n.querySelector('h3')?.textContent));
             if (cards[0] && controls && cards[0] !== controls) {
-                const overview = el('div', { class: 'vehicle-overview' }); cards[0].before(overview); overview.append(cards[0], controls);
+                const overview = el('div', { class: 'vehicle-overview' });
+                cards[0].classList.add('record-main');
+                controls.classList.add('record-side');
+                cards[0].before(overview);
+                overview.append(controls, cards[0]);
             }
             sectionIndex(page, [...page.querySelectorAll(':scope > .card h3')].filter(n => n.closest('.card')?.parentElement === page));
+        } else if (route === 'invoices') {
+            routeLayoutCleanup = watchInvoiceOverflow(page);
         } else if (route === 'backup') {
             const cards = [...page.children].filter(n => n.classList.contains('card'));
             const restore = cards.find(n => n.querySelector('h3')?.textContent === 'Wiederherstellen');
@@ -1331,6 +1347,31 @@
         } else if (route === 'settings') {
             sectionIndex(page, [...page.querySelectorAll('.set-col > .card h3')]);
         }
+    }
+
+    function watchInvoiceOverflow(page) {
+        const region = page.querySelector('.invoice-table-scroll');
+        const table = region?.querySelector('table');
+        const hint = page.querySelector('.invoice-scroll-hint');
+        if (!region || !table || !hint) return null;
+        let active = true;
+        const update = () => {
+            if (!active || !region.isConnected) return;
+            const overflowing = region.scrollWidth > region.clientWidth + 1;
+            hint.hidden = !overflowing;
+            if (overflowing) region.setAttribute('aria-describedby', hint.id);
+            else region.removeAttribute('aria-describedby');
+        };
+        const observer = new ResizeObserver(update);
+        observer.observe(region);
+        observer.observe(table);
+        const frame = requestAnimationFrame(update);
+        document.fonts.ready.then(update);
+        return () => {
+            active = false;
+            observer.disconnect();
+            cancelAnimationFrame(frame);
+        };
     }
 
     // Mirror each route's leading heading into the visually-hidden page-level h1
@@ -1399,7 +1440,7 @@
             const pct = Math.round(((proj - prevF) / prevF) * 100);
             const txt = (pct > 999 ? '▲ >+999' : pct >= 0 ? '▲ +' + pct : '▼ ' + Math.abs(pct)) + ' %';
             return { txt, cls: pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat',
-                title: 'Hochrechnung ≈ ' + eur(proj) + ' ggü. Vorjahr gesamt (' + eur(prevF) + ')', label: lbl('Prognose ggü. ' + (ov.year - 1)) };
+                title: 'Lineare Hochrechnung ≈ ' + eur(proj) + ' ggü. Vorjahr gesamt (' + eur(prevF) + ')', label: lbl('Lineare Hochrechnung ggü. ' + (ov.year - 1)) };
         }
         // Mode A (default): growth vs the same window last year. A tiny prior-year
         // base makes the ratio explode, so fall back to the absolute € gain (or
@@ -1416,10 +1457,8 @@
     }
     // Kundenwünsche aus dem Portal (Hundert 85/87): das Betreiber-Postfach. Nur
     // gerendert, wenn offene Wünsche da sind — kein Dauerrauschen auf der Übersicht.
-    async function portalRequestsCard() {
+    function portalRequestsCard(reqs = []) {
         if (!canManage()) return null;
-        let reqs = [];
-        try { reqs = await api.get('/portal-requests'); } catch (e) { return null; }
         const open = (reqs || []).filter((r) => r.status === 'offen');
         if (!open.length) return null;
         const card = el('div', { class: 'card' },
@@ -1453,7 +1492,76 @@
         return card;
     }
 
+    function readinessChecklist(data, compact = false) {
+        if (!data || !Array.isArray(data.items)) return null;
+        const wrap = el('section', { class: 'readiness' + (compact ? ' readiness-compact' : ''), 'aria-label': 'Betriebsbereitschaft' },
+            el('div', { class: 'readiness-head' },
+                el('h3', {}, 'Betriebsbereitschaft'),
+                el('span', { class: 'badge readiness-state readiness-' + data.state },
+                    data.state === 'ready' ? 'bereit' : data.state === 'blocked' ? 'Handlungsbedarf' : 'prüfen')));
+        const list = el('div', { class: 'readiness-list' });
+        for (const item of data.items) {
+            if (compact && item.state === 'ready') continue;
+            list.append(el('a', { class: 'readiness-row readiness-' + item.state, href: item.href || '#/settings' },
+                el('span', { class: 'readiness-mark', 'aria-hidden': 'true' }, icon(item.state === 'ready' ? 'check' : 'alert', 16)),
+                el('span', { class: 'readiness-copy' }, el('strong', {}, item.label), el('span', {}, item.reason)),
+                el('span', { class: 'readiness-action' }, item.state === 'ready' ? 'Öffnen' : 'Beheben')));
+        }
+        if (!list.childNodes.length) list.append(el('p', { class: 'readiness-ok' }, 'Alle geprüften Punkte sind einsatzbereit.'));
+        wrap.append(list);
+        return wrap;
+    }
+
+    function todayWorklist({ overdue, ending, portalRequests, occ, readiness }) {
+        const items = [];
+        (overdue || []).forEach((invoice) => items.push({
+            priority: 0, tone: 'critical', title: invoice.person_name + ' · Rechnung ' + invoice.number,
+            meta: invoice.days_overdue + ' Tage überfällig · ' + eur(invoice.open_amount) + ' offen · Buchhaltung',
+            href: '#/invoices/' + invoice.id, action: 'Rechnung öffnen',
+        }));
+        (portalRequests || []).filter((request) => request.status === 'offen').forEach((request) => items.push({
+            priority: 1, tone: 'attention', title: request.person_name + ' · Kundenwunsch',
+            meta: (request.kind === 'pickup' ? 'Abholung abstimmen' : 'Kontaktdaten prüfen') + ' · Kundenservice',
+            href: '#/person/' + request.person_id, action: 'Person öffnen',
+        }));
+        (ending || []).forEach((vehicle) => items.push({
+            priority: vehicle.days_left <= 7 ? 1 : 2, tone: vehicle.days_left <= 7 ? 'attention' : 'normal',
+            title: vehicle.label + ' · Vertrag endet ' + (vehicle.days_left === 0 ? 'heute' : 'in ' + vehicle.days_left + ' Tagen'),
+            meta: vehicle.person_name + ' · Disposition', href: '#/vehicle/' + vehicle.id, action: 'Gefährt öffnen',
+        }));
+        const unplaced = occ ? Math.max(0, Number(occ.active || 0) - Number(occ.placed || 0)) : 0;
+        if (unplaced) items.push({ priority: 2, tone: 'normal', title: unplaced + ' aktive Gefährte ohne Platz',
+            meta: 'Hallenzuordnung fehlt · Disposition', href: '#/vehicles?unplaced=1', action: 'Gefährte anzeigen' });
+        // Optional setup is not a daily emergency. A blocked backup remains visible.
+        if (readiness && Array.isArray(readiness.items)) readiness.items.filter((item) => item.state !== 'ready').forEach((item) => items.push({
+            priority: item.id === 'backup' && item.state === 'blocked' ? 0 : 3,
+            tone: item.id === 'backup' && item.state === 'blocked' ? 'critical' : 'normal',
+            title: item.label, meta: item.reason + ' · Administration', href: item.href || '#/settings', action: 'Konfiguration öffnen',
+        }));
+        items.sort((a, b) => a.priority - b.priority);
+        const urgent = items.filter(item => item.priority <= 1);
+        const visible = urgent.slice(0, 3);
+        const remaining = [...urgent.slice(3), ...items.filter(item => item.priority > 1)];
+        const card = el('section', { class: 'today-card', 'aria-label': 'Aufgaben und Hinweise' });
+        const row = item => el('a', { class: 'today-row today-' + item.tone, href: item.href },
+            el('span', { class: 'today-priority', 'aria-hidden': 'true' }),
+            el('span', { class: 'today-copy' }, el('strong', {}, item.title), el('span', {}, item.meta)),
+            el('span', { class: 'today-action' }, item.action));
+        if (urgent.length) card.append(
+            el('div', { class: 'today-head' }, el('h3', {}, 'Heute'),
+                el('span', { class: 'today-count' }, urgent.length + ' dringend')),
+            el('div', { class: 'today-list' }, ...visible.map(row)));
+        // Nothing is discarded: secondary items (and overflow) stay one click away.
+        if (remaining.length) card.append(el('details', { class: 'today-more' },
+            el('summary', {}, el('span', {}, urgent.length ? 'Weitere Hinweise' : 'Hinweise'),
+                el('span', { class: 'today-more-count' }, remaining.length + (urgent.length > 3 ? ' · davon ' + (urgent.length - 3) + ' dringend' : ''))),
+            el('div', { class: 'today-list' }, ...remaining.map(row))));
+        if (!items.length) card.append(el('p', { class: 'today-empty' }, 'Heute keine offenen Aufgaben.'));
+        return card;
+    }
+
     routes.dashboard = async (page) => {
+        const requestedYear = dashYear;
         const missing = [];
         const optional = (path, label, fallback) => api.get(path).then(data => data ?? fallback).catch((err) => {
             if (err.status === 401) throw err;
@@ -1461,28 +1569,46 @@
             return fallback;
         });
         // These independent reads share one network round trip, instead of five.
-        const [ov, occ, overdue, ending, prCard] = await Promise.all([
+        const [ov, occ, overdue, ending, portalRequests, readiness] = await Promise.all([
             api.get('/overview' + (dashYear ? '?year=' + dashYear : '')),
             optional('/occupancy', 'Belegung', null),
             optional('/invoices/overdue', 'Überfällige Rechnungen', []),
             optional('/vehicles/ending-soon?days=30', 'Auslaufende Verträge', []),
-            portalRequestsCard(),
+            canManage() ? optional('/portal-requests', 'Kundenwünsche', []) : Promise.resolve([]),
+            isAdmin() ? optional('/admin/readiness', 'Betriebsbereitschaft', null) : Promise.resolve(null),
         ]);
+        const prCard = portalRequestsCard(portalRequests);
         dashYear = ov.year;
         page.innerHTML = '';
         page.classList.add('dashboard-view');
-        // Year switcher: browse past years; forward capped at the current year
-        // (future years would be all zeros).
-        const nowYear = new Date().getFullYear();
-        const yearSel = el('div', { class: 'pager', style: 'margin:0' },
-            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Vorheriges Jahr', disabled: ov.year <= 2000,
-                onclick: () => { dashYear = ov.year - 1; render(); } }, '‹'),
-            el('span', { class: 'info' }, String(ov.year)),
-            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächstes Jahr', disabled: ov.year >= nowYear,
-                onclick: () => { dashYear = ov.year + 1; render(); } }, '›'));
+        // Navigation follows source-data years, including real zero-price data.
+        // Future planning belongs to the optional chart, never these overview KPIs.
+        const nowYear = Number.isInteger(ov.current_year) ? ov.current_year : new Date().getFullYear();
+        const years = [...new Set([...(Array.isArray(ov.available_years) ? ov.available_years : []), ov.year, nowYear])]
+            .filter(year => Number.isInteger(year) && year <= nowYear).sort((a, b) => a - b);
+        const yearIndex = years.indexOf(ov.year);
+        const changeYear = async (year, selector) => {
+            dashYear = year;
+            await render();
+            const next = document.querySelector('.dashboard-year-nav ' + selector);
+            const focusTarget = next && !next.disabled ? next : document.querySelector('.dashboard-year-select');
+            focusTarget?.focus({ preventScroll: true });
+        };
+        const selectYear = el('select', { class: 'dashboard-year-select', 'aria-label': 'Dashboard-Jahr' },
+            ...years.map(year => el('option', { value: year, selected: year === ov.year }, String(year))));
+        selectYear.addEventListener('change', () => changeYear(Number(selectYear.value), '.dashboard-year-select'));
+        const yearSel = el('div', { class: 'pager dashboard-year-nav' },
+            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Vorheriges Jahr', disabled: yearIndex <= 0,
+                onclick: () => changeYear(years[yearIndex - 1], '[aria-label="Vorheriges Jahr"]') }, '‹'), selectYear,
+            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächstes Jahr', disabled: yearIndex >= years.length - 1,
+                onclick: () => changeYear(years[yearIndex + 1], '[aria-label="Nächstes Jahr"]') }, '›'));
         page.append(el('div', { class: 'page-head' }, el('h2', {}, 'Übersicht'),
             el('div', { class: 'page-head-actions' },
                 el('a', { class: 'btn btn-ghost btn-sm', href: '#/calendar', title: 'Abholungen, Reservierungen, fällige Rechnungen und Abholwünsche im Monat' }, 'Kalender'), yearSel)));
+        if (requestedYear != null && requestedYear !== ov.year) page.append(el('p', { class: 'load-notice', role: 'status' },
+            'Für ' + requestedYear + ' sind keine auswählbaren Jahresdaten verfügbar. Angezeigt wird ' + ov.year + '.'));
+        if (ov.has_year_data === false) page.append(el('p', { class: 'card-meta dashboard-year-empty' },
+            'Für ' + ov.year + ' sind noch keine umsatzrelevanten Vorgänge vorhanden. Offene Salden und Bestandszahlen zeigen weiterhin den Stand heute.'));
         if (missing.length) page.append(el('div', { class: 'load-notice', role: 'status' },
             el('span', {}, missing.join(', ') + ' konnten nicht geladen werden.'),
             el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => render() }, 'Erneut versuchen')));
@@ -1498,14 +1624,17 @@
             return;
         }
 
+        page.append(todayWorklist({ overdue, ending, portalRequests, occ, readiness }));
+
         // Money first — "Offen gesamt" is the operator's lead metric, shown as a
         // gradient hero; Umsatz (with a YoY delta) and Bezahlt sit beside it.
-        page.append(el('div', { class: 'dash-hero' },
+        page.append(el('button', { class: 'dash-hero dash-hero-click', type: 'button', onclick: () => navigate('persons?owed=1'),
+            'aria-label': 'Offene Salden anzeigen' },
             el('div', { class: 'dash-hero-label' }, 'Offen gesamt'),
             el('div', { class: 'dash-hero-num' }, eur(ov.outstanding_total)),
             el('div', { class: 'dash-hero-sub' }, 'Stand heute · offene Salden zum Nachfassen')));
         const umsatz = stat(eur(ov.accrued_this_year), 'Umsatz ' + ov.year, { icon: 'trend', tone: 'teal' });
-        const yd = yoyDelta(ov, yoyMode);
+        const yd = ov.previous_year_has_data === true ? yoyDelta(ov, yoyMode) : null;
         if (yd) {
             umsatz.querySelector('.value').append(el('span', { class: 'yoy ' + yd.cls, title: yd.title }, ' ' + yd.txt));
             umsatz.querySelector('.label').textContent = yd.label;
@@ -1520,18 +1649,18 @@
         page.append(moneyRow);
         // Compare-mode switch for the Umsatz delta — only when there is a prior year
         // to compare against. Choice is persisted across visits.
-        if ((Number(ov.accrued_prev_year) || 0) > 0 || (Number(ov.accrued_prev_full) || 0) > 0) {
-            const modeBtns = [['A', 'Zeitraum'], ['B', '% Vorjahr'], ['C', 'Prognose']].map(([m, lbl]) =>
+        if (ov.previous_year_has_data === true && ((Number(ov.accrued_prev_year) || 0) > 0 || (Number(ov.accrued_prev_full) || 0) > 0)) {
+            const modeBtns = [['A', 'Zeitraum'], ['B', '% Vorjahr'], ['C', 'Lineare Hochrechnung']].map(([m, lbl]) =>
                 el('button', { class: 'yoy-mode' + (yoyMode === m ? ' active' : ''), type: 'button',
                     'aria-pressed': String(yoyMode === m), title: YOY_MODE_TITLE[m],
                     onclick: () => { yoyMode = m; try { localStorage.setItem('parkrr-yoy', m); } catch (e) { /* storage blocked */ } render(); } }, lbl));
             page.append(el('div', { class: 'yoy-modes', role: 'group', 'aria-label': 'Vergleichsmodus Umsatz' }, ...modeBtns));
         }
         page.append(el('div', { class: 'stat-grid dash-counts' },
-            stat(ov.total_persons, 'Personen', { icon: 'users' }),
-            stat(ov.active_vehicles, 'aktiv eingestellt', { icon: 'warehouse' }),
-            stat(ov.total_vehicles, 'Gefährte gesamt', { icon: 'car' }),
-            stat(ov.total_categories, 'Tarife', { icon: 'tag' }),
+            stat(ov.total_persons, 'Personen', { icon: 'users', onClick: () => navigate('persons') }),
+            stat(ov.active_vehicles, 'aktiv eingestellt', { icon: 'warehouse', onClick: () => navigate('vehicles?active=1') }),
+            stat(ov.total_vehicles, 'Gefährte gesamt', { icon: 'car', onClick: () => navigate('vehicles?archived=1') }),
+            stat(ov.total_categories, 'Tarife', { icon: 'tag', onClick: () => navigate('tariffs') }),
         ));
 
         // Backup-Health. Nur für Admins: /api/backup/status ist admin-only, ein
@@ -1601,7 +1730,7 @@
             const occCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Belegung · im Plan platziert'));
             occCard.append(el('div', { class: 'stat-grid' },
                 stat(occ.placed + ' / ' + occ.active, 'Gefährte platziert', { icon: 'warehouse', tone: 'teal' }),
-                stat(Math.max(0, occ.active - occ.placed), 'noch nicht platziert', { icon: 'car' })));
+                stat(Math.max(0, occ.active - occ.placed), 'noch nicht platziert', { icon: 'car', onClick: () => navigate('vehicles?unplaced=1') })));
             // FE4 — placement trend sparkline over the daily snapshots (last ~30 days).
             const tr = (occ.trend || []).filter((d) => d && Number.isFinite(d.placed));
             if (tr.length >= 2) {
@@ -1643,41 +1772,11 @@
             page.append(oweCard);
         }
 
-        // Überfällige Rechnungen — Mahnwesen light: wen mahnen, ein Tap zur Rechnung.
-        if (overdue.length) {
-            const odCard = el('div', { class: 'owe-card' });
-            const odTotal = overdue.reduce((s, o) => s + (Number(o.open_amount) || 0), 0);
-            odCard.append(el('div', { class: 'owe-head' },
-                el('span', { class: 'sec-eyebrow', style: 'color:var(--danger)' }, 'Überfällige Rechnungen'),
-                el('span', { class: 'muted', style: 'font-size:.75rem' }, overdue.length + ' · ' + eur(odTotal) + ' offen')));
-            overdue.slice(0, 6).forEach((o) => {
-                odCard.append(el('a', { class: 'owe-row', href: '#/invoices/' + o.id, style: 'text-decoration:none' },
-                    el('span', { class: 'owe-nm' }, esc(o.person_name), el('span', { class: 'muted', style: 'font-size:.72rem;margin-left:.4rem' }, 'Nr ' + esc(o.number) + ' · ' + o.days_overdue + ' Tg. überfällig')),
-                    el('span', { class: 'owe-amt', style: 'color:var(--danger)' }, eur(o.open_amount), el('span', { class: 'owe-chev' }, '›'))));
-            });
-            page.append(odCard);
-        }
-
-        // Verträge, die auslaufen — end_date in den nächsten 30 Tagen, ein Tap zum
-        // Gefährt (Vertrag verlängern / Status ändern).
-        if (ending.length) {
-            const enCard = el('div', { class: 'owe-card' });
-            enCard.append(el('div', { class: 'owe-head' },
-                el('span', { class: 'sec-eyebrow' }, 'Verträge laufen aus'),
-                el('span', { class: 'muted', style: 'font-size:.75rem' }, ending.length + ' · nächste 30 Tage')));
-            ending.slice(0, 6).forEach((e) => {
-                const soon = e.days_left <= 7;
-                enCard.append(el('a', { class: 'owe-row', href: '#/vehicles/' + e.id, style: 'text-decoration:none' },
-                    el('span', { class: 'owe-nm' }, esc(e.label), el('span', { class: 'muted', style: 'font-size:.72rem;margin-left:.4rem' }, esc(e.person_name))),
-                    el('span', { class: 'owe-amt', style: soon ? 'color:var(--danger)' : '' }, (e.days_left === 0 ? 'heute' : 'in ' + e.days_left + ' Tg.'), el('span', { class: 'owe-chev' }, '›'))));
-            });
-            page.append(enCard);
-        }
+        // Due invoices and ending contracts already have actionable rows in Heute.
+        // Do not repeat the same reminders as two more dashboard cards.
 
         // Revenue chart
-        const revCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Umsatz pro Monat · ' + ov.year));
-        revCard.append(chartLine(ov.revenue_by_month, MONTHS, 'Umsatz pro Monat'));
-        revCard.append(el('div', { class: 'legend' }, el('span', {}, el('span', { class: 'dotc', style: 'background:var(--primary)' }), 'Miete + Zusatzkosten')));
+        const revCard = createRevenueChart(ov, { el, eur, api, chartLine });
 
         // Extra charges per month
         const pcCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Zusatzkosten pro Monat · ' + ov.year));
@@ -1723,7 +1822,7 @@
     };
 
     // ================= PERSONS =================
-    routes.persons = async (page) => {
+    routes.persons = async (page, _id, query = new URLSearchParams()) => {
         await refreshLookups();
         // Open balance per person, batched in one request so each row can show its
         // settlement status (and a status-coloured rail) without an N+1 of stats.
@@ -1735,6 +1834,11 @@
         const overdueByPerson = {};
         try { ((await api.get('/invoices/overdue')) || []).forEach((o) => { overdueByPerson[o.person_id] = Math.max(overdueByPerson[o.person_id] || 0, o.days_overdue); }); }
         catch (e) { /* dashboard already surfaces overdue; ignore here */ }
+        const personListState = listState.get('persons') || {};
+        personListState.controlState = personListState.controlState || {};
+        personListState.controlState.owedOnly = query.get('owed') === '1';
+        personListState.controlState.overdueOnly = query.get('overdue') === '1';
+        listState.set('persons', personListState);
         mountList(page, {
             stateKey: 'persons', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Personen', emptyIcon: 'users', emptyText: 'Noch keine Personen.', sourcePath: '/persons',
@@ -1748,9 +1852,11 @@
                 // aria-pressed="false" zeigte sonst "alle Personen", waehrend die Liste
                 // auf offene Posten gefiltert ist.
                 const btn = el('button', { class: 'btn btn-sm ' + (cs.owedOnly ? 'btn-primary' : 'btn-ghost'), type: 'button', 'aria-pressed': String(!!cs.owedOnly),
-                    onclick: () => { cs.owedOnly = !cs.owedOnly; btn.className = 'btn btn-sm ' + (cs.owedOnly ? 'btn-primary' : 'btn-ghost'); btn.setAttribute('aria-pressed', String(!!cs.owedOnly)); refresh(); } },
+                    onclick: () => updateRouteQuery({ owed: cs.owedOnly ? null : 1 }) },
                     'Nur offen');
-                const out = [btn];
+                const overdueBtn = el('button', { class: 'btn btn-sm ' + (cs.overdueOnly ? 'btn-primary' : 'btn-ghost'), type: 'button', 'aria-pressed': String(!!cs.overdueOnly),
+                    onclick: () => updateRouteQuery({ overdue: cs.overdueOnly ? null : 1 }) }, 'Überfällig');
+                const out = [btn, overdueBtn];
                 // CSV bulk import (editor+): opens a dialog to download an example
                 // file or pick a CSV. Round-trips the "Personen" export.
                 if (canManage()) {
@@ -1765,7 +1871,8 @@
             // aus wie eine leere Datenbank. Vorher rettete das frische {} bei jedem Aufbau
             // den Fall, weil cs.owedOnly dann falsy war. Ohne Salden lieber ungefiltert
             // zeigen als nichts: der Toast oben sagt bereits, dass sie fehlen.
-            extraFilter: (p, cs) => !cs.owedOnly || !oweOk || (Number(oweMap[p.id]) || 0) > 0.005,
+            extraFilter: (p, cs) => (!cs.owedOnly || !oweOk || (Number(oweMap[p.id]) || 0) > 0.005) &&
+                (!cs.overdueOnly || !!overdueByPerson[p.id]),
             sorts: [
                 { label: 'Name A–Z', cmp: (a, b) => personName(a).localeCompare(personName(b)) },
                 { label: 'Name Z–A', cmp: (a, b) => personName(b).localeCompare(personName(a)) },
@@ -1806,6 +1913,37 @@
         });
     };
 
+    function attachDuplicateWarning(body, { probes, kind, currentURL }) {
+        const region = el('div', { class: 'duplicate-warning', role: 'status', 'aria-live': 'polite', hidden: true });
+        body.append(region);
+        let sequence = 0;
+        const check = async (probe) => {
+            const query = String(probe.query() || '').trim();
+            const mySequence = ++sequence;
+            if (query.length < 3) { region.hidden = true; region.replaceChildren(); return; }
+            try {
+                const results = await api.get('/search?q=' + encodeURIComponent(query));
+                if (mySequence !== sequence) return;
+                const matches = (results || []).filter((result) => result.kind === kind && result.url !== currentURL).slice(0, 3);
+                region.replaceChildren();
+                if (!matches.length) { region.hidden = true; return; }
+                region.hidden = false;
+                region.append(el('strong', {}, matches.length === 1 ? 'Möglicher Doppeleintrag' : 'Mögliche Doppeleinträge'),
+                    el('p', {}, 'Bitte kurz prüfen. Speichern bleibt weiterhin möglich.'));
+                const links = el('div', { class: 'duplicate-links' });
+                matches.forEach((match) => links.append(el('a', { href: match.url, target: '_blank', rel: 'noopener' },
+                    el('span', {}, match.label), el('small', {}, match.sub || 'Bestehenden Eintrag prüfen'))));
+                region.append(links);
+            } catch (error) {
+                region.hidden = true;
+            }
+        };
+        probes.forEach((probe) => probe.fields.forEach((fieldName) => {
+            const input = body.querySelector('#f_' + fieldName);
+            if (input) input.addEventListener('blur', () => check(probe));
+        }));
+    }
+
     async function personForm(existing) {
         await formModal({
             title: existing ? 'Person bearbeiten' : 'Neue Person',
@@ -1817,6 +1955,14 @@
                 { name: 'address', label: 'Adresse', type: 'textarea', value: existing?.address, optional: 'Adresse & Notizen' },
                 { name: 'notes', label: 'Notizen', type: 'textarea', value: existing?.notes, optional: 'Adresse & Notizen' },
             ],
+            onRender: (body) => attachDuplicateWarning(body, {
+                kind: 'person', currentURL: existing ? '#/person/' + existing.id : '',
+                probes: [
+                    { fields: ['first_name', 'last_name'], query: () => [body.querySelector('#f_first_name').value, body.querySelector('#f_last_name').value].join(' ') },
+                    { fields: ['email'], query: () => body.querySelector('#f_email').value },
+                    { fields: ['phone'], query: () => body.querySelector('#f_phone').value },
+                ],
+            }),
             save: async (data) => {
                 if (existing) await api.put('/persons/' + existing.id, data);
                 else await api.post('/persons', data);
@@ -2308,7 +2454,7 @@
     function delPayment(p, node) {
         // BAO: the payment is not deleted but reversed (Storno) — the record is kept.
         deleteWithUndo('Zahlung stornieren?',
-            eur(p.amount) + ' vom ' + new Date(p.paid_on).toLocaleDateString('de-DE') + ' wird storniert (Datensatz bleibt erhalten).',
+            eur(p.amount) + ' vom ' + new Date(p.paid_on).toLocaleDateString('de-DE') + ' wird als Erfassungsfehler korrigiert. Der Datensatz bleibt erhalten und zählt nicht mehr als Einnahme. Dies erfasst keine tatsächliche Rückzahlung.',
             () => api.del('/payments/' + p.id), () => render(), node);
     }
     async function paymentForm(personId, stats) {
@@ -2549,6 +2695,8 @@
             el('thead', {}, el('tr', {}, el('th', {}, 'Pos'), el('th', {}, 'Beschreibung'),
                 el('th', { class: 'r' }, 'Menge'), el('th', { class: 'r' }, 'Einzel'), el('th', { class: 'r' }, 'Betrag'))),
             tb)));
+        doc.append(el('p', { class: 'invoice-scroll-hint no-print', id: 'invoice-scroll-hint', hidden: true },
+            'Weitere Spalten: horizontal scrollen · Tastatur: Pfeiltasten.'));
         const tot = el('div', { class: 'inv-totals' });
         if (iv.kleinunternehmer) {
             tot.append(totRow('Gesamtbetrag', eur(iv.total), true));
@@ -2579,8 +2727,9 @@
                 ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => remindInvoice(iv) }, icon('mail', 15), ' Erinnerung') : null,
             // Server-rendered A4 PDF (authoritative deliverable). A plain GET anchor
             // carries the session cookie and opens the document inline.
-            el('a', { class: 'btn btn-ghost btn-sm', href: '/api/invoices/' + id + '/pdf', target: '_blank', rel: 'noopener' }, icon('receipt', 15), ' PDF'),
-            el('button', { class: 'btn btn-ghost btn-sm', onclick: () => window.print() }, 'Drucken')));
+            el('div', { class: 'invoice-document-actions', role: 'group', 'aria-label': 'Rechnungsdokument' },
+                el('a', { class: 'btn btn-ghost btn-sm', href: '/api/invoices/' + id + '/pdf', target: '_blank', rel: 'noopener' }, icon('receipt', 15), ' PDF'),
+                el('button', { class: 'btn btn-ghost btn-sm', onclick: () => window.print() }, 'Drucken'))));
         if (iv.status === 'teilbezahlt' || iv.status === 'bezahlt') {
             page.append(el('div', { class: 'card-meta no-print', style: 'margin:-.3rem 0 .4rem' }, 'Bezahlt ' + eur(iv.paid_amount) + ' von ' + eur(iv.total) + (iv.open_amount > 0.005 ? ' · offen ' + eur(iv.open_amount) : '')));
         }
@@ -2607,6 +2756,34 @@
     // Vorschlag und standardmäßig aus: sie setzt voraus, dass auch die Fälligkeit im
     // Fenster um den Jahreswechsel liegt, und die kennt Parkrr nicht.
     let taxYear = null, taxRule = false;
+    // Missing capability also means read-only (e.g. during a rolling upgrade).
+    function taxWritesEnabled(rep) { return rep.write_enabled === true; }
+    /** Keep forms inspectable without suggesting that a preview can be saved. */
+    function taxFormPreview(rep, form) {
+        if (taxWritesEnabled(rep)) return form;
+        form.prepend(el('p', { class: 'card-meta tax-preview-note' }, 'Formularvorschau · Eingaben und Speichern sind im Lesemodus gesperrt.'));
+        form.querySelectorAll('input, select, textarea, button').forEach(control => { control.disabled = true; });
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        }, { capture: true });
+        return form;
+    }
+    /** Activation is deliberately a server option, not an accidental UI click. */
+    function taxAccessNotice(rep) {
+        const active = taxWritesEnabled(rep);
+        return el('section', { class: 'card tax-mode', 'aria-labelledby': 'tax-mode-title' },
+            el('h3', { id: 'tax-mode-title' }, active ? 'Steuerbereich · Bearbeitung aktiviert' : 'Steuerbereich · Nur lesen'),
+            el('p', {}, active
+                ? 'Steuerdaten können manuell erfasst werden. Die Nutzung bleibt optional; eine Aktivierung ist keine steuerliche Freigabe.'
+                : 'Auswertungen, Belege und Formulare ansehen, Simulationen prüfen und Exporte herunterladen – ohne Steuerdaten zu verändern.'),
+            el('p', { class: 'card-meta' }, 'Buchung anlegen, bezahlt markieren und abholen bleiben unabhängig davon nutzbar. Vorhandene Daten und Jahressperren bleiben erhalten.'),
+            el('details', { class: 'tax-details' }, el('summary', {}, active ? 'Zurück zum Lesemodus' : 'Später aktivieren'),
+                el('p', {}, 'In der Serverkonfiguration ', el('code', {}, 'PARKRR_TAX_WRITES_ENABLED=' + (active ? 'false' : 'true')),
+                    ' setzen und den App-Dienst neu starten. Die laufende Instanz wird hier nicht umgestellt.'),
+                el('p', { class: 'card-meta' }, 'Diese Option startet keine automatische Rechnung, Buchung oder Datenübernahme. Zum Lesemodus zurückzukehren löscht keine Daten und entsperrt keine abgeschlossenen Jahre.'),
+                el('p', { class: 'card-meta' }, 'E1b und Jahreswechsel bleiben Prüfansichten. Ein Import extern geprüfter Jahreskorrekturen ist noch nicht vorhanden.')));
+    }
     function taxRows(groups, total) {
         const box = el('div', { class: 'tax-rows' });
         if (!groups.length) box.append(el('div', { class: 'card-meta' }, 'Keine Einnahmen in diesem Jahr.'));
@@ -2702,7 +2879,7 @@
                     submit.disabled = false;
                 }
             });
-            section.append(el('details', { class: 'card tax-details' }, el('summary', {}, '+ Ausgabe erfassen'), form));
+            section.append(el('details', { class: 'card tax-details' }, el('summary', {}, '+ Ausgabe erfassen'), taxFormPreview(rep, form)));
         }
         const list = el('div', { class: 'tax-ledger' });
         if (!rep.expenses.length) list.append(el('div', { class: 'card-meta' }, 'Keine Werbungskosten in diesem Jahr.'));
@@ -2720,15 +2897,15 @@
                 actions.append(show);
             }
             if (!rep.locked && !expense.reverses_id && !expense.reversed) {
-                const file = el('input', { type: 'file', accept: '.pdf,image/jpeg,image/png', hidden: true });
+                const file = el('input', { type: 'file', accept: '.pdf,image/jpeg,image/png', hidden: true, disabled: !taxWritesEnabled(rep) });
                 file.addEventListener('change', async () => {
                     if (!file.files[0]) return;
                     const fd = new FormData(); fd.append('file', file.files[0]);
                     try { await api.upload('/tax/expenses/' + expense.id + '/receipts', fd); toast('Beleg gespeichert', 'success'); render(); }
                     catch (err) { toast(err.message, 'error'); }
                 });
-                actions.append(el('button', { class: 'btn btn-ghost btn-sm', onclick: () => file.click() }, '+ Beleg'), file);
-                const reverse = el('button', { class: 'btn btn-ghost btn-sm' }, 'Stornieren');
+                actions.append(el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep), onclick: () => file.click() }, '+ Beleg'), file);
+                const reverse = el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep) }, 'Stornieren');
                 reverse.addEventListener('click', async () => {
                     if (!await confirmDialog('Ausgabe stornieren?', 'Es wird eine unveränderliche Gegenbuchung erstellt.', 'Stornieren')) return;
                     try { await api.post('/tax/expenses/' + expense.id + '/reverse', {}); toast('Gegenbuchung erstellt', 'success'); render(); }
@@ -2772,18 +2949,18 @@
                     toast('Vorlage angelegt', 'success'); render();
                 } catch (err) { toast(err.message, 'error'); }
             });
-            section.append(form);
+            section.append(taxFormPreview(rep, form));
         }
         const list = el('div', { class: 'tax-ledger' });
         if (!rep.recurring_expenses.length) list.append(el('div', { class: 'card-meta' }, 'Noch keine wiederkehrenden Ausgaben.'));
         rep.recurring_expenses.forEach((item) => {
-            const date = el('input', { type: 'date', value: taxYearDate(rep.year), disabled: rep.locked || !item.active });
-            const book = el('button', { class: 'btn btn-ghost btn-sm', disabled: rep.locked || !item.active }, 'Buchen');
+            const date = el('input', { type: 'date', 'aria-label': 'Bezahlt am · ' + item.description, value: taxYearDate(rep.year), disabled: !taxWritesEnabled(rep) || rep.locked || !item.active });
+            const book = el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep) || rep.locked || !item.active }, 'Buchen');
             book.addEventListener('click', async () => {
                 try { await api.post('/tax/recurring/' + item.id + '/book', { paid_on: date.value }); toast('Ausgabe gebucht', 'success'); render(); }
                 catch (err) { toast(err.message, 'error'); }
             });
-            const toggle = el('button', { class: 'btn btn-ghost btn-sm', disabled: rep.locked }, item.active ? 'Deaktivieren' : 'Aktivieren');
+            const toggle = el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep) || rep.locked }, item.active ? 'Deaktivieren' : 'Aktivieren');
             toggle.addEventListener('click', async () => {
                 try { await api.put('/tax/recurring/' + item.id, { active: !item.active }); toast('Vorlage gespeichert', 'success'); render(); }
                 catch (err) { toast(err.message, 'error'); }
@@ -2821,7 +2998,7 @@
                     toast('Wirtschaftsgut angelegt', 'success'); render();
                 } catch (err) { toast(err.message, 'error'); }
             });
-            section.append(form);
+            section.append(taxFormPreview(rep, form));
         }
         const list = el('div', { class: 'tax-ledger' });
         if (!rep.assets.length) list.append(el('div', { class: 'card-meta' }, 'Noch keine Wirtschaftsgüter.'));
@@ -2863,7 +3040,7 @@
         cancel.addEventListener('click', () => setEditing(null));
         const objectList = el('div', { class: 'tax-ledger' }, ...rep.properties.map((p) => el('div', { class: 'tax-ledger-row' },
             el('div', {}, el('b', {}, p.name), el('small', {}, [p.address, p.garages].filter(Boolean).join(' · ') || 'Noch keine Adresse/Halle zugeordnet')),
-            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => setEditing(p) }, 'Bearbeiten'))));
+            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => setEditing(p) }, taxWritesEnabled(rep) ? 'Bearbeiten' : 'Details ansehen'))));
         objects.append(objectList);
         const objectForm = el('form', { class: 'tax-form-grid' }, taxField('Name', name), taxField('Lageadresse', address),
             taxField('Postleitzahl', postalCode), taxField('Einheitswert-Aktenzeichen', eawz),
@@ -2879,7 +3056,7 @@
                 toast(editingID ? 'Steuerobjekt gespeichert' : 'Steuerobjekt angelegt', 'success'); render();
             } catch (err) { toast(err.message, 'error'); }
         });
-        objects.append(objectForm); wrap.append(objects);
+        objects.append(taxFormPreview(rep, objectForm)); wrap.append(objects);
 
         const settings = el('details', { class: 'card tax-details' }, el('summary', {}, 'Steuereinstellungen'));
         const limit = el('input', { type: 'number', min: 1, step: '0.01', value: rep.settings.small_business_limit });
@@ -2895,7 +3072,7 @@
                 toast('Einstellungen gespeichert', 'success'); render();
             } catch (err) { toast(err.message, 'error'); }
         });
-        settings.append(form); wrap.append(settings);
+        settings.append(taxFormPreview(rep, form)); wrap.append(settings);
         return wrap;
     }
 
@@ -2913,13 +3090,14 @@
             el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächstes Jahr', disabled: taxYear >= nowYear,
                 onclick: () => { taxYear++; render(); } }, '›'));
         page.append(el('div', { class: 'page-head' }, el('h2', {}, 'Steuerjahr'), el('div', { class: 'page-head-actions' }, yearSel)));
+        page.append(taxAccessNotice(rep));
 
         const income = taxRule ? rep.total_with_rule : rep.total_by_date;
         const surplus = taxRule ? rep.surplus_with_rule : rep.surplus;
-        page.append(el('div', { class: 'stat-grid' }, stat(eur(income), taxRule ? 'Einnahmen mit 15-Tage-Regel' : 'Einnahmen nach Zuflussdatum'),
+        page.append(el('div', { class: 'stat-grid' }, stat(eur(income), taxRule ? 'Einnahmen · ungeprüfte Simulation' : 'Einnahmen nach Zuflussdatum'),
             stat(eur(rep.expense_total + rep.depreciation_total), 'Werbungskosten inkl. AfA'), stat(eur(surplus), 'Überschuss ' + rep.year)));
 
-        const lock = el('button', { class: 'btn ' + (rep.locked ? 'btn-ghost' : 'btn-primary') + ' btn-sm' }, rep.locked ? 'Jahr entsperren' : 'Jahr abschließen');
+        const lock = el('button', { class: 'btn ' + (rep.locked ? 'btn-ghost' : 'btn-primary') + ' btn-sm', disabled: !taxWritesEnabled(rep) }, rep.locked ? 'Jahr entsperren' : 'Jahr abschließen');
         lock.addEventListener('click', async () => {
             const title = rep.locked ? 'Steuerjahr entsperren?' : 'Steuerjahr abschließen?';
             const message = rep.locked ? 'Danach sind wieder Änderungen an Buchungen und Zuflussdaten möglich.'
@@ -2932,26 +3110,25 @@
             } catch (err) { toast(err.message, 'error'); }
         });
         page.append(el('div', { class: 'tax-toolbar' },
-            el('span', { class: 'badge ' + (rep.locked ? 'badge-ok' : '') }, rep.locked ? 'Abgeschlossen' : 'In Bearbeitung'), lock,
+            el('span', { class: 'badge ' + (rep.locked ? 'badge-ok' : '') }, rep.locked ? 'Abgeschlossen' : taxWritesEnabled(rep) ? 'In Bearbeitung' : 'Offen · nur lesend'), lock,
             el('span', { class: 'card-meta' }, 'Keine Steuerberatung · Werte vor Abgabe prüfen.')));
 
-        const limit = Number(rep.settings.small_business_limit) || 55000;
-        const percent = Number(rep.small_business_percent) || 0;
+        // Cash receipts are not a verified VAT-turnover basis. No misleading
+        // threshold gauge or automatic tax-status decision from this ledger.
         const limitCard = el('div', { class: 'card tax-limit' },
-            el('div', { class: 'tax-limit-head' }, el('h3', {}, 'Kleinunternehmer-Grenze'), el('b', {}, percent.toFixed(1) + ' %')),
-            el('progress', { max: 100, value: Math.min(100, percent), 'aria-label': 'Auslastung der Kleinunternehmer-Grenze' }),
-            el('div', { class: 'card-meta' }, eur(rep.total_by_date) + ' von ' + eur(limit) + (rep.settings.vat_opted_in ? ' · Regelbesteuerung hinterlegt' : ' · Bruttoumsatz')));
-        if (rep.small_business_exceeded) limitCard.append(el('div', { class: 'load-notice danger' }, 'Grenze überschritten – umsatzsteuerliche Behandlung prüfen.'));
-        else if (percent >= Number(rep.settings.warning_percent || 90)) limitCard.append(el('div', { class: 'load-notice' }, 'Warnschwelle erreicht – Entwicklung prüfen.'));
-        page.append(limitCard);
+            el('div', { class: 'tax-limit-head' }, el('h3', {}, 'Kleinunternehmer · Umsatzprüfung'), el('b', {}, 'Nicht geprüft')),
+            el('div', { class: 'card-meta' }, eur(rep.total_by_date) + ' erfasste Zahlungseingänge · kein Nachweis der Umsatzgrenze'),
+            el('p', { class: 'card-meta' }, 'Leistungsumsätze, weitere unternehmerische Umsätze und das Vorjahr müssen gesondert geprüft werden. Parkrr ändert daraus weder Steuersatz noch bestehende Beträge.'));
+        page.append(limitCard, createTaxReview(rep, { el, field: taxField, api, eur }),
+            createTaxImport(rep, { el, field: taxField, api, eur }));
 
         const ruleCheck = el('input', { type: 'checkbox', id: 'tax_rule_full' }); ruleCheck.checked = taxRule;
         ruleCheck.addEventListener('change', () => { taxRule = ruleCheck.checked; render(); });
         const shifted = rep.shifted_in.length + rep.shifted_out.length;
         page.append(el('details', { class: 'card tax-details' }, el('summary', {}, '15-Tage-Regel' + (shifted ? ' · ' + shifted + ' Prüfposten' : '')),
             el('label', { class: 'switch' }, ruleCheck, el('span', { class: 'track' }),
-                el('span', {}, 'Wiederkehrende Einnahmen am Jahreswechsel dem Leistungsjahr zurechnen')),
-            el('p', { class: 'card-meta' }, 'Nur anwenden, wenn auch die Fälligkeit im 15-Tage-Fenster liegt. Parkrr schlägt vor; die Entscheidung bleibt bei dir.'),
+                el('span', {}, 'Unbestätigte Jahreswechsel-Zuordnung simulieren')),
+            el('p', { class: 'card-meta' }, 'Nur eine Prüfsimulation für Einnahmen, keine bestätigte Steuerzuordnung. Fälligkeit und Regelmäßigkeit sind nicht geprüft; Ausgaben werden nicht umgeordnet. Abschlusskorrekturen gesondert bestätigen.'),
             shifted ? taxShiftList(rep) : el('div', { class: 'card-meta' }, 'Keine betroffene Zahlung.')));
 
         const monthCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Einnahmen pro Monat · ' + rep.year));
@@ -2976,9 +3153,9 @@
             review.append(el('p', { class: 'card-meta' }, 'Die steuerliche Zuordnung wird separat gespeichert; die unveränderliche Zahlung bleibt bestehen.'));
             const list = el('div', { class: 'tax-ledger' });
             rep.review_payments.forEach((payment) => {
-                const date = el('input', { type: 'date', value: String(payment.paid_on).slice(0, 10), disabled: rep.locked || !payment.slider });
-                const prop = taxPropertySelect(rep, payment.property_id, { disabled: rep.locked || rep.properties.length === 1 });
-                const save = el('button', { class: 'btn btn-ghost btn-sm', disabled: rep.locked }, 'Speichern');
+                const date = el('input', { type: 'date', 'aria-label': 'Zuflussdatum · ' + payment.person, value: String(payment.paid_on).slice(0, 10), disabled: !taxWritesEnabled(rep) || rep.locked || !payment.slider });
+                const prop = taxPropertySelect(rep, payment.property_id, { 'aria-label': 'Steuerobjekt · ' + payment.person, disabled: !taxWritesEnabled(rep) || rep.locked || rep.properties.length === 1 });
+                const save = el('button', { class: 'btn btn-ghost btn-sm', disabled: !taxWritesEnabled(rep) || rep.locked }, 'Speichern');
                 save.addEventListener('click', async () => {
                     try { await api.put('/tax/payments/' + payment.id, { received_on: date.value, property_id: Number(prop.value) }); toast('Steuerzuordnung gespeichert', 'success'); render(); }
                     catch (err) { toast(err.message, 'error'); }
@@ -3139,9 +3316,18 @@
         return wrap;
     }
 
-    routes.vehicles = async (page) => {
+    routes.vehicles = async (page, _id, query = new URLSearchParams()) => {
         await refreshLookups();
         const vehicles = await api.get('/vehicles');
+        const vehicleListState = listState.get('vehicles') || {};
+        vehicleListState.controlState = vehicleListState.controlState || {};
+        vehicleListState.controlState.status = query.get('status') || '';
+        vehicleListState.controlState.person = query.get('person') || '';
+        vehicleListState.controlState.showArchived = query.get('archived') === '1';
+        vehicleListState.controlState.activeOnly = query.get('active') === '1';
+        vehicleListState.controlState.unplacedOnly = query.get('unplaced') === '1';
+        vehicleListState.controlState.endingDays = Number(query.get('ending')) || 0;
+        listState.set('vehicles', vehicleListState);
         // Die Leiste MUSS vor mountList entstehen: mountList zeichnet die Liste noch im
         // selben Zug (refresh() laeuft synchron), und die Rueckrufe unten greifen auf
         // bulkBarEl zu. Wurde sie erst danach erzeugt, blieb der Zaehler der Leiste bei
@@ -3179,10 +3365,10 @@
                 if (cs.person && !state.persons.some((p) => String(p.id) === cs.person)) cs.person = '';
                 const stSel = el('select', { 'aria-label': 'Status filtern' }, el('option', { value: '' }, 'Alle Status'),
                     ...['stored', 'reserved', 'collected', 'cancelled'].map((s) => el('option', { value: s, selected: s === cs.status }, STATUS_LABEL[s])));
-                stSel.addEventListener('change', () => { cs.status = stSel.value; refresh(); });
+                stSel.addEventListener('change', () => updateRouteQuery({ status: stSel.value }));
                 const peSel = el('select', { 'aria-label': 'Person filtern' }, el('option', { value: '' }, 'Alle Personen'),
                     ...state.persons.map((p) => el('option', { value: p.id, selected: String(p.id) === cs.person }, personName(p))));
-                peSel.addEventListener('change', () => { cs.person = peSel.value; refresh(); });
+                peSel.addEventListener('change', () => updateRouteQuery({ person: peSel.value }));
                 // Mehrfachauswahl (Hundert 54): schaltet die Checkbox-Hülle der Karten an.
                 const bulkBtn = canManage() ? el('button', { class: 'btn btn-ghost btn-sm' + (bulkMode ? ' active' : ''), 'aria-pressed': String(bulkMode) }, 'Mehrfachauswahl') : null;
                 // Nur die Liste neu zeichnen, nicht die ganze Seite — und dabei die
@@ -3199,13 +3385,23 @@
                 });
                 const arChk = el('input', { type: 'checkbox' });
                 arChk.checked = !!cs.showArchived;
-                arChk.addEventListener('change', () => { cs.showArchived = arChk.checked; refresh(); });
+                arChk.addEventListener('change', () => updateRouteQuery({ archived: arChk.checked ? 1 : null }));
                 const arLabel = el('label', { class: 'toggle-inline' }, arChk, el('span', {}, 'Archiv'));
-                return [stSel, peSel, arLabel, bulkBtn];
+                const activeBtn = el('button', { class: 'btn btn-sm ' + (cs.activeOnly ? 'btn-primary' : 'btn-ghost'), type: 'button',
+                    'aria-pressed': String(!!cs.activeOnly), onclick: () => updateRouteQuery({ active: cs.activeOnly ? null : 1 }) }, 'Nur aktiv');
+                const unplacedBtn = el('button', { class: 'btn btn-sm ' + (cs.unplacedOnly ? 'btn-primary' : 'btn-ghost'), type: 'button',
+                    'aria-pressed': String(!!cs.unplacedOnly), onclick: () => updateRouteQuery({ unplaced: cs.unplacedOnly ? null : 1 }) }, 'Ohne Platz');
+                const endingBtn = el('button', { class: 'btn btn-sm ' + (cs.endingDays ? 'btn-primary' : 'btn-ghost'), type: 'button',
+                    'aria-pressed': String(!!cs.endingDays), onclick: () => updateRouteQuery({ ending: cs.endingDays ? null : 30 }) }, 'Endet bald');
+                return [stSel, peSel, activeBtn, unplacedBtn, endingBtn, arLabel, bulkBtn];
             },
             // Hide archived (closed) vehicles unless the Archiv toggle is on.
             extraFilter: (v, cs) => (cs.showArchived || !v.archived) &&
-                (!cs.status || v.status === cs.status) && (!cs.person || String(v.person_id) === cs.person),
+                (!cs.status || v.status === cs.status) && (!cs.person || String(v.person_id) === cs.person) &&
+                (!cs.activeOnly || (!v.archived && (v.status === 'stored' || v.status === 'reserved'))) &&
+                (!cs.unplacedOnly || (!v.archived && !v.spot_id)) &&
+                (!cs.endingDays || (v.end_date && new Date(v.end_date) >= new Date(today() + 'T00:00:00') &&
+                    new Date(v.end_date) <= new Date(Date.now() + cs.endingDays * 86400000))),
             // Was der Filter ausblendet, faellt aus der Auswahl. bulkSel lebte als
             // Modulzustand neben der Liste und wurde nie abgeglichen: wer auf Seite 1
             // zwoelf Gefaehrte anhakte, weiterblaetterte und dann nach Person filterte,
@@ -4068,6 +4264,195 @@
         navigate('vehicles/' + created.id);
     }
 
+    function parseYMDUTC(value) {
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+        return m ? new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))) : null;
+    }
+
+    // Mirrors models.prorate: each touched calendar month/year is charged by its
+    // actual number of days, with every partial period rounded to cents.
+    function vehicleRentalTotal(rateValue, period, startValue, endValue) {
+        if (String(rateValue ?? '').trim() === '') return null;
+        const rate = Number(rateValue);
+        const from = parseYMDUTC(startValue);
+        const endInclusive = parseYMDUTC(endValue);
+        if (!Number.isFinite(rate) || rate < 0 || !from || !endInclusive || endInclusive < from) return null;
+        const to = new Date(endInclusive); to.setUTCDate(to.getUTCDate() + 1);
+        const cents = Math.round(rate * 100);
+        let total = 0;
+        let cursor = period === 'yearly'
+            ? new Date(Date.UTC(from.getUTCFullYear(), 0, 1))
+            : new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+        while (cursor < to) {
+            const next = period === 'yearly'
+                ? new Date(Date.UTC(cursor.getUTCFullYear() + 1, 0, 1))
+                : new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1));
+            const sliceStart = from > cursor ? from : cursor;
+            const sliceEnd = to < next ? to : next;
+            const usedDays = Math.round((sliceEnd - sliceStart) / 86400000);
+            const periodDays = Math.round((next - cursor) / 86400000);
+            if (usedDays > 0) total += Math.round(cents * usedDays / periodDays);
+            cursor = next;
+        }
+        return total / 100;
+    }
+
+    function addCalendarMonths(date, months) {
+        const result = new Date(date);
+        const day = result.getDate();
+        result.setDate(1);
+        result.setMonth(result.getMonth() + months);
+        const last = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
+        result.setDate(Math.min(day, last));
+        return result;
+    }
+
+    function enhanceVehicleBookingFields(body, categories, existing, catDefault) {
+        const dlg = $('#modal');
+        dlg.classList.add('modal-booking');
+        const categorySelect = body.querySelector('#f_category_id');
+        const categoryField = categorySelect.closest('.form-field');
+        const personField = body.querySelector('#f_person_id').closest('.form-field');
+        const start = body.querySelector('#f_start_date');
+        const end = body.querySelector('#f_end_date');
+        const period = body.querySelector('#f_billing_period');
+        const rate = body.querySelector('#f_rate');
+
+        // UX: searchable tariff/type input replaces the dense select while the
+        // original select remains the single submitted source of truth.
+        categoryField.hidden = true;
+        const list = el('datalist', { id: 'vehicle-category-options' });
+        categories.forEach((c) => list.append(el('option', {
+            value: c.name,
+            label: `${eur(c.default_monthly_cost)} / Monat · ${eur(c.default_yearly_cost)} / Jahr${c.archived ? ' · archiviert' : ''}`,
+        })));
+        const categoryError = el('div', { class: 'field-error', id: 'err_category_lookup', role: 'alert', hidden: true });
+        const categoryInput = el('input', {
+            id: 'vehicle-category-search', name: 'category_lookup', type: 'search', list: list.id,
+            required: true, autocomplete: 'off', 'aria-required': 'true', 'aria-autocomplete': 'list',
+            'aria-describedby': 'err_category_lookup help_category_lookup', placeholder: 'Tarif oder Fahrzeugtyp suchen',
+        });
+        const selectedCategory = categories.find((c) => String(c.id) === String(categorySelect.value));
+        categoryInput.value = selectedCategory?.name || '';
+        const categoryHelp = el('div', { class: 'card-meta', id: 'help_category_lookup' });
+        const categoryLookup = el('div', { class: 'form-field vehicle-category-field' },
+            el('label', { for: categoryInput.id }, 'Tarif / Typ', el('span', { 'aria-hidden': 'true' }, ' *')),
+            categoryInput, list, categoryError, categoryHelp);
+        personField.after(categoryLookup);
+
+        let manualRate = !!existing; // existing locked rates must never be overwritten
+        const syncRate = () => { if (!manualRate) rate.value = catDefault(categorySelect.value, period.value); };
+        const findCategory = (query) => {
+            const exact = categories.find((c) => c.name === query);
+            if (exact) return { match: exact, ambiguous: false };
+            const folded = categories.filter((c) => c.name.toLocaleLowerCase('de') === query.toLocaleLowerCase('de'));
+            return { match: folded.length === 1 ? folded[0] : null, ambiguous: folded.length > 1 };
+        };
+        const syncCategory = (revealError = false) => {
+            const query = categoryInput.value.trim();
+            const { match, ambiguous } = findCategory(query);
+            const message = match ? '' : ambiguous
+                ? 'Mehrere Tarife haben diesen Namen. Bitte die genaue Schreibweise aus der Liste wählen.'
+                : 'Bitte einen Tarif oder Typ aus der Vorschlagsliste wählen.';
+            categoryInput.setCustomValidity(message);
+            categoryError.textContent = revealError ? categoryInput.validationMessage : '';
+            categoryError.hidden = !revealError || categoryInput.validity.valid;
+            categoryHelp.textContent = match?.archived
+                ? 'Archivierter Tarif · Für dieses bestehende Gefährt weiterhin gültig; Preis und Abrechnung bleiben anpassbar.'
+                : 'Tarif suchen · Preis individuell anpassbar.';
+            if (match && String(categorySelect.value) !== String(match.id)) {
+                categorySelect.value = String(match.id);
+                categorySelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        };
+        // Keep partial search text quiet while typing. Native validation still
+        // blocks submission; the alert appears only after committing/leaving it.
+        categoryInput.addEventListener('input', () => syncCategory(false));
+        categoryInput.addEventListener('change', () => syncCategory(true));
+        categoryInput.addEventListener('blur', () => syncCategory(true));
+
+        // UX: dates, quick ranges and their financial consequence form one unit.
+        const shortcuts = el('div', { class: 'date-shortcuts vehicle-date-shortcuts', role: 'group', 'aria-label': 'Buchungszeitraum schnell festlegen' });
+        const preset = (label, action) => shortcuts.append(el('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: action }, label));
+        const dispatchDate = (input) => {
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        preset('Ab heute', () => {
+            start.value = today();
+            if (end.value && end.value < start.value) end.value = '';
+            dispatchDate(start); dispatchDate(end);
+        });
+        preset('Ab nächstem Ersten', () => {
+            const now = new Date(); const first = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+            start.value = localYMD(first);
+            if (end.value && end.value < start.value) end.value = '';
+            dispatchDate(start); dispatchDate(end);
+        });
+        const setDuration = (months) => {
+            const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(start.value || '');
+            const base = parts ? new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3])) : new Date();
+            const until = addCalendarMonths(base, months); until.setDate(until.getDate() - 1);
+            if (!start.value) start.value = localYMD(base);
+            end.value = localYMD(until);
+            dispatchDate(start); dispatchDate(end);
+        };
+        preset('1 Monat', () => setDuration(1));
+        preset('1 Jahr', () => setDuration(12));
+
+        const totalLabel = el('span', { class: 'vehicle-cost-label' });
+        const total = el('output', {
+            id: 'vehicle-rental-total', for: 'f_start_date f_end_date f_billing_period f_rate', 'aria-live': 'polite',
+        });
+        const totalMeta = el('span', { class: 'card-meta' });
+        const summary = el('div', { class: 'vehicle-cost-summary' }, totalLabel, total, totalMeta);
+        const heading = el('div', { class: 'vehicle-booking-head' },
+            el('h3', { id: 'vehicle-booking-heading' }, 'Zeitraum & Kosten'), shortcuts);
+        const bookingGrid = el('div', { class: 'vehicle-booking-grid' });
+        const booking = el('section', { class: 'vehicle-booking form-field-wide', 'aria-labelledby': heading.firstChild.id }, heading, bookingGrid);
+        const startField = start.closest('.form-field');
+        const endField = end.closest('.form-field');
+        const periodField = period.closest('.form-field');
+        const rateField = rate.closest('.form-field');
+        startField.before(booking);
+        bookingGrid.append(startField, endField, periodField, rateField, summary);
+
+        const updateTotal = () => {
+            end.min = start.value;
+            const invalidRange = !!(start.value && end.value && end.value < start.value);
+            end.setCustomValidity(invalidRange ? 'Das Abholdatum darf nicht vor dem Einstelldatum liegen.' : '');
+            if (invalidRange) {
+                totalLabel.textContent = 'Zeitraum prüfen'; total.value = '–'; totalMeta.textContent = end.validationMessage; return;
+            }
+            const rateText = rate.value.trim();
+            const parsedRate = Number(rateText);
+            if (!rateText || !Number.isFinite(parsedRate) || parsedRate < 0) {
+                totalLabel.textContent = 'Preis ergänzen'; total.value = '–';
+                totalMeta.textContent = 'Für die Kostenberechnung fehlt ein gültiger Preis.'; return;
+            }
+            const value = vehicleRentalTotal(rate.value, period.value, start.value, end.value);
+            if (!end.value) {
+                totalLabel.textContent = 'Laufender Tarif'; total.value = eur(parsedRate);
+                totalMeta.textContent = period.value === 'yearly' ? 'pro Jahr · Ende offen' : 'pro Monat · Ende offen';
+                return;
+            }
+            totalLabel.textContent = 'Voraussichtliche Gesamtkosten';
+            total.value = value == null ? '–' : eur(value);
+            const from = parseYMDUTC(start.value); const until = parseYMDUTC(end.value);
+            const days = from && until ? Math.round((until - from) / 86400000) + 1 : 0;
+            totalMeta.textContent = value == null ? 'Bitte Zeitraum und Preis prüfen.'
+                : `${days} ${days === 1 ? 'Tag' : 'Tage'} · anteilig nach Kalender${period.value === 'yearly' ? 'jahren' : 'monaten'}`;
+        };
+        rate.addEventListener('input', () => { manualRate = true; updateTotal(); });
+        categorySelect.addEventListener('change', () => { syncRate(); updateTotal(); });
+        period.addEventListener('change', () => { syncRate(); updateTotal(); });
+        for (const input of [start, end]) {
+            input.addEventListener('input', updateTotal);
+            input.addEventListener('change', updateTotal);
+        }
+        syncCategory(); updateTotal();
+    }
+
     async function vehicleForm(existing, presetPerson) {
         if (!state.persons.length) { toast('Zuerst eine Person anlegen', 'error'); return; }
         if (!state.categories.length) { toast('Zuerst einen Tarif anlegen', 'error'); return; }
@@ -4076,33 +4461,37 @@
         const catDefault = (cid, period) => { const c = state.categories.find((x) => x.id === Number(cid)); return c ? (period === 'yearly' ? c.default_yearly_cost : c.default_monthly_cost) : 0; };
         const initCat = existing?.category_id ?? state.categories[0].id;
         const initPeriod = existing?.billing_period || 'monthly';
-        const initRate = existing?.rate ?? catDefault(initCat, initPeriod);
+        // Legacy rows can still carry rate=0 as "not backfilled". The API's
+        // effective_rate is what operators have actually been billed and keeps
+        // a harmless note-only edit from accidentally turning them into free rows.
+        const initRate = existing
+            ? (Number(existing.rate) !== 0
+                ? existing.rate
+                : (existing.effective_rate ?? existing.rate ?? catDefault(initCat, initPeriod)))
+            : catDefault(initCat, initPeriod);
         let customIcons = []; try { customIcons = await api.get('/planner-icons'); } catch (e) { /* optional */ }
         await formModal({
             title: existing ? 'Gefährt bearbeiten' : 'Neues Gefährt',
             fields: [
                 { name: 'person_id', label: 'Person', type: 'select', required: true, value: existing?.person_id ?? presetPerson ?? state.persons[0].id, options: state.persons.map((p) => ({ value: p.id, label: personName(p) })) },
                 { name: 'category_id', label: 'Tarif / Typ', type: 'select', required: true, value: initCat, options: state.categories.filter((c) => !c.archived || c.id === initCat).map((c) => ({ value: c.id, label: `${c.name} (${eur(c.default_monthly_cost)}/M, ${eur(c.default_yearly_cost)}/J)` + (c.archived ? ' · archiviert' : '') })) },
-                { name: 'label', label: 'Bezeichnung', value: existing?.label, placeholder: 'z. B. Wohnwagen Hobby' },
-                { name: 'license_plate', label: 'Kennzeichen', value: existing?.license_plate },
+                { name: 'label', label: 'Bezeichnung', value: existing?.label, placeholder: 'z. B. Wohnwagen Hobby', optional: 'Fahrzeugdetails' },
+                { name: 'license_plate', label: 'Kennzeichen', value: existing?.license_plate, optional: 'Fahrzeugdetails' },
                 { name: 'start_date', label: 'Einstelldatum', type: 'date', required: true, value: existing?.start_date ? existing.start_date.slice(0, 10) : today() },
-                { name: 'end_date', label: 'Abholdatum (optional)', type: 'date', value: existing?.end_date ? existing.end_date.slice(0, 10) : '', help: 'Leer = noch eingelagert. Hier auch nachträglich änderbar.' },
+                { name: 'end_date', label: 'Abholdatum (optional)', type: 'date', value: existing?.end_date ? existing.end_date.slice(0, 10) : '', help: 'Leer lassen für laufende Miete.' },
                 { name: 'billing_period', label: 'Abrechnung', type: 'select', value: initPeriod, options: [{ value: 'monthly', label: 'monatlich' }, { value: 'yearly', label: 'jährlich' }] },
-                { name: 'rate', label: 'Preis (€)', type: 'number', step: '0.01', min: 0, required: true, value: initRate, help: 'Aus dem Tarif übernommen und fest hinterlegt. Eine spätere Tarifänderung ändert diesen Preis nicht.' },
+                { name: 'rate', label: 'Preis (€)', type: 'number', step: '0.01', min: 0, required: true, value: initRate, help: 'Fest vereinbart; bleibt bei Tarifänderungen erhalten.' },
                 { name: 'notes', label: 'Notizen', type: 'textarea', value: existing?.notes, optional: 'Notizen & Planer-Details' },
                 { name: 'needs_power', label: 'Ladebedarf (Strom) — E-Fahrzeug / Kühlung', type: 'checkbox', value: !!existing?.needs_power, optional: 'Notizen & Planer-Details' },
                 { name: 'planner_symbol', label: 'Planer-Symbol', type: 'select', value: existing?.planner_symbol || '', optional: 'Notizen & Planer-Details', wide: true, help: 'Standard: automatisch aus dem Tarif/Typ. Eigene Icons lassen sich im Planer verwalten.', options: [{ value: '', label: 'Automatisch (aus Typ)' }].concat(['PKW', 'Motorrad', 'Transporter', 'Wohnmobil', 'Wohnwagen', 'Anhänger', 'Boot / Trailer', 'Traktor', 'Ladewagen', 'Rückewagen', 'Kipper'].map((k) => ({ value: k, label: k }))).concat(customIcons.map((ic) => ({ value: 'custom:' + ic.id, label: 'Eigenes: ' + ic.name }))) },
             ],
             onRender: (body) => {
                 segmentedField(body, 'billing_period', [{ v: 'monthly', l: 'monatlich' }, { v: 'yearly', l: 'jährlich' }]);
-                const rateInp = body.querySelector('#f_rate');
-                const catInp = body.querySelector('#f_category_id');
-                const perInp = body.querySelector('#f_billing_period');
-                let manual = !!existing; // on edit, never auto-overwrite the locked price
-                rateInp.addEventListener('input', () => { manual = true; });
-                const sync = () => { if (!manual) rateInp.value = catDefault(catInp.value, perInp.value); };
-                catInp.addEventListener('change', sync);
-                perInp.addEventListener('change', sync);
+                enhanceVehicleBookingFields(body, state.categories.filter((c) => !c.archived || c.id === initCat), existing, catDefault);
+                attachDuplicateWarning(body, {
+                    kind: 'vehicle', currentURL: existing ? '#/vehicle/' + existing.id : '',
+                    probes: [{ fields: ['license_plate'], query: () => body.querySelector('#f_license_plate').value }],
+                });
             },
             save: async (data) => {
                 const payload = {
@@ -4427,17 +4816,44 @@
     // Übergabeprotokoll form: direction + condition notes + signer + a drawn signature.
     async function handoverForm(vehicleId) {
         let sigData = () => '';
+        let templates = [];
+        try { templates = await api.get('/handover-templates'); } catch (error) { /* optional enhancement */ }
         await formModal({
             title: 'Übergabeprotokoll',
             submitLabel: 'Speichern',
             fields: [
                 { name: 'direction', label: 'Art', type: 'select', value: 'einlagerung',
                     options: [{ value: 'einlagerung', label: 'Einlagerung (Übernahme)' }, { value: 'auslagerung', label: 'Auslagerung (Rückgabe)' }] },
+                { name: 'template_id', label: 'Vorlage (optional)', type: 'select', value: '',
+                    options: [{ value: '', label: 'Keine Vorlage' }].concat(templates.map((template) => ({ value: template.id, label: template.name }))) },
                 { name: 'notes', label: 'Zustand / Anmerkungen', type: 'textarea', placeholder: 'z. B. Kratzer vorne links, Tank halb voll …' },
                 { name: 'signer_name', label: 'Name (Unterschrift)', type: 'text', placeholder: 'Name der unterschreibenden Person' },
             ],
             onRender: (body) => {
                 segmentedField(body, 'direction', [{ v: 'einlagerung', l: 'Einlagerung' }, { v: 'auslagerung', l: 'Auslagerung' }]);
+                const direction = body.querySelector('#f_direction');
+                const templateSelect = body.querySelector('#f_template_id');
+                const notes = body.querySelector('#f_notes');
+                const renderTemplateOptions = () => {
+                    const selected = templateSelect.value;
+                    const available = templates.filter((template) => template.applies_to === 'beide' || template.applies_to === direction.value);
+                    templateSelect.replaceChildren(el('option', { value: '' }, 'Keine Vorlage'),
+                        ...available.map((template) => el('option', { value: template.id }, template.name)));
+                    if (available.some((template) => String(template.id) === selected)) templateSelect.value = selected;
+                };
+                direction.addEventListener('change', renderTemplateOptions);
+                templateSelect.addEventListener('change', () => {
+                    const template = templates.find((candidate) => String(candidate.id) === templateSelect.value);
+                    if (!template) return;
+                    notes.value = notes.value.trim() ? notes.value.trimEnd() + '\n\n' + template.content : template.content;
+                    notes.dispatchEvent(new Event('input', { bubbles: true }));
+                    notes.focus();
+                });
+                renderTemplateOptions();
+                body.append(el('button', { type: 'button', class: 'btn btn-ghost btn-sm template-manage-link', onclick: () => {
+                    $('#modal-cancel').click();
+                    navigate('handover-templates');
+                } }, 'Übergabevorlagen verwalten'));
                 const wrap = el('div', { class: 'field' }, el('label', {}, 'Unterschrift'));
                 const canvas = el('canvas', { width: 500, height: 180,
                     style: 'width:100%;height:180px;touch-action:none;border:1px solid var(--border);border-radius:8px;background:#fff;display:block' });
@@ -4466,6 +4882,61 @@
                 render();
             },
         });
+    }
+
+    routes['handover-templates'] = async (page) => {
+        const templates = await api.get('/handover-templates');
+        page.innerHTML = '';
+        page.append(el('div', { class: 'page-head' },
+            el('div', {}, el('button', { class: 'back-btn', type: 'button', onclick: () => navigate('settings'), 'aria-label': 'Zurück zu Einstellungen' }, '‹'),
+                el('h2', { style: 'display:inline;margin-left:.65rem' }, 'Übergabevorlagen')),
+            canManage() ? el('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => handoverTemplateForm() }, '+ Neu') : null));
+        page.append(el('p', { class: 'route-intro' }, 'Textbausteine und Checklisten für Ein- und Auslagerungen. Eingefügter Text bleibt im Protokoll vollständig bearbeitbar.'));
+        if (!templates.length) {
+            page.append(emptyState('receipt', 'Noch keine Übergabevorlagen.'));
+            return;
+        }
+        const list = el('div', { class: 'template-list' });
+        templates.forEach((template) => list.append(el('article', { class: 'card template-row' },
+            el('div', { class: 'template-copy' }, el('h3', {}, template.name),
+                el('span', { class: 'badge badge-cat' }, template.applies_to === 'beide' ? 'Ein- & Auslagerung' : template.applies_to),
+                el('pre', {}, template.content)),
+            canManage() ? el('div', { class: 'card-actions' },
+                el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => handoverTemplateForm(template) }, 'Bearbeiten'),
+                el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => deleteHandoverTemplate(template) }, 'Löschen')) : null)));
+        page.append(list);
+    };
+
+    async function handoverTemplateForm(existing) {
+        await formModal({
+            title: existing ? 'Übergabevorlage bearbeiten' : 'Neue Übergabevorlage',
+            fields: [
+                { name: 'name', label: 'Name', required: true, value: existing?.name, placeholder: 'z. B. Standard-Einlagerung' },
+                { name: 'applies_to', label: 'Verwendbar für', type: 'select', value: existing?.applies_to || 'beide', options: [
+                    { value: 'beide', label: 'Ein- und Auslagerung' }, { value: 'einlagerung', label: 'Nur Einlagerung' }, { value: 'auslagerung', label: 'Nur Auslagerung' },
+                ] },
+                { name: 'content', label: 'Text / Checkliste', type: 'textarea', required: true, value: existing?.content,
+                    placeholder: '☐ Schlüssel übernommen\n☐ Zustand dokumentiert', help: 'Tipp: „☐“ kennzeichnet eine prüfbare Zeile. Der Text kann im Protokoll danach angepasst werden.' },
+            ],
+            save: async (data) => {
+                const payload = { name: data.name, applies_to: data.applies_to, content: data.content };
+                if (existing) await api.put('/handover-templates/' + existing.id, payload);
+                else await api.post('/handover-templates', payload);
+                toast('Übergabevorlage gespeichert', 'success');
+                render();
+            },
+        });
+    }
+
+    async function deleteHandoverTemplate(template) {
+        if (!await confirmDialog('Übergabevorlage löschen?', '„' + template.name + '“ wird dauerhaft entfernt. Bereits erstellte Protokolle bleiben unverändert.', 'Löschen')) return;
+        try {
+            await api.del('/handover-templates/' + template.id);
+            toast('Übergabevorlage gelöscht', 'success');
+            render();
+        } catch (error) {
+            toast(error?.message || 'Löschen fehlgeschlagen. Bitte erneut versuchen.', 'error');
+        }
     }
     function lightbox(photoId) {
         const dlg = el('dialog', { class: 'lightbox' }, el('img', { src: '/api/photos/' + photoId, alt: '' }));
@@ -5678,7 +6149,7 @@
     const AUDIT_ACTIONS = { create: 'Erstellt', update: 'Geändert', delete: 'Gelöscht', login: 'Login', logout: 'Logout', revoke: 'Widerrufen', backup: 'Backup', backup_failed: 'Backup fehlgeschlagen', restore: 'Wiederherstellung', remind: 'Mahnung', import: 'Import', security: 'Sicherheit' };
     // Muss die im Backend verwendeten entity-Werte abdecken, sonst lässt sich ein
     // Ereignis zwar protokollieren, aber im Filter nicht mehr auswählen.
-    const AUDIT_ENTITIES = { person: 'Person', vehicle: 'Gefährt', category: 'Tarif', service_type: 'Dienst', charge: 'Zusatzkosten', payment: 'Zahlung', invoice: 'Rechnung', billing: 'Rechnungs-Einstellungen', user: 'Benutzer', photo: 'Foto', passkey: 'Passkey', flatrate: 'Pauschale', recurring_charge: 'Wiederkehrende Kosten', spot: 'Stellplatz', hall: 'Halle', garage: 'Garage', handover: 'Übergabe', 'portal-link': 'Self-Service-Link', planner_icon: 'Planer-Symbol', wall_template: 'Wandvorlage', backup_settings: 'Backup-Einstellungen', system: 'System', audit_log: 'Audit-Log' };
+    const AUDIT_ENTITIES = { person: 'Person', vehicle: 'Gefährt', category: 'Tarif', service_type: 'Dienst', charge: 'Zusatzkosten', payment: 'Zahlung', invoice: 'Rechnung', billing: 'Rechnungs-Einstellungen', user: 'Benutzer', photo: 'Foto', passkey: 'Passkey', flatrate: 'Pauschale', recurring_charge: 'Wiederkehrende Kosten', spot: 'Stellplatz', hall: 'Halle', garage: 'Garage', handover: 'Übergabe', handover_template: 'Übergabevorlage', 'portal-link': 'Self-Service-Link', planner_icon: 'Planer-Symbol', wall_template: 'Wandvorlage', backup_settings: 'Backup-Einstellungen', system: 'System', audit_log: 'Audit-Log' };
 
     function fmtAuditVal(x) {
         if (x === null || x === undefined || x === '') return '∅';
@@ -5847,7 +6318,7 @@
                 ul.append(auditItem(a));
             }
             q.offset += entries.length;
-            loadStatus.textContent = q.offset ? q.offset + ' Änderungen geladen' : 'Keine Änderungen für diese Auswahl.';
+            loadStatus.textContent = q.offset ? q.offset + (q.offset === 1 ? ' Änderung geladen' : ' Änderungen geladen') : 'Keine Änderungen für diese Auswahl.';
             moreBtn.hidden = entries.length < q.limit;
             if (!ul.children.length) ul.append(el('li', { class: 'muted' }, 'Keine Einträge.'));
         }
@@ -5973,6 +6444,17 @@
                 el('div', {}, el('div', {}, esc(shortUA(s.user_agent)), s.current ? el('span', { class: 'badge badge-stored', style: 'margin-left:.4rem' }, 'aktuell') : null),
                     el('div', { class: 't-time' }, (s.ip || '?') + ' · zuletzt ' + fmtDateTime(s.last_seen))),
                 s.current ? null : el('button', { class: 'btn btn-ghost btn-sm', onclick: () => revokeSession(s.token) }, 'Abmelden')));
+        }
+        if (canManage()) colB.append(el('div', { class: 'card template-links' }, el('h3', {}, 'Arbeitsvorlagen'),
+            el('a', { href: '#/handover-templates' }, 'Übergabeprotokolle', el('span', { 'aria-hidden': 'true' }, '›'))));
+        if (isAdmin()) {
+            try {
+                const readiness = await api.get('/admin/readiness');
+                const checklist = readinessChecklist(readiness);
+                if (checklist) colB.append(checklist);
+            } catch (error) {
+                colB.append(el('div', { class: 'load-notice', role: 'status' }, 'Betriebsbereitschaft konnte nicht geprüft werden.'));
+            }
         }
         if (isAdmin()) colB.append(el('div', { class: 'card admin-links' }, el('h3', {}, 'Betrieb verwalten'),
             ...[['users', 'Benutzer & Rollen'], ['billing', 'Rechnungs-Einstellungen'], ['backup', 'Sicherungen'], ['audit', 'Änderungsverlauf']]
@@ -6493,7 +6975,7 @@
                 el('div', { class: 'card-row' },
                     el('div', { style: 'flex:1' },
                         el('h3', {}, el('a', { class: 'record-link', href: '#/hall/' + hl.id }, hl.name)),
-                        el('div', { class: 'card-meta' }, (hl.spot_count || 0) + ' Gefährte' + (area ? ' · ' + Math.round(area).toLocaleString('de-DE') + ' m²' : ''))),
+                        el('div', { class: 'card-meta' }, (hl.spot_count || 0) + (hl.spot_count === 1 ? ' Gefährt' : ' Gefährte') + (area ? ' · ' + Math.round(area).toLocaleString('de-DE') + ' m²' : ''))),
                     el('div', { class: 'card-actions' },
                         el('button', { class: 'btn btn-ghost btn-sm', onclick: () => navigate('hall/' + hl.id) }, 'Planer ›'),
                         canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Umbenennen', onclick: () => hallForm(id, hl) }, icon('edit')),
@@ -7208,7 +7690,7 @@
             drawOverlay.classList.toggle('edit', !P.tool); drawOverlay.style.cursor = ''; // reset; the hover handler re-applies a resize cursor over zone handles
             positionWallPop(); positionRoomBadge();
             const used = P.spots.length;
-            occN.textContent = used + ' Gefährte';
+            occN.textContent = used + (used === 1 ? ' Gefährt' : ' Gefährte');
             const tot = polyArea(P.floor); let ve = 0; P.spots.forEach((b) => { ve += b.w * b.h; });
             occBar.style.width = Math.round(Math.min(100, ve / Math.max(1, tot) * 100)) + '%';
         }
@@ -9145,7 +9627,7 @@
         // (Design wechseln, Abmelden). Drei Gruppen, jede mit einer Ueberschrift.
         const group = (title) => body.append(el('div', { class: 'menu-sec' }, title));
         group('Betrieb');
-        if (isAdmin()) body.append(item('receipt', 'Rechnungen', () => navigate('billing')));
+        if (isAdmin()) body.append(item('receipt', 'Rechnungs-Einstellungen', () => navigate('billing')));
         body.append(item('euro', 'Zusatzkosten', () => navigate('finance')));
         if (isAdmin()) body.append(item('ledger', 'Steuerjahr', () => navigate('taxyear')));
         group('Verwaltung');
@@ -9414,7 +9896,8 @@
             box.append(cell);
         }
     }
-    function showLogin() {
+    function showLogin(logoutFailed = false) {
+        clearRouteLayout();
         $('#app-view').hidden = true;
         $('#login-view').hidden = false;
         paintLoginBays();
@@ -9441,9 +9924,29 @@
         if (or) or.hidden = !showPk || pkOnly;
         if (!pkOnly) $('#login-username').focus();
         else if (pkBtn) pkBtn.focus();
+        $('#logout-pending')?.remove();
+        $('#login-form').hidden = logoutFailed;
+        if (logoutFailed) {
+            // Local privacy lock is not proof that the server session was revoked.
+            if (pkBtn) pkBtn.hidden = true;
+            if (or) or.hidden = true;
+            const retry = el('button', { class: 'btn btn-primary', type: 'button', onclick: async () => {
+                retry.disabled = true;
+                await logout();
+            } }, 'Abmeldung erneut versuchen');
+            const notice = el('div', { id: 'logout-pending', class: 'load-notice', role: 'alert' },
+                el('p', {}, 'Abmeldung nicht bestätigt. Die Ansicht ist gesperrt, die Serversitzung kann aber noch aktiv sein.'), retry);
+            $('#login-form').before(notice);
+            retry.focus();
+        }
     }
     async function logout() {
-        try { await api.post('/auth/logout'); } catch { /* ignore */ }
+        let logoutFailed = false;
+        try { sessionStorage.setItem('parkrr.logoutPending', '1'); } catch { /* storage may be unavailable */ }
+        try {
+            await api.post('/auth/logout');
+            try { sessionStorage.removeItem('parkrr.logoutPending'); } catch { /* storage may be unavailable */ }
+        } catch { logoutFailed = true; }
         state.user = null;
         // Die Oberfläche wird beim Abmelden NICHT neu geladen — die Anwendung bleibt
         // dieselbe Seite. Ohne das Zurücksetzen erbte der nächste Anmeldende am selben
@@ -9468,7 +9971,7 @@
         // Ein offener Dialog (z. B. ein Formular, dessen Speichern an der
         // abgelaufenen Sitzung scheiterte) läge sonst modal über der Anmeldung.
         document.querySelectorAll('dialog[open]').forEach((d) => d.close());
-        showLogin();
+        showLogin(logoutFailed);
     }
 
     // ---------- passkeys (WebAuthn) ----------
@@ -9565,9 +10068,19 @@
         return card;
     }
     async function delPasskey(c) {
-        if (!await confirmDialog('Passkey entfernen?', `„${c.name}“ wird entfernt. Anmeldung mit diesem Gerät ist danach nicht mehr möglich; andere Passkeys und dein Passwort bleiben gültig.`, 'Entfernen')) return;
-        try { await api.del('/passkeys/' + c.id); toast('Passkey entfernt', 'success'); render(); }
-        catch (e) { toast(e.message, 'error'); }
+        const remainingAccess = state.capabilities.passkey_only
+            ? 'Andere Passkeys bleiben gültig; mindestens ein Passkey muss erhalten bleiben.'
+            : 'Andere Passkeys und dein Passwort bleiben gültig.';
+        if (!await confirmDialog('Passkey entfernen?', `„${c.name}“ wird entfernt. Anmeldung mit diesem Gerät ist danach nicht mehr möglich. ${remainingAccess}`, 'Entfernen')) return;
+        try {
+            await withStepUp((password) => api.del('/passkeys/' + c.id, { password }), {
+                allowPassword: !state.capabilities.passkey_only,
+            });
+            toast('Passkey entfernt', 'success');
+            render();
+        } catch (e) {
+            if (!e?.cancelled) toast(e?.message || 'Entfernen fehlgeschlagen', 'error');
+        }
     }
 
     // Der Sprunglink wird IMMER gebunden — auch auf dem Kundenportal, das den
@@ -9789,7 +10302,7 @@
     ];
     // Nur für Admins — ein Sprungziel, das mit 403 endet, hilft niemandem.
     const CMDK_NAV_ADMIN = [
-        { label: 'Rechnungen', sub: 'Nummernkreis & Ausstellung', url: '#/billing', kw: 'rechnung beleg ust nummer' },
+        { label: 'Rechnungs-Einstellungen', sub: 'Nummernkreis & Ausstellung', url: '#/billing', kw: 'rechnung beleg ust nummer' },
         { label: 'Benutzer', sub: 'Zugänge', url: '#/users', kw: 'konto rolle admin bearbeiter' },
         { label: 'Audit-Log', sub: 'Verlauf', url: '#/audit', kw: 'protokoll verlauf wer wann' },
         { label: 'Backup', sub: 'Sicherung', url: '#/backup', kw: 'sicherung archiv wiederherstellen s3' },
@@ -10104,17 +10617,18 @@
             // eine unsignierte Mail und ein Produktname, den der Kunde nie gehoert hat.
             // Ist seller_name auf einer frischen Instanz noch leer, bleibt der
             // Produktname als Rueckfall stehen.
-            el('div', {}, el('h1', {}, esc(sum.operator_name || 'Parkrr')),
+            el('div', { class: 'portal-identity' }, el('h1', {}, esc(sum.operator_name || 'Parkrr')),
                 el('p', { class: 'muted' }, esc(sum.person_name))),
             // Sprachumschalter: die Wahl bleibt im Browser (localStorage) und gilt
             // beim nächsten Öffnen wieder.
             // WCAG 2.5.3 (Label in Name): der sichtbare Text ('EN'/'DE') MUSS im
             // barrierefreien Namen vorkommen, sonst findet Sprachsteuerung den Knopf
             // nicht — "klick EN" traf einen Knopf, der "Switch to English" hiess.
-            el('button', { class: 'btn btn-ghost btn-sm portal-lang', 'aria-label': lang === 'de' ? 'EN – Switch to English' : 'DE – Auf Deutsch umschalten',
-                onclick: () => { try { localStorage.setItem('parkrr_portal_lang', lang === 'de' ? 'en' : 'de'); } catch (e2) { /* egal */ } renderPortal(token); } },
-                lang === 'de' ? 'EN' : 'DE'),
-            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: leavePortal }, P9.sign_out)));
+            el('div', { class: 'portal-actions' },
+                el('button', { class: 'btn btn-ghost btn-sm portal-lang', 'aria-label': lang === 'de' ? 'EN – Switch to English' : 'DE – Auf Deutsch umschalten',
+                    onclick: () => { try { localStorage.setItem('parkrr_portal_lang', lang === 'de' ? 'en' : 'de'); } catch (e2) { /* egal */ } renderPortal(token); } },
+                    lang === 'de' ? 'EN' : 'DE'),
+                el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: leavePortal }, P9.sign_out))));
         wrap.append(el('div', { class: 'portal-card portal-balance' },
             el('div', { class: 'muted' }, P9.open_total),
             el('div', { class: 'portal-amt' + (sum.open_total > 0.005 ? ' owe' : '') }, eur(sum.open_total))));
@@ -10248,8 +10762,14 @@
         setupInstallPrompt();
         setupOfflineIndicator();
         try { state.capabilities = await api.get('/auth/capabilities'); } catch { state.capabilities = {}; }
-        try { state.user = await api.get('/auth/me'); showApp(); }
-        catch { showLogin(); }
+        let logoutPending = false;
+        try { logoutPending = sessionStorage.getItem('parkrr.logoutPending') === '1'; } catch { /* storage may be unavailable */ }
+        if (logoutPending) {
+            await logout(); // Reload must not silently reopen an unconfirmed logout.
+        } else {
+            try { state.user = await api.get('/auth/me'); showApp(); }
+            catch { showLogin(); }
+        }
         // View steht (synchron in showApp/showLogin gesetzt) — Blaupause freigeben.
         // Vorher blieb sie waehrend der Auth-Roundtrips als Post-Login-Grund sichtbar.
         document.documentElement.classList.remove('preboot');

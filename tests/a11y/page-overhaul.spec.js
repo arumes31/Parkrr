@@ -6,7 +6,9 @@ const AxeBuilder = require('@axe-core/playwright').default;
 test.use({ serviceWorkers: 'block' });
 const routes = ['dashboard', 'persons', 'persons/1', 'vehicles', 'vehicles/1', 'finance', 'tariffs', 'users',
   'billing', 'taxyear', 'invoices/1', 'backup', 'audit', 'settings', 'calendar', 'garages', 'garage/1', 'hall/1'];
-const captureDir = path.resolve(__dirname, '../../.impeccable/review/page-overhaul');
+const captureDir = process.env.PARKRR_CAPTURE_DIR
+  ? path.resolve(process.env.PARKRR_CAPTURE_DIR)
+  : path.resolve(__dirname, '../../.impeccable/review/page-overhaul');
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-09-10T12:00:00Z'));
   await page.addInitScript(() => { localStorage.setItem('parkrr-veh', '0'); localStorage.setItem('parkrr_portal_lang', 'de'); });

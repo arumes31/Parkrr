@@ -11,6 +11,19 @@ der Implementierung („neue Spalte in export.go").
 
 ## [Unreleased]
 
+### Review-Nachbesserungen · Oktober 2026
+
+- Bestehende Buchungspreise bleiben bei Tarifänderungen erhalten; noch dynamisch
+  tarifabhängige Altbuchungen lösen einen verständlichen Konflikt aus.
+- Bereits erfasste Pauschalen-/Nebenkostenzahlungen werden bei Reset, Ersetzung
+  oder Quellenlöschung nicht mehr gelöscht. Vorläufiger Konfliktschutz bis zum
+  geprüften Storno-/Neubuchungsablauf; neue einzelne Zahlungen bleiben möglich.
+- Steuer-ZIP einschließlich Belegen aus einem gemeinsamen lesenden Snapshot;
+  begrenzter temporärer Belegspeicher statt offener DB-Verbindung beim Download.
+- Optionaler, standardmäßig nur lesender Steuerbereich und nicht speichernde
+  Vorschau für Jahresumsätze und einzelne Jahreswechsel-Fälle (2025/2026).
+  Keine Pflicht zur Rechnungserstellung; kein automatischer Jahreskorrekturimport.
+
 Stand des Verbesserungsprogramms „Parkrr-Hundert" (September 2026).
 
 ### Hinzugefügt

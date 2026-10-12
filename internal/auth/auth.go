@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -520,12 +521,16 @@ func (m *Manager) slide(ctx context.Context, w http.ResponseWriter, r *http.Requ
 }
 
 // DestroySession removes the current session and clears cookies.
-func (m *Manager) DestroySession(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(SessionCookie); err == nil {
-		_, _ = m.pool.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, hashToken(c.Value))
+func (m *Manager) DestroySession(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+	if c, err := r.Cookie(SessionCookie); err == nil && c.Value != "" {
+		if _, err := m.pool.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, hashToken(c.Value)); err != nil {
+			// Keep the cookie so a retry can revoke the same server-side session.
+			return fmt.Errorf("revoke session: %w", err)
+		}
 	}
 	m.clearCookie(w, SessionCookie)
 	m.clearCookie(w, CSRFCookie)
+	return nil
 }
 
 func (m *Manager) clearCookie(w http.ResponseWriter, name string) {
@@ -602,6 +607,39 @@ func (m *Manager) CleanupExpired(ctx context.Context) error {
 func UserFrom(ctx context.Context) (*models.User, bool) {
 	u, ok := ctx.Value(userCtxKey).(*models.User)
 	return u, ok
+}
+
+// RequireLogout protects only the logout handler. A cookie still requires signed
+// CSRF proof, but an expired/disabled session must remain revocable. The minimal
+// user context is for auditing only; it must not authorize any other operation.
+func (m *Manager) RequireLogout(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie(SessionCookie)
+		if err != nil || c.Value == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !m.csrfOK(r) {
+			writeJSONError(w, http.StatusForbidden, "invalid CSRF token")
+			return
+		}
+		var u models.User
+		err = m.pool.QueryRow(r.Context(),
+			`SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.user_id
+			 WHERE s.token = $1`, hashToken(c.Value)).Scan(&u.ID, &u.Username)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			SetRequestError(r.Context(), fmt.Errorf("resolve logout session: %w", err))
+			writeJSONError(w, http.StatusInternalServerError, "could not confirm logout")
+			return
+		}
+		if err == nil {
+			setRequestLogUser(r.Context(), u.Username, u.ID)
+			r = r.WithContext(context.WithValue(r.Context(), userCtxKey, &u))
+		}
+		// Do not slide or authenticate this session. DestroySession must still
+		// confirm DELETE, even after ErrNoRows, before the handler clears cookies.
+		next.ServeHTTP(w, r)
+	})
 }
 
 // RequireAuth is middleware that rejects unauthenticated API requests and

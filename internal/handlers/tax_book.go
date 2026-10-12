@@ -126,6 +126,10 @@ type taxSettings struct {
 
 // parseTaxDate parses an ISO calendar date in the server's local timezone.
 func parseTaxDate(s string) (time.Time, error) {
+	// Bound the raw input before trimming so whitespace cannot bypass the cap.
+	if !validDateLength(s) {
+		return time.Time{}, errors.New("date is too long")
+	}
 	return time.ParseInLocation("2006-01-02", strings.TrimSpace(s), time.Local)
 }
 
@@ -150,7 +154,9 @@ func acquireTaxYearAdvisoryLock(ctx context.Context, tx pgx.Tx, year int) error 
 
 // taxYearLocked acquires the year's transaction lock before reading its lock state.
 func taxYearLocked(ctx context.Context, tx pgx.Tx, year int) (bool, error) {
-	if err := acquireTaxYearAdvisoryLock(ctx, tx, year); err != nil {
+	// Writers share the gate; closing/reopening takes the exclusive counterpart.
+	// This also avoids cross-year cycles in bulk payment operations.
+	if err := acquireTaxYearWriteLock(ctx, tx, year); err != nil {
 		return false, err
 	}
 	return taxYearLockStatus(ctx, tx, year)
@@ -181,7 +187,7 @@ func (h *Handler) rejectLockedAssetYears(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	for year := firstYear; year <= lastYear; year++ {
-		if err := acquireTaxYearAdvisoryLock(r.Context(), tx, year); err != nil {
+		if err := acquireTaxYearWriteLock(r.Context(), tx, year); err != nil {
 			serverError(w, r, "Steuerjahrsperre konnte nicht geprüft werden", err)
 			return true
 		}
@@ -248,7 +254,11 @@ func annualTaxDepreciation(basis, usefulYears float64, inService time.Time, disp
 
 // loadTaxProperties returns tax objects with their assigned garages.
 func (h *Handler) loadTaxProperties(ctx context.Context) ([]taxProperty, error) {
-	rows, err := h.Pool.Query(ctx, `
+	return loadTaxProperties(ctx, h.Pool)
+}
+
+func loadTaxProperties(ctx context.Context, q dbQuerier) ([]taxProperty, error) {
+	rows, err := q.Query(ctx, `
 		SELECT p.id, p.name, p.address, p.postal_code, p.eawz, p.is_default,
 		       COALESCE(array_agg(g.id ORDER BY g.id) FILTER (WHERE g.id IS NOT NULL), '{}'),
 		       COALESCE(string_agg(g.name, ', ' ORDER BY g.sort_order, g.name), '')
@@ -271,7 +281,11 @@ func (h *Handler) loadTaxProperties(ctx context.Context) ([]taxProperty, error) 
 
 // loadTaxCategories returns active expense categories in display order.
 func (h *Handler) loadTaxCategories(ctx context.Context) ([]taxCategory, error) {
-	rows, err := h.Pool.Query(ctx, `SELECT id, key, label, e1b_code, sort_order FROM tax_expense_categories WHERE active ORDER BY sort_order, label`)
+	return loadTaxCategories(ctx, h.Pool)
+}
+
+func loadTaxCategories(ctx context.Context, q dbQuerier) ([]taxCategory, error) {
+	rows, err := q.Query(ctx, `SELECT id, key, label, e1b_code, sort_order FROM tax_expense_categories WHERE active ORDER BY sort_order, label`)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +303,11 @@ func (h *Handler) loadTaxCategories(ctx context.Context) ([]taxCategory, error) 
 
 // loadTaxExpenses returns all immutable expense and reversal entries for a year.
 func (h *Handler) loadTaxExpenses(ctx context.Context, year int) ([]taxExpense, error) {
-	rows, err := h.Pool.Query(ctx, `
+	return loadTaxExpenses(ctx, h.Pool, year)
+}
+
+func loadTaxExpenses(ctx context.Context, q dbQuerier, year int) ([]taxExpense, error) {
+	rows, err := q.Query(ctx, `
 		SELECT e.id, e.tax_property_id, p.name, e.category_id, c.label, c.e1b_code,
 		       e.paid_on, e.amount, e.vat_amount, e.payee, e.description, e.payment_method,
 		       e.reverses_id, EXISTS(SELECT 1 FROM tax_expenses r WHERE r.reverses_id=e.id),
@@ -320,7 +338,11 @@ func (h *Handler) loadTaxExpenses(ctx context.Context, year int) ([]taxExpense, 
 
 // loadTaxRecurring returns recurring tax-expense templates.
 func (h *Handler) loadTaxRecurring(ctx context.Context) ([]taxRecurringExpense, error) {
-	rows, err := h.Pool.Query(ctx, `
+	return loadTaxRecurring(ctx, h.Pool)
+}
+
+func loadTaxRecurring(ctx context.Context, q dbQuerier) ([]taxRecurringExpense, error) {
+	rows, err := q.Query(ctx, `
 		SELECT r.id, r.tax_property_id, p.name, r.category_id, c.label, r.description, r.payee,
 		       r.amount, r.payment_method, r.frequency, r.due_day, r.due_month,
 		       r.start_on, r.end_on, r.active
@@ -351,7 +373,11 @@ func (h *Handler) loadTaxRecurring(ctx context.Context) ([]taxRecurringExpense, 
 
 // loadTaxAssets returns assets that can affect the requested year and calculates their depreciation.
 func (h *Handler) loadTaxAssets(ctx context.Context, year int) ([]taxAsset, error) {
-	rows, err := h.Pool.Query(ctx, `
+	return loadTaxAssets(ctx, h.Pool, year)
+}
+
+func loadTaxAssets(ctx context.Context, q dbQuerier, year int) ([]taxAsset, error) {
+	rows, err := q.Query(ctx, `
 		SELECT a.id, a.tax_property_id, p.name, a.name, a.in_service_on, a.depreciable_basis,
 		       a.useful_life_years, a.half_year_rule, a.disposed_on, a.notes
 		  FROM tax_assets a JOIN tax_properties p ON p.id=a.tax_property_id
@@ -381,8 +407,12 @@ func (h *Handler) loadTaxAssets(ctx context.Context, year int) ([]taxAsset, erro
 
 // loadTaxSettings returns the singleton tax configuration.
 func (h *Handler) loadTaxSettings(ctx context.Context) (taxSettings, error) {
+	return loadTaxSettings(ctx, h.Pool)
+}
+
+func loadTaxSettings(ctx context.Context, q dbQuerier) (taxSettings, error) {
 	var s taxSettings
-	err := h.Pool.QueryRow(ctx, `SELECT small_business_limit, warning_percent, vat_opted_in FROM tax_settings WHERE singleton`).
+	err := q.QueryRow(ctx, `SELECT small_business_limit, warning_percent, vat_opted_in FROM tax_settings WHERE singleton`).
 		Scan(&s.SmallBusinessLimit, &s.WarningPercent, &s.VATOptedIn)
 	return s, err
 }
@@ -414,8 +444,7 @@ func taxDateString(t *time.Time) any {
 
 // scanTaxID parses a positive resource ID from the request path.
 func scanTaxID(r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	return id, err == nil && id > 0
+	return pathID(r)
 }
 
 // taxActorID returns the authenticated user ID for nullable audit columns.
@@ -438,6 +467,9 @@ func taxConflict(w http.ResponseWriter, err error) bool {
 
 // nullableDate parses an optional ISO calendar date.
 func nullableDate(s string) (*time.Time, error) {
+	if !validDateLength(s) {
+		return nil, errors.New("date is too long")
+	}
 	if strings.TrimSpace(s) == "" {
 		return nil, nil
 	}
@@ -483,6 +515,9 @@ func validateTaxPropertyRequest(req *taxPropertyRequest) bool {
 
 // CreateTaxProperty creates a tax object and assigns the selected garages.
 func (h *Handler) CreateTaxProperty(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxPropertyRequest
 	if err := decodeJSON(r, &req); err != nil || !validateTaxPropertyRequest(&req) {
 		writeError(w, http.StatusBadRequest, "Ungültiges Steuerobjekt")
@@ -524,6 +559,9 @@ func (h *Handler) CreateTaxProperty(w http.ResponseWriter, r *http.Request) {
 
 // UpdateTaxProperty updates a tax object and its garage assignments atomically.
 func (h *Handler) UpdateTaxProperty(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -619,6 +657,9 @@ func (h *Handler) GetTaxSettings(w http.ResponseWriter, r *http.Request) {
 
 // SaveTaxSettings validates and persists the singleton tax configuration.
 func (h *Handler) SaveTaxSettings(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxSettings
 	if err := decodeJSON(r, &req); err != nil || req.SmallBusinessLimit <= 0 || req.SmallBusinessLimit > 1e9 ||
 		req.WarningPercent <= 0 || req.WarningPercent > 100 {
@@ -693,6 +734,9 @@ func (h *Handler) ListTaxExpenses(w http.ResponseWriter, r *http.Request) {
 
 // CreateTaxExpense appends a tax-deductible expense entry to an unlocked tax year.
 func (h *Handler) CreateTaxExpense(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxExpenseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Ungültige Ausgabe")
@@ -782,6 +826,9 @@ func (h *Handler) CreateTaxExpense(w http.ResponseWriter, r *http.Request) {
 
 // ReverseTaxExpense appends one immutable counter-entry for an existing expense.
 func (h *Handler) ReverseTaxExpense(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -854,6 +901,9 @@ func (h *Handler) ReverseTaxExpense(w http.ResponseWriter, r *http.Request) {
 
 // UploadTaxReceipt validates and appends a receipt to an expense in an unlocked year.
 func (h *Handler) UploadTaxReceipt(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -995,7 +1045,7 @@ func (h *Handler) GetTaxReceipt(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+safeDownloadFilename(filename)+`"`)
-	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("Cache-Control", "private, no-store")
 	_, _ = w.Write(data)
 }
 
@@ -1049,6 +1099,9 @@ func (h *Handler) ListTaxRecurring(w http.ResponseWriter, r *http.Request) {
 
 // CreateTaxRecurring creates a recurring tax-expense template.
 func (h *Handler) CreateTaxRecurring(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxRecurringRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Ungültige wiederkehrende Ausgabe")
@@ -1093,6 +1146,9 @@ func (h *Handler) CreateTaxRecurring(w http.ResponseWriter, r *http.Request) {
 
 // UpdateTaxRecurring changes whether a recurring template is active.
 func (h *Handler) UpdateTaxRecurring(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1138,6 +1194,9 @@ func (h *Handler) UpdateTaxRecurring(w http.ResponseWriter, r *http.Request) {
 
 // BookTaxRecurring creates one expense from an active recurring template.
 func (h *Handler) BookTaxRecurring(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1241,6 +1300,9 @@ func (h *Handler) ListTaxAssets(w http.ResponseWriter, r *http.Request) {
 
 // CreateTaxAsset adds an asset only when every affected tax year is unlocked.
 func (h *Handler) CreateTaxAsset(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	var req taxAssetRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "Ungültiges Wirtschaftsgut")
@@ -1288,6 +1350,9 @@ func (h *Handler) CreateTaxAsset(w http.ResponseWriter, r *http.Request) {
 
 // UpdatePaymentTaxMetadata assigns a payment to a tax object and optional receipt date.
 func (h *Handler) UpdatePaymentTaxMetadata(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	id, ok := scanTaxID(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid id")
@@ -1316,11 +1381,13 @@ func (h *Handler) UpdatePaymentTaxMetadata(w http.ResponseWriter, r *http.Reques
 	var auto bool
 	var oldReceived *time.Time
 	var oldProperty int64
+	var settlesKind, settlesPeriod string
 	if err := tx.QueryRow(r.Context(), `
 		SELECT p.paid_on,p.auto,m.received_on,
-		       COALESCE(m.tax_property_id,(SELECT id FROM tax_properties ORDER BY is_default DESC,id LIMIT 1))
+		       COALESCE(m.tax_property_id,(SELECT id FROM tax_properties ORDER BY is_default DESC,id LIMIT 1)),
+		       COALESCE(p.settles_kind,''),COALESCE(p.settles_period,'')
 		  FROM payments p LEFT JOIN payment_tax_metadata m ON m.payment_id=p.id
-		 WHERE p.id=$1 FOR UPDATE OF p`, id).Scan(&paidOn, &auto, &oldReceived, &oldProperty); err != nil {
+		 WHERE p.id=$1 FOR UPDATE OF p`, id).Scan(&paidOn, &auto, &oldReceived, &oldProperty, &settlesKind, &settlesPeriod); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "Zahlung nicht gefunden")
 			return
@@ -1339,6 +1406,13 @@ func (h *Handler) UpdatePaymentTaxMetadata(w http.ResponseWriter, r *http.Reques
 	newEffective := paidOn
 	if receivedOn != nil {
 		newEffective = *receivedOn
+	}
+	newRuleDate := time.Date(taxRuleYear(newEffective, settlesKind, settlesPeriod), 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := protectPaymentChangesTx(r.Context(), tx, []int64{id}, newEffective, newRuleDate); err != nil {
+		if !writeSettlementConflict(w, err) {
+			serverError(w, r, "Steuerjahrsperre konnte nicht geprüft werden", err)
+		}
+		return
 	}
 	years := []int{oldEffective.Year()}
 	if newEffective.Year() != oldEffective.Year() {
@@ -1392,12 +1466,19 @@ func sameTaxDay(a, b time.Time) bool {
 
 // taxYearPath parses a supported tax year from the request path.
 func taxYearPath(r *http.Request) (int, bool) {
-	year, err := strconv.Atoi(r.PathValue("year"))
+	s := r.PathValue("year")
+	if !validNumericParamLength(s) {
+		return 0, false
+	}
+	year, err := strconv.Atoi(s)
 	return year, err == nil && year >= minTaxYear && year <= maxTaxYear
 }
 
 // LockTaxYear prevents further ledger changes for one tax year.
 func (h *Handler) LockTaxYear(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	year, ok := taxYearPath(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "Ungültiges Steuerjahr")
@@ -1433,6 +1514,9 @@ func (h *Handler) LockTaxYear(w http.ResponseWriter, r *http.Request) {
 
 // UnlockTaxYear permits ledger changes for a previously locked tax year.
 func (h *Handler) UnlockTaxYear(w http.ResponseWriter, r *http.Request) {
+	if !h.requireTaxWrite(w) {
+		return
+	}
 	year, ok := taxYearPath(r)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "Ungültiges Steuerjahr")
@@ -1470,27 +1554,27 @@ func (h *Handler) UnlockTaxYear(w http.ResponseWriter, r *http.Request) {
 }
 
 // addTaxBook enriches an income report with expenses, depreciation, and E1b totals.
-func (h *Handler) addTaxBook(ctx context.Context, rep *taxYearReport) error {
+func addTaxBook(ctx context.Context, q dbQuerier, rep *taxYearReport) error {
 	var err error
-	if rep.Properties, err = h.loadTaxProperties(ctx); err != nil {
+	if rep.Properties, err = loadTaxProperties(ctx, q); err != nil {
 		return err
 	}
-	if rep.Categories, err = h.loadTaxCategories(ctx); err != nil {
+	if rep.Categories, err = loadTaxCategories(ctx, q); err != nil {
 		return err
 	}
-	if rep.Expenses, err = h.loadTaxExpenses(ctx, rep.Year); err != nil {
+	if rep.Expenses, err = loadTaxExpenses(ctx, q, rep.Year); err != nil {
 		return err
 	}
-	if rep.RecurringExpenses, err = h.loadTaxRecurring(ctx); err != nil {
+	if rep.RecurringExpenses, err = loadTaxRecurring(ctx, q); err != nil {
 		return err
 	}
-	if rep.Assets, err = h.loadTaxAssets(ctx, rep.Year); err != nil {
+	if rep.Assets, err = loadTaxAssets(ctx, q, rep.Year); err != nil {
 		return err
 	}
-	if rep.Settings, err = h.loadTaxSettings(ctx); err != nil {
+	if rep.Settings, err = loadTaxSettings(ctx, q); err != nil {
 		return err
 	}
-	if rep.Locked, err = taxYearLockStatus(ctx, h.Pool, rep.Year); err != nil {
+	if rep.Locked, err = taxYearLockStatus(ctx, q, rep.Year); err != nil {
 		return err
 	}
 

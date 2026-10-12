@@ -1030,6 +1030,33 @@ func (h *Handler) CancelInvoice(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		if err := lockInvoicePersonTx(r.Context(), tx, o.personID); err != nil {
+			return err
+		}
+		rows, err := tx.Query(r.Context(), `SELECT payment_id FROM invoice_payments WHERE invoice_id=$1 ORDER BY payment_id`, id)
+		if err != nil {
+			return err
+		}
+		var paymentIDs []int64
+		for rows.Next() {
+			var paymentID int64
+			if err := rows.Scan(&paymentID); err != nil {
+				rows.Close()
+				return err
+			}
+			paymentIDs = append(paymentIDs, paymentID)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := protectPaymentChangesTx(r.Context(), tx, paymentIDs); err != nil {
+			return err
+		}
+		vehicleIDs, err := invoiceVehicleIDsTx(r.Context(), tx, []int64{id})
+		if err != nil {
+			return err
+		}
 		number := s.InvoicePrefix + fmt.Sprintf("%0*d", s.NumberPad, s.NextInvoiceNo)
 		if _, err := tx.Exec(r.Context(), `UPDATE billing_settings SET next_invoice_no = next_invoice_no + 1 WHERE id=1`); err != nil {
 			return err
@@ -1069,7 +1096,15 @@ func (h *Handler) CancelInvoice(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		// Release any payments tied to the original -> back to on-account (Guthaben).
+		var releasedInvoicePayments json.RawMessage
+		if err := tx.QueryRow(r.Context(), `SELECT COALESCE(jsonb_agg(to_jsonb(ip) ORDER BY ip.id),'[]'::jsonb)
+			FROM invoice_payments ip WHERE ip.invoice_id=$1`, id).Scan(&releasedInvoicePayments); err != nil {
+			return fmt.Errorf("capture canceled invoice payment links: %w", err)
+		}
 		if _, err := tx.Exec(r.Context(), `DELETE FROM invoice_payments WHERE invoice_id=$1`, id); err != nil {
+			return err
+		}
+		if err := h.reopenUncoveredVehiclesTx(r, tx, vehicleIDs); err != nil {
 			return err
 		}
 		out = invoice{ID: stornoID, Number: number, PersonID: o.personID, IssuedOn: issued,
@@ -1077,7 +1112,12 @@ func (h *Handler) CancelInvoice(w http.ResponseWriter, r *http.Request) {
 			Kleinunternehmer: o.klein, Note: note, CancelsID: &id}
 		// Both trail rows commit with the Storno itself (atomic).
 		if err := h.auditChangeTx(r.Context(), tx, r, "update", "invoice", id, "storniert – Gegenbeleg "+number,
-			diffFields(map[string]any{"canceled": false}, map[string]any{"canceled": true})); err != nil {
+			map[string]any{
+				"canceled":                    map[string]any{"old": false, "new": true},
+				"released_invoice_payments":   releasedInvoicePayments,
+				"cancellation_invoice_id":     stornoID,
+				"cancellation_invoice_number": number,
+			}); err != nil {
 			return err
 		}
 		// The counter-document is a distinct gapless-numbered Beleg — audit its issuance
@@ -1089,15 +1129,18 @@ func (h *Handler) CancelInvoice(w http.ResponseWriter, r *http.Request) {
 				"cancels_invoice": map[string]any{"old": nil, "new": o.number},
 			})
 	})
+	// A concurrent reversal can roll the Storno back atomically (BIL-07).
+	// Keep the retry advice ahead of the generic settlement-conflict response.
+	if isRetryableTxError(txErr) {
+		writeError(w, http.StatusConflict, "Gleichzeitige Änderung an dieser Rechnung – bitte erneut versuchen")
+		return
+	}
+	if writeSettlementConflict(w, txErr) {
+		return
+	}
 	if txErr != nil {
 		if errors.Is(txErr, errAlreadyCanceled) {
 			writeError(w, http.StatusConflict, "Rechnung ist bereits storniert")
-			return
-		}
-		// A deadlock with a concurrent payment reversal rolled the Storno back
-		// atomically — nothing was written; say so instead of an opaque 500 (BIL-07).
-		if isRetryableTxError(txErr) {
-			writeError(w, http.StatusConflict, "Gleichzeitige Änderung an dieser Rechnung – bitte erneut versuchen")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "could not cancel invoice")
@@ -1185,6 +1228,12 @@ func (h *Handler) PayInvoices(w http.ResponseWriter, r *http.Request) {
 	var out payInvoicesResult
 	var replayed bool
 	txErr := pgx.BeginFunc(r.Context(), h.Pool, func(tx pgx.Tx) error {
+		if err := lockInvoicePersonTx(r.Context(), tx, pid); err != nil {
+			return err
+		}
+		if err := protectPaymentChangesTx(r.Context(), tx, nil, paidOn); err != nil {
+			return err
+		}
 		if key == "" {
 			if err := tx.QueryRow(r.Context(),
 				`INSERT INTO payments (person_id, amount, paid_on, method, note, created_by)
@@ -1298,6 +1347,9 @@ func (h *Handler) PayInvoices(w http.ResponseWriter, r *http.Request) {
 				"unallocated": map[string]any{"old": nil, "new": out.Unallocated},
 			})
 	})
+	if writeSettlementConflict(w, txErr) {
+		return
+	}
 	if txErr != nil {
 		if errors.Is(txErr, errInvoiceNotOpen) {
 			writeError(w, http.StatusBadRequest, "eine gewählte Rechnung ist nicht offen (storniert/bezahlt/fremd)")

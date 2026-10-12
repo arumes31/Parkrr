@@ -225,8 +225,11 @@ var auditIgnoredPerFunc = map[string]map[string]bool{
 	"SetAgreementPaid":       {"archived": true},
 	"SetAgreementPeriodPaid": {"archived": true},
 	"ChangeVehicleStatus":    {"archived": true},
-	"MarkPaid":               {"archived": true},
-	"UpdateVehicle":          {"archived": true},
+	// Reversal belongs to the separate payment audit from reverseTogglePaymentTx;
+	// the operational vehicle/charge diff does not claim to be a payment diff.
+	"MarkPaid":      {"archived": true, "reversed": true},
+	"SetChargePaid": {"reversed": true},
+	"UpdateVehicle": {"archived": true},
 	// CreatePayment deckt ueber settleItemTx Posten ab und stempelt dabei paid; dazu
 	// archiviert es geschlossene Gefaehrte. Dieselbe Begruendung wie DeletePayment.
 	"CreatePayment": {"paid": true, "paid_through": true, "archived": true},
@@ -472,6 +475,8 @@ var auditExemptHandlers = map[string]string{
 	"BackupValidate":       "read-only (decrypt + pg_restore --list), changes nothing",
 	"BackupValidateS3":     "read-only S3 download plus decrypt and pg_restore --list, changes nothing",
 	"BackupS3Test":         "read-only connection test, changes nothing",
+	"TaxReviewPreview":     "stateless calculation of supplied values; nil-receiver tests prove no database access or persisted state, so an audit write would violate the read-only contract",
+	"TaxImportPreview":     "stateless validation of external entries; nil-receiver and replay tests prove no database access or persisted import state",
 	"ClientError":          "forwards a browser error to slog, touches no domain data",
 	"ReorderPhotos":        "reine Darstellungsreihenfolge derselben Fotos — kein Inhalt entsteht, ändert sich oder verschwindet; Upload und Löschen der Fotos selbst sind auditiert",
 }

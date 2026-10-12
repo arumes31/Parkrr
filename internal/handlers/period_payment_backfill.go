@@ -2,7 +2,11 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/preining/parkrr/internal/models"
 )
@@ -58,12 +62,33 @@ func (h *Handler) backfillAccrualPayments(ctx context.Context, personID int64, k
 		// NOT EXISTS handles the common (single-instance) case and avoids resurrecting
 		// a reversed period payment; ON CONFLICT is the concurrency backstop so two
 		// simultaneous startups don't error on the uq_payments_settles unique index.
-		_, err := h.Pool.Exec(ctx,
-			`INSERT INTO payments (person_id, amount, method, note, auto, settles_kind, settles_ref, settles_period)
+		err := pgx.BeginFunc(ctx, h.Pool, func(tx pgx.Tx) error {
+			if err := lockInvoicePersonTx(ctx, tx, personID); err != nil {
+				return err
+			}
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM payments WHERE settles_kind=$1 AND settles_ref=$2 AND settles_period=$3)`, kind, refID, key).Scan(&exists); err != nil {
+				return err
+			}
+			if exists {
+				return nil
+			}
+			if err := protectCurrentReceiptTx(ctx, tx, kind, key); err != nil {
+				return err
+			}
+			_, err := tx.Exec(ctx,
+				`INSERT INTO payments (person_id, amount, method, note, auto, settles_kind, settles_ref, settles_period)
 			 SELECT $1,$2,'bar',$3,true,$4,$5,$6
 			 WHERE NOT EXISTS (SELECT 1 FROM payments WHERE settles_kind=$4 AND settles_ref=$5 AND settles_period=$6)
 			 ON CONFLICT (settles_kind, settles_ref, settles_period) WHERE settles_kind IS NOT NULL DO NOTHING`,
-			personID, amt, periodPaymentNote(kind, key), kind, refID, key)
+				personID, amt, periodPaymentNote(kind, key), kind, refID, key)
+			return err
+		})
+		var conflict *settlementConflictError
+		if errors.As(err, &conflict) {
+			slog.Warn("period payment backfill skipped: closed tax year", "kind", kind, "ref_id", refID, "period", key)
+			return nil
+		}
 		return err
 	}
 	// Partials first so a key that (defensively) appears in both wins as a partial.

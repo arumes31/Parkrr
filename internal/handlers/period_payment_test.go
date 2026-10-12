@@ -40,7 +40,7 @@ func settlesPaymentSum(t *testing.T, h *Handler, pid int64) (float64, int) {
 // TestPauschalePeriodPaidRecordsPayment (Fix 1): marking a Pauschale sub-period
 // paid books a REAL Zahlungseingang for it — visible in payments and PaymentsTotal
 // — while the balance moves by exactly the period cost (no double-count with the
-// off-book credit). Un-marking removes the payment and restores the balance.
+// off-book credit). A reset cannot erase the resulting payment history.
 func TestPauschalePeriodPaidRecordsPayment(t *testing.T) {
 	h := testHandler(t)
 	pid := createIntegrationPerson(t, h)
@@ -63,14 +63,17 @@ func TestPauschalePeriodPaidRecordsPayment(t *testing.T) {
 		t.Errorf("PaymentsTotal must include the period payment (30), got %.2f", after.PaymentsTotal)
 	}
 
-	// Un-mark: the payment is removed and the balance returns to where it started.
-	setAgreementPeriodPaidT(t, h, aid, key, false)
-	back := personStatsT(t, h, pid)
-	if math.Abs(back.Balance-before.Balance) > 0.05 {
-		t.Errorf("un-marking must restore the balance: before=%.2f back=%.2f", before.Balance, back.Balance)
+	// R03 interim guard: a reset must not remove this real receipt.
+	rec := periodHistoryRequest(t, h.SetAgreementPeriodPaid, aid, map[string]any{"period_key": key, "paid": false})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("reset: %d %s", rec.Code, rec.Body.String())
 	}
-	if sum, n := settlesPaymentSum(t, h, pid); n != 0 || sum != 0 {
-		t.Errorf("un-marking must delete the period payment, got n=%d sum=%.2f", n, sum)
+	back := personStatsT(t, h, pid)
+	if math.Abs(back.Balance-after.Balance) > 0.05 {
+		t.Errorf("rejected reset changed balance: paid=%.2f after=%.2f", after.Balance, back.Balance)
+	}
+	if sum, n := settlesPaymentSum(t, h, pid); n != 1 || sum != 30 {
+		t.Errorf("rejected reset lost the period payment: n=%d sum=%.2f", n, sum)
 	}
 }
 

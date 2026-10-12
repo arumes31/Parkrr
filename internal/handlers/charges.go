@@ -545,6 +545,9 @@ func (h *Handler) UpdateCharge(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	// A charge on an issued invoice is part of an immutable document (BAO): its money
+	if !lockFinancialSource(w, r, tx, "charge", id, req.PersonID) {
+		return
+	}
 	// (amount/quantity), owner (person) or binding (vehicle) must not change out from
 	// under the invoice — otherwise the live balance disagrees with what was billed and
 	// paid, or the charge is re-billed under a new owner. Freeze exactly those fields
@@ -642,6 +645,9 @@ func (h *Handler) DeleteCharge(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	var lockedID int64
+	if !lockFinancialSource(w, r, tx, "charge", id, 0) {
+		return
+	}
 	if err := tx.QueryRow(r.Context(), `SELECT id FROM charges WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "charge not found")
@@ -721,29 +727,36 @@ func (h *Handler) SetChargePaid(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	// P2.3: record the auto-payment while still open, then flip the flag — all in
-	// ONE transaction so a failure between them can't leave a phantom
-	// payment/credit. The owed amount is read BEFORE the tx (openOwedItems uses
-	// the pool; reading it while holding the tx's connection can deadlock the
-	// pool under concurrency).
-	var amt float64
-	var bound []boundCharge
-	if req.Paid && !curPaid {
-		var err error
-		if amt, bound, err = h.toggleOwed(r, "charge", id, personID); err != nil {
-			writeError(w, http.StatusInternalServerError, "could not record payment")
-			return
-		}
-	}
+	// P2.3: read the owed amount and record the auto-payment while still open,
+	// then flip the flag in the same transaction. Read through tx after taking
+	// the person/row locks so the amount is current without another pool connection.
 	failMsg := "could not update charge"
 	if err := pgx.BeginFunc(r.Context(), h.Pool, func(tx pgx.Tx) error {
 		// CreateInvoice's per-person lock, then the state checks (BIL-05).
 		if err := lockInvoicePersonTx(r.Context(), tx, personID); err != nil {
 			return err
 		}
+		var lockedPerson int64
+		var boundVehicle *int64
+		if err := tx.QueryRow(r.Context(), `SELECT person_id,paid,vehicle_id FROM charges WHERE id=$1 FOR UPDATE`, id).
+			Scan(&lockedPerson, &curPaid, &boundVehicle); err != nil {
+			return err
+		}
+		if lockedPerson != personID || boundVehicle != nil {
+			return &settlementConflictError{msg: "Zusatzkosten wurden zwischenzeitlich geändert – bitte neu laden"}
+		}
+		var amt float64
+		var bound []boundCharge
+		if req.Paid && !curPaid {
+			var err error
+			amt, bound, err = h.toggleOwedFrom(r, tx, "charge", id, personID)
+			if err != nil {
+				return err
+			}
+		}
 		if req.Paid != curPaid {
 			// A charge on an active invoice is settled through that invoice, in both
-			// directions: "bezahlt" would book no payment (toggleOwed sees nothing
+			// directions: "bezahlt" would book no payment (toggleOwedFrom sees nothing
 			// open) yet write paid=true, so after a Storno the charge could never be
 			// billed again while the balance still owed it (BIL-03).
 			if inv, err := periodInvoicedTx(r.Context(), tx, "charge", id, ""); err != nil {

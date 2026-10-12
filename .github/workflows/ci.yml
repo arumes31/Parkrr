@@ -56,7 +56,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
           cache: true
 
       - name: Download & verify modules
@@ -71,7 +71,9 @@ jobs:
         # Packages share one disposable database; serialize packages so migration
         # and restore checks cannot change its schema under another package.
         # The race detector and each test's deliberate concurrency stay enabled.
-        run: go test -race -p 1 -covermode=atomic -coverprofile=coverage.out ./...
+        # Real password/recovery-code hashing under -race can exceed Go's
+        # default 10-minute package timeout on shared runners. Keep full costs.
+        run: go test -race -p 1 -timeout=20m -tags=integration -covermode=atomic -coverprofile=coverage.out ./...
 
       - name: Verify large backup restore under hardened limits
         run: bash scripts/test-backup-restore.sh
@@ -176,5 +178,7 @@ jobs:
           persist-credentials: false
       # Pure geometry and isolated SPA auth tests via Node's built-in test runner
       # (preinstalled on the runner — no extra action or running backend).
+      - name: Reject local-only screenshots, mockups and review artifacts
+        run: node scripts/check-local-artifacts.cjs --index
       - name: Run frontend unit tests
         run: node --test tests/geometry/geometry.test.js tests/frontend/*.test.js
