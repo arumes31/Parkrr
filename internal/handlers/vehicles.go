@@ -854,14 +854,19 @@ func (h *Handler) ChangeVehicleStatus(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, "could not check rental period", err)
 		return
 	}
+	date := trim(req.Date)
 	var proposedEnd *time.Time
 	if req.Status == models.StatusCollected || req.Status == models.StatusCancelled {
 		end := businessDay(h.now())
 		if oldEnd != nil {
 			end = *oldEnd
 		}
-		if trim(req.Date) != "" {
-			parsed, err := time.Parse(dateLayout, trim(req.Date))
+		if date != "" {
+			if !validDateLength(date) {
+				writeError(w, http.StatusBadRequest, "date is too long")
+				return
+			}
+			parsed, err := time.Parse(dateLayout, date)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
 				return
@@ -885,16 +890,8 @@ func (h *Handler) ChangeVehicleStatus(w http.ResponseWriter, r *http.Request) {
 	// end_date — otherwise rent keeps accruing forever on a cancelled vehicle that
 	// is then archived and can never be invoiced/paid/cleared (perpetual phantom
 	// receivable).
-	case (req.Status == models.StatusCollected || req.Status == models.StatusCancelled) && trim(req.Date) != "":
-		if !validDateLength(trim(req.Date)) {
-			writeError(w, http.StatusBadRequest, "date is too long")
-			return
-		}
-		end, perr := time.Parse(dateLayout, trim(req.Date))
-		if perr != nil {
-			writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
-			return
-		}
+	case (req.Status == models.StatusCollected || req.Status == models.StatusCancelled) && date != "":
+		end := *proposedEnd
 		if end.Before(start) {
 			writeError(w, http.StatusBadRequest, "Enddatum darf nicht vor Mietbeginn liegen")
 			return

@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func handoverTemplateRequestBody(t *testing.T, name, appliesTo, content string) *bytes.Reader {
@@ -54,7 +56,14 @@ func TestHandoverTemplateLifecycle(t *testing.T) {
 	if err := json.Unmarshal(create.Body.Bytes(), &template); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = h.Pool.Exec(t.Context(), `DELETE FROM handover_templates WHERE id=$1`, template.ID) })
+	t.Cleanup(func() {
+		// t.Context() is already canceled when cleanup callbacks run.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := h.Pool.Exec(ctx, `DELETE FROM handover_templates WHERE id=$1`, template.ID); err != nil {
+			t.Errorf("cleanup handover template: %v", err)
+		}
+	})
 
 	updateReq := httptest.NewRequest(http.MethodPut, "/api/handover-templates/"+strconv.FormatInt(template.ID, 10),
 		handoverTemplateRequestBody(t, name+" geändert", "beide", "☐ Zustand\n☐ Schlüssel"))

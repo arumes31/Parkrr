@@ -966,17 +966,7 @@ func (h *Handler) CreatePayment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Read the open items BEFORE the tx (openOwedItems uses the pool; reading it
-	// inside the tx would hold two connections and deadlock the pool under load).
 	var openItems []owedItem
-	if req.Allocate || len(req.Allocations) > 0 {
-		its, oerr := h.openOwedItems(r, id)
-		if oerr != nil {
-			writeError(w, http.StatusInternalServerError, "query failed")
-			return
-		}
-		openItems = its
-	}
 	// Record the payment and settle its items in ONE transaction so a settlement
 	// failure can never leave a half-allocated payment or a paid-but-unallocated
 	// orphan (the whole thing commits or rolls back together).

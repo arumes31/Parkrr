@@ -113,7 +113,8 @@ jobs:
         run: go vet ./...
 
       - name: Test (race)
-        run: go test -race ./...
+        # Packages share a disposable database; restore tests temporarily alter its schema.
+        run: go test -race -p 1 ./...
 
       - name: Verify large backup restore under hardened limits
         run: bash scripts/test-backup-restore.sh
