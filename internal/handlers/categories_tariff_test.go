@@ -188,7 +188,7 @@ func TestTariffCreateWaitsForCommittedPrice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(context.Background())
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	if _, err := tx.Exec(ctx,
 		`UPDATE categories SET default_monthly_cost=90 WHERE id=$1`, category.ID); err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ func TestTariffCaptureSerializesWithPriceChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(context.Background())
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	rate, err := categoryDefaultRate(ctx, tx, category.ID, models.BillingMonthly)
 	if err != nil || rate != 85 {
 		t.Fatalf("capture initial price: %v %v", rate, err)

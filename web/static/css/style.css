@@ -614,8 +614,8 @@ textarea { resize: vertical; min-height: 72px; }
 }
 .app-header-inner {
     height: var(--header-h); display: flex; align-items: center; justify-content: space-between;
-    /* max() keeps the 1rem baseline but clears a landscape notch on the left/right */
-    padding: 0 max(1rem, env(safe-area-inset-right)) 0 max(1rem, env(safe-area-inset-left)); max-width: 900px; margin: 0 auto;
+    /* Cap gutters on narrow/enlarged-text views while still clearing a landscape notch. */
+    padding: 0 max(min(1rem,4vw), env(safe-area-inset-right)) 0 max(min(1rem,4vw), env(safe-area-inset-left)); max-width: 900px; margin: 0 auto;
 }
 .app-title { display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: var(--text-lg); color: inherit; text-decoration: none; cursor: pointer; }
 .app-user { display: flex; align-items: center; gap: 0.6rem; }
@@ -710,6 +710,7 @@ textarea { resize: vertical; min-height: 72px; }
 /* stacked variant: action buttons in a row, with the location chip beneath them */
 .card-actions.stack { flex-direction: column; align-items: flex-end; gap: 0.45rem; }
 .card-actbtns { display: flex; gap: 0.4rem; }
+.btn-row { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
 .card-actions.stack .veh-loc:not(.veh-loc-ic) { justify-content: flex-end; text-align: right; max-width: 220px; }
 .card-meta { font-size: var(--text-base); color: var(--text-muted); margin-top: 0.3rem; overflow-wrap: anywhere; }
 
@@ -1431,10 +1432,65 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
 .stat .stat-note { grid-column: 1 / -1; }
 .stat.tone-teal .value,.stat.tone-green .value{ font-size:1.3rem; }
 .stat .value .yoy{ display:block; width:fit-content; font-size:var(--text-sm); margin-top:.35rem; }
-.dashboard-charts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem; margin-bottom: 0.75rem; }
+.dashboard-charts { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 0.75rem; margin-bottom: 0.75rem; }
 .dashboard-charts > .chart-card { min-width: 0; margin-bottom: 0; }
+.dashboard-charts .chart svg, .revenue-plot svg { max-height: 10rem; }
+.dashboard-year-nav { margin: 0; gap: .2rem; }
+.dashboard-year-select { width: auto; min-width: 5.5rem; min-height: 2.75rem; margin: 0; }
+.dashboard-year-empty { margin: 0 0 1rem; }
+/* The optional forecast uses the existing chart surface and native controls. */
+.revenue-chart { overflow-wrap: anywhere; }
+.revenue-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; margin-bottom: .5rem; }
+.revenue-modes { display: inline-flex; gap: 0; }
+.revenue-modes .btn { border-radius: var(--radius-sm); border-color: transparent; }
+.revenue-modes .btn[aria-pressed="true"] { background: var(--bg-elev); color: var(--text); border-color: var(--border); }
+.revenue-modes .btn { min-height: 2.75rem; }
+.revenue-option { display: flex; gap: .5rem; align-items: center; min-height: 2.75rem; font-size: var(--text-sm); cursor: pointer; }
+.revenue-option input { flex: 0 0 auto; width: 1.1rem; height: 1.1rem; margin: 0; accent-color: var(--primary); }
+.revenue-option:has(input:disabled) { color: var(--text-muted); cursor: default; }
+.revenue-horizon { font-size: var(--text-sm); }
+.revenue-horizon select { width: auto; max-width: 100%; margin: .3rem 0 0 .4rem; min-height: 2.75rem; }
+.revenue-message:not(:empty), .revenue-note { font-size: var(--text-sm); margin: .6rem 0; color: var(--text-muted); }
+.revenue-message:empty { display: none; }
+.revenue-content { min-width: 0; }
+.revenue-plot { border-radius: var(--radius-sm); }
+.revenue-plot:focus-visible, .revenue-table-scroll:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.revenue-plot svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; }
+.revenue-grid { stroke: var(--border); stroke-width: 1; }
+.revenue-line { fill: none; stroke-width: 2.5; stroke-linejoin: round; }
+.revenue-series-actual { stroke: var(--chart-c1); }
+.revenue-point.revenue-series-actual { fill: var(--chart-c1); }
+.revenue-series-forecast { stroke: var(--chart-c1); stroke-dasharray: 6 4; }
+.revenue-series-reservation { stroke: var(--warning-text); stroke-dasharray: 2 4; }
+.revenue-series-previous { stroke: var(--text-muted); stroke-dasharray: 8 3 2 3; }
+.revenue-point:not(.revenue-series-actual) { fill: var(--card-bg); stroke-dasharray: none; }
+.revenue-bar-actual { fill: var(--chart-c1); }
+.revenue-bar-forecast { fill: var(--primary-soft); stroke: var(--chart-c1); stroke-width: 1.5; stroke-dasharray: 5 3; }
+.revenue-bar-reservation { fill: none; stroke: var(--warning-text); stroke-width: 1.5; stroke-dasharray: 2 3; }
+.revenue-axis { fill: var(--text-muted); font-size: 11px; font-family: inherit; }
+.revenue-focus { stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.revenue-readout { min-height: 1.5rem; padding: .25rem 0; font-size: var(--text-sm); color: var(--text-muted); display: flex; flex-wrap: wrap; gap: .2rem .8rem; font-variant-numeric: tabular-nums; }
+.revenue-readout strong { flex-basis: 100%; color: var(--text); }
+.revenue-legend { display: flex; flex-wrap: wrap; gap: .4rem .8rem; font-size: var(--text-sm); margin: .5rem 0; }
+.revenue-legend > span { display: inline-flex; align-items: center; gap: .4rem; }
+.revenue-key { width: 1.4rem; border-top: 2px solid var(--chart-c1); }
+.revenue-key-forecast { border-top-style: dashed; }
+.revenue-key-reservation { border-top-style: dotted; border-color: var(--warning-text); }
+.revenue-key-previous { border-top-style: dashed; border-color: var(--text-muted); }
+.revenue-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem 1rem; margin: 1rem 0 .5rem; padding-top: .7rem; border-top: 1px solid var(--border); }
+.revenue-totals dt { color: var(--text-muted); font-size: var(--text-sm); }
+.revenue-totals dd { margin: .2rem 0 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.revenue-details, .revenue-values { margin-top: .7rem; border-top: 1px solid var(--border); }
+.revenue-details > summary, .revenue-values > summary { padding: .6rem 0; min-height: 2.75rem; cursor: pointer; font-size: var(--text-sm); }
+.revenue-details > summary:focus-visible, .revenue-values > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.revenue-evidence { font-size: var(--text-sm); }
+.revenue-evidence ul { padding-left: 1.2rem; }
+.revenue-table-scroll { overflow-x: auto; max-width: 100%; }
+.revenue-table-scroll table { border-collapse: collapse; min-width: 100%; font-size: var(--text-sm); }
+.revenue-table-scroll th, .revenue-table-scroll td { padding: .55rem .65rem; border-bottom: 1px solid var(--border); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.revenue-table-scroll th:first-child { text-align: left; }
+.revenue-table-scroll thead th { white-space: normal; min-width: 7rem; }
 @media (min-width: 640px) {
-    .dashboard-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dash-money { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .dash-money:has(> :last-child:nth-child(2)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dash-counts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -1557,7 +1613,7 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
 .archive-section .seg-mini:not(.pay)::-webkit-scrollbar{ display:none; }
 
 /* Umsatz year-over-year compare-mode switch */
-.yoy-modes{ display:inline-flex; gap:2px; background:var(--bg-elev-2); border:1px solid var(--border); border-radius:999px; padding:2px; margin:.1rem 0 .8rem; }
+.yoy-modes{ display:inline-flex; flex-wrap:wrap; max-width:100%; gap:2px; background:var(--bg-elev-2); border:1px solid var(--border); border-radius:999px; padding:2px; margin:.1rem 0 .8rem; }
 .yoy-mode{ border:0; background:none; color:var(--text-muted); font-family:var(--font-mono); font-weight:700; font-size:var(--text-2xs); letter-spacing:.04em; text-transform:uppercase; padding:.3rem .62rem; border-radius:999px; cursor:pointer; white-space:nowrap; }
 .yoy-mode.active{ background:var(--primary-soft); color:var(--primary-ink); }
 .yoy-mode:hover:not(.active){ color:var(--text); }
@@ -2171,10 +2227,13 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
    ist die eine Flaeche, die auf fremden, oft aelteren Geraeten geoeffnet wird. */
 .portal-view { min-height: 100vh; min-height: 100dvh; padding: max(1rem, env(safe-area-inset-top)) 1rem 2rem; background: var(--bg); display: flex; justify-content: center; }
 .portal-wrap { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 1rem; }
-.portal-head { display: flex; align-items: center; gap: .75rem; padding: .5rem .25rem; }
+.portal-head { display:flex; flex-wrap:wrap; align-items:flex-start; gap:.75rem; padding:.5rem .25rem; }
 .portal-head h1 { margin: 0; font-size: 1.3rem; }
 .portal-head p { margin: 0; }
 .portal-head > div { min-width: 0; overflow-wrap: anywhere; }
+.portal-identity { flex:1 1 18rem; }
+.portal-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-left:auto; max-width:100%; }
+.portal-actions .portal-lang { margin-left:0; align-self:auto; }
 /* .portal-head .portal-lang: flex-shrink steht jetzt oben bei der Basisregel. */
 .portal-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 14px; padding: 1rem 1.1rem; }
 .portal-card h2 { margin: 0 0 .6rem; font-size: var(--text-md); }
@@ -2336,6 +2395,10 @@ a.portal-row.link:hover { color: var(--primary-ink); }
 .screen-person .chart-card { margin-top:1.5rem; }
 .vehicle-overview .balance { gap:1rem; align-items:baseline; }
 .vehicle-overview .balance > :last-child { text-align:right; overflow-wrap:anywhere; min-width:0; }
+/* The DOM stays operations-first; desktop keeps its familiar main/sidebar layout. */
+.vehicle-overview { grid-template-areas:"side" "main"; }
+.vehicle-overview > .record-side { grid-area:side; }
+.vehicle-overview > .record-main { grid-area:main; }
 .screen-vehicle .card > .page-head { margin-bottom:.75rem; }
 .screen-vehicle .card > .page-head h3 { margin:0; }
 .screen-vehicle .card .pay-row { box-shadow:none; margin:0; padding:1rem 0; border:0; border-bottom:1px solid var(--border); border-radius:0; }
@@ -2361,7 +2424,21 @@ a.portal-row.link:hover { color: var(--primary-ink); }
 .invoice-table-scroll { overflow-x:auto; }
 .invoice-table-scroll .inv-table { min-width:34rem; }
 .invoice-table-scroll th { white-space:nowrap; overflow-wrap:normal; }
+.invoice-scroll-hint { margin:.5rem 0 .75rem; font-size:var(--text-sm); line-height:1.5; }
+.invoice-document-actions { display:flex; align-items:center; gap:.5rem; flex-wrap:nowrap; max-width:100%; }
 .screen-invoices > .detail-head h2 { flex-basis:60% !important; }
+@media (min-width:640px) {
+    .screen-invoices .invoice-document-actions { margin-inline-start:auto; }
+}
+/* Give tax amounts a full mobile row; size to the card, never split off the euro. */
+.screen-taxyear > .stat-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr)); }
+.screen-taxyear > .stat-grid > .stat { container-type:inline-size; padding-inline:min(1rem,4vw); }
+.screen-taxyear > .stat-grid .value { font-size:1.35rem; font-size:min(1.7rem,8cqi); white-space:nowrap; overflow-wrap:normal; }
+/* Long German labels must reflow even with enlarged text on narrow screens. */
+.screen-taxyear .tax-limit-head > h3 { min-width:0; overflow-wrap:anywhere; }
+.screen-taxyear .section-title { flex-wrap:wrap; }
+.screen-taxyear .section-title > h3 { min-width:0; overflow-wrap:anywhere; }
+.screen-taxyear .btn-row > .btn { max-width:100%; min-width:0; overflow-wrap:anywhere; }
 .screen-backup > .card { margin-top:1.5rem; }
 .screen-backup > .stat-grid .stat-val { font-size:var(--text-lg); }
 .screen-backup .restore-section { border-color:var(--danger); margin-top:2rem; }
@@ -2373,7 +2450,8 @@ a.portal-row.link:hover { color: var(--primary-ink); }
 .screen-audit .audit-filter-row label { flex:1; min-width:0; font-size:var(--text-base); color:var(--text-muted); }
 .screen-audit .audit-filter-row input { margin-top:.25rem; width:100%; }
 .screen-audit .timeline { padding-left:.5rem; }
-.screen-settings .set-col > .card { margin-bottom:1rem; }
+.screen-settings .set-col { display:grid; gap:1rem; align-content:start; }
+.screen-settings .set-col > .card { margin-bottom:0; }
 .screen-settings .set-col > .card > h3 { margin:0 0 1rem; }
 .screen-settings .balance { flex-wrap:wrap; gap:.5rem; }
 .screen-settings .balance > div { min-width:0; overflow-wrap:anywhere; }
@@ -2388,10 +2466,14 @@ a.portal-row.link:hover { color: var(--primary-ink); }
 .dash-hero-click:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 
 .today-card { margin:0 0 1rem; background:var(--card-bg); border:1px solid var(--card-border); border-radius:var(--radius); box-shadow:var(--card-shadow); overflow:hidden; }
-.today-head { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; padding:1rem 1.05rem .8rem; border-bottom:1px solid var(--border); }
-.today-head h3 { margin:0; font-size:1.2rem; }
-.today-head p { margin:.18rem 0 0; color:var(--text-muted); font-size:var(--text-sm); }
-.today-count { display:grid; place-items:center; min-width:2rem; height:2rem; padding:0 .5rem; border-radius:999px; background:var(--primary); color:var(--on-primary); font-weight:800; font-variant-numeric:tabular-nums; }
+.today-head { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.75rem 1rem; border-bottom:1px solid var(--border); }
+.today-head h3 { margin:0; font-size:var(--text-md); }
+.today-count { color:var(--warning-text); font-size:var(--text-sm); font-weight:600; font-variant-numeric:tabular-nums; }
+.today-more > summary { padding:.75rem 1rem; min-height:2.75rem; cursor:pointer; font-weight:600; list-style-position:inside; }
+.today-more > summary:hover { background:var(--bg-elev); }
+.today-more > summary:focus-visible { outline:2px solid var(--primary); outline-offset:-3px; }
+.today-more-count { margin-left:.75rem; color:var(--text-muted); font-weight:400; font-size:var(--text-sm); }
+.today-head ~ .today-more { border-top:1px solid var(--border); }
 .today-list { display:grid; }
 .today-row { display:grid; grid-template-columns:.55rem minmax(0,1fr) auto; gap:.75rem; align-items:center; min-height:3.8rem; padding:.72rem 1.05rem; color:inherit; text-decoration:none; border-bottom:1px solid var(--border); }
 .today-row:last-child { border-bottom:0; }
@@ -2489,7 +2571,7 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 .portal-form { display:grid; gap:.75rem; }
 @media (min-width:800px) {
     .person-overview { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
-    .vehicle-overview { grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); }
+    .vehicle-overview { grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); grid-template-areas:"main side"; }
     .billing-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
     .screen-backup > .stat-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
     .portal-wrap { max-width:900px; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; align-content:start; }
@@ -2524,7 +2606,8 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 
 /* Compact workflows: shared fields, explicit optional details, unchanged tokens. */
 .modal.modal-wide { width:min(46rem, calc(100vw - 2rem)); }
-.modal.modal-booking { width:min(58rem, calc(100vw - 2rem)); }
+.modal.modal-booking { width:min(48rem, calc(100vw - 2rem)); }
+.modal-booking .form-grid { gap:.75rem 1rem; }
 .form-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:1rem; }
 .form-field { min-width:0; display:flex; flex-direction:column; gap:.375rem; }
 .form-field[hidden] { display:none; }
@@ -2561,35 +2644,37 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 .vehicle-date-shortcuts { justify-content:flex-end; }
 .vehicle-booking-grid {
     display:grid;
-    grid-template-columns:repeat(2,minmax(0,1fr)) minmax(11rem,.82fr);
+    grid-template-columns:repeat(2,minmax(0,1fr));
     align-items:start;
     gap:.875rem 1rem;
 }
 .vehicle-booking-grid > .form-field { min-width:0; }
 .vehicle-cost-summary {
-    grid-column:3;
-    grid-row:1 / span 2;
-    align-self:stretch;
-    display:flex;
+    grid-column:1 / -1;
+    display:grid;
+    grid-template-columns:minmax(0,1fr) auto;
+    align-items:center;
     min-width:0;
-    flex-direction:column;
-    justify-content:center;
-    gap:.3rem;
-    padding:1rem;
-    border:1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
-    border-radius:var(--radius-sm);
+    gap:.2rem 1rem;
+    /* Markenfarbe betont die Live-Vorschau, ohne den kompakten Aufbau zu ändern. */
+    padding:.75rem 1rem;
     background:var(--primary-soft);
+    border:1px solid color-mix(in srgb, var(--primary) 45%, var(--border));
+    border-radius:var(--radius-sm);
 }
-.vehicle-cost-label { color:var(--primary-ink); font-size:var(--text-sm); font-weight:700; }
+.vehicle-cost-label { color:var(--primary-ink); font-size:var(--text-sm); font-weight:600; }
 .vehicle-cost-summary output {
-    color:var(--text);
-    font-size:var(--text-2xl);
+    grid-column:2;
+    grid-row:1 / span 2;
+    text-align:right;
+    color:var(--primary-ink);
+    font-size:var(--text-xl);
     font-weight:750;
     line-height:1.08;
     font-variant-numeric:tabular-nums;
     overflow-wrap:anywhere;
 }
-.vehicle-cost-summary .card-meta { margin:0; }
+.vehicle-cost-summary .card-meta { margin:0; grid-column:1; color:color-mix(in srgb, var(--primary-ink) 80%, var(--text)); }
 .toolbar-primary { display:flex; flex:1 1 100%; gap:.75rem; min-width:0; }
 .toolbar-primary .search { min-width:0; flex:1 1 16rem; }
 .toolbar-primary > select { flex:0 1 14rem; min-width:0; }
@@ -2621,6 +2706,13 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 @media (min-width:1100px) {
     .storage-list { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
+@media (min-width:900px) {
+    .dashboard-charts { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (min-width:640px) {
+    /* The dialog's flex shell already protects the footer on short screens. */
+    .modal-booking .modal-body { max-height:none; }
+}
 @media (max-width:639px) {
     .toolbar-primary { flex-wrap:wrap; gap:.5rem; }
     .modal.modal-wide { width:100%; }
@@ -2635,16 +2727,6 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
     .vehicle-booking-head { align-items:flex-start; }
     .vehicle-date-shortcuts { justify-content:flex-start; }
     .vehicle-booking-grid { grid-template-columns:minmax(0,1fr); }
-    .vehicle-cost-summary {
-        grid-column:auto;
-        grid-row:1;
-        min-height:0;
-        display:grid;
-        grid-template-columns:minmax(0,1fr) auto;
-        align-items:center;
-        padding:.75rem;
-    }
-    .vehicle-cost-summary output { grid-column:2; grid-row:1 / span 2; font-size:var(--text-xl); text-align:right; }
 }
 @media (max-width:599px) {
     .modal-wide .form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -2688,7 +2770,7 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 }
 
 /* Steuerjahr (Einnahmenaufstellung) */
-.tax-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+.tax-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%,260px), 1fr)); gap: 1rem; margin-bottom: 1rem; }
 .tax-grid > .card { margin: 0; }
 .tax-rows { display: grid; gap: 0.7rem; margin-bottom: 0.6rem; }
 .tax-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.3rem 0.75rem; font-size: var(--text-base); }

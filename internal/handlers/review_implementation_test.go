@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
 	"github.com/preining/parkrr/internal/auth"
 )
 
@@ -156,7 +157,7 @@ func TestReviewSliderRefreshesAmountAfterSourceLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer blocker.Rollback(context.Background())
+	defer func() { _ = blocker.Rollback(context.Background()) }()
 	if err := lockInvoicePersonTx(ctx, blocker, pid); err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +325,7 @@ func TestReviewPaymentGuardRefreshesMetadataAfterWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer blocker.Rollback(context.Background())
+	defer func() { _ = blocker.Rollback(context.Background()) }()
 	if _, err := blocker.Exec(ctx, `SELECT id FROM payments WHERE id=$1 FOR UPDATE`, payment.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +437,7 @@ func TestReviewDuplicatePreservesDetailsAndRollsBackPhotoFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer blocker.Rollback(context.Background())
+	defer func() { _ = blocker.Rollback(context.Background()) }()
 	if _, err := blocker.Exec(t.Context(), `LOCK TABLE vehicle_photos IN ACCESS EXCLUSIVE MODE`); err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,7 @@ const SHELL = [
     '/js/api.js',
     '/js/tax-review.js',
     '/js/tax-import.js',
+    '/js/revenue-chart.js',
     '/js/app.js',
     '/manifest.webmanifest',
     '/icons/icon.svg',

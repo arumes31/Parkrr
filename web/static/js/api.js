@@ -35,6 +35,6 @@ export function createAPI({ getCookie, handle, nextSequence, offlineMessage }) {
     // Keep imported JSON intact so server validation can detect duplicate keys.
     api.postJSONText = (path, text) => api.request('POST', path, text, {}, true);
     api.put = (path, body) => api.request('PUT', path, body);
-    api.del = (path) => api.request('DELETE', path);
+    api.del = (path, body) => api.request('DELETE', path, body);
     return api;
 }

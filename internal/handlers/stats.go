@@ -765,23 +765,27 @@ func (h *Handler) OutstandingByPerson(w http.ResponseWriter, r *http.Request) {
 
 // overviewResponse summarizes the whole dataset for the dashboard.
 type overviewResponse struct {
-	TotalPersons     int            `json:"total_persons"`
-	TotalVehicles    int            `json:"total_vehicles"`
-	ActiveVehicles   int            `json:"active_vehicles"`
-	TotalCategories  int            `json:"total_categories"`
-	AccruedThisYear  float64        `json:"accrued_this_year"`
-	AccruedPrevYear  float64        `json:"accrued_prev_year"` // same window one year earlier, for a YoY delta
-	AccruedPrevFull  float64        `json:"accrued_prev_full"` // full previous calendar year, for "% of last year" / projection modes
-	AccruedTotal     float64        `json:"accrued_total"`
-	PaidTotal        float64        `json:"paid_total"`
-	OutstandingTotal float64        `json:"outstanding_total"`
-	Year             int            `json:"year"`
-	StatusCounts     map[string]int `json:"status_counts"`
-	RevenueByMonth   []float64      `json:"revenue_by_month"`
-	ChargesByMonth   []float64      `json:"charges_by_month"`
-	PaymentsThisYear float64        `json:"payments_this_year"` // recorded money-in in the selected year
-	PaymentsTotal    float64        `json:"payments_total"`     // recorded money-in (all time)
-	PaymentsByMonth  []float64      `json:"payments_by_month"`  // recorded money-in per month of the selected year
+	TotalPersons        int            `json:"total_persons"`
+	TotalVehicles       int            `json:"total_vehicles"`
+	ActiveVehicles      int            `json:"active_vehicles"`
+	TotalCategories     int            `json:"total_categories"`
+	AccruedThisYear     float64        `json:"accrued_this_year"`
+	AccruedPrevYear     float64        `json:"accrued_prev_year"` // same window one year earlier, for a YoY delta
+	AccruedPrevFull     float64        `json:"accrued_prev_full"` // full previous calendar year, for "% of last year" / projection modes
+	AccruedTotal        float64        `json:"accrued_total"`
+	PaidTotal           float64        `json:"paid_total"`
+	OutstandingTotal    float64        `json:"outstanding_total"`
+	Year                int            `json:"year"`
+	CurrentYear         int            `json:"current_year"`
+	AvailableYears      []int          `json:"available_years"`
+	HasYearData         bool           `json:"has_year_data"`
+	PreviousYearHasData bool           `json:"previous_year_has_data"`
+	StatusCounts        map[string]int `json:"status_counts"`
+	RevenueByMonth      []float64      `json:"revenue_by_month"`
+	ChargesByMonth      []float64      `json:"charges_by_month"`
+	PaymentsThisYear    float64        `json:"payments_this_year"` // recorded money-in in the selected year
+	PaymentsTotal       float64        `json:"payments_total"`     // recorded money-in (all time)
+	PaymentsByMonth     []float64      `json:"payments_by_month"`  // recorded money-in per month of the selected year
 	// TopOutstanding lists the persons with the largest open balance, so the
 	// dashboard can point straight at who to follow up with.
 	TopOutstanding []personOutstanding `json:"top_outstanding"`
@@ -798,6 +802,7 @@ type overviewCachedResponse struct {
 	header http.Header
 	status int
 	body   []byte
+	years  dashboardYears
 	// day is the accrual day the summary was computed for; storedAt bounds how
 	// long it may be served (see overviewCacheTTL).
 	day      string
@@ -847,10 +852,33 @@ func (h *Handler) cachedOverview(year int, day string, revision int64, now time.
 		return overviewCachedResponse{}, false
 	}
 	resp, ok := h.overviewCache[year]
-	if !ok || resp.day != day || now.Sub(resp.storedAt) >= overviewCacheTTL {
+	if !ok || resp.day != day || now.Sub(resp.storedAt) >= overviewCacheTTL || !resp.years.freshAt(now) {
 		return overviewCachedResponse{}, false
 	}
 	return resp, true
+}
+
+// Reuse the same revision/day/TTL metadata as the cached totals. In particular,
+// a normal dashboard cache hit must not rescan the entire payment history.
+func (h *Handler) cachedOverviewYears(day string, revision int64, now time.Time) (dashboardYears, bool) {
+	h.overviewMu.RLock()
+	defer h.overviewMu.RUnlock()
+	if h.overviewCacheRevision != revision {
+		return dashboardYears{}, false
+	}
+	for _, response := range h.overviewCache {
+		valid := response.day == day && now.Sub(response.storedAt) < overviewCacheTTL
+		if valid && response.years.freshAt(now) {
+			return response.years, true // Published metadata is immutable.
+		}
+	}
+	return dashboardYears{}, false
+}
+
+func (ys dashboardYears) freshAt(now time.Time) bool {
+	// A second year's freshly calculated totals cannot renew older metadata:
+	// the revision counter advances before commit, so age is a separate bound.
+	return len(ys.Available) != 0 && !ys.loadedAt.IsZero() && now.Sub(ys.loadedAt) < overviewCacheTTL
 }
 
 // storeOverview caches resp for year at revision and the accrual day.
@@ -897,8 +925,18 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	// One clock read decides both the year default and the accrual day, and the
 	// calculation uses the same instant, so the cache key matches its content.
 	now := h.now()
-	year := parseYearParam(r, now.Year())
 	day := now.Format("2006-01-02")
+	years, cached := h.cachedOverviewYears(day, revision, time.Now())
+	if !cached {
+		years, err = loadDashboardYears(r.Context(), h.Pool, now)
+		if err != nil {
+			serverError(w, r, "dashboard years could not be loaded", err)
+			return
+		}
+	}
+	// Canonicalize before cache lookup and singleflight, so unavailable request
+	// years never populate an incorrectly keyed summary of the current year.
+	year := years.canonical(parseYearParam(r, now.Year()), now.Year(), false)
 	if resp, ok := h.cachedOverview(year, day, revision, time.Now()); ok {
 		writeCachedOverview(w, resp)
 		return
@@ -909,14 +947,15 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 		calcCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
 		defer cancel()
 		capture := &overviewResponseWriter{header: make(http.Header)}
-		h.overviewUncached(capture, r.Clone(calcCtx), now)
+		h.overviewUncached(capture, r.Clone(calcCtx), now, year, years)
 		status := capture.status
 		if status == 0 {
 			status = http.StatusOK
 		}
 		resp := overviewCachedResponse{
 			header: capture.header.Clone(), status: status,
-			body: append([]byte(nil), capture.body.Bytes()...),
+			body:  append([]byte(nil), capture.body.Bytes()...),
+			years: years,
 		}
 		// A write may have committed while the multi-query calculation ran. Only
 		// publish the result if it still describes the revision used as its key.
@@ -937,9 +976,17 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) overviewUncached(w http.ResponseWriter, r *http.Request, now time.Time) {
+func (h *Handler) overviewUncached(
+	w http.ResponseWriter,
+	r *http.Request,
+	now time.Time,
+	year int,
+	years dashboardYears,
+) {
 	ctx := r.Context()
 	resp := overviewResponse{
+		Year: year, CurrentYear: now.Year(), AvailableYears: years.Available,
+		HasYearData: years.Present[year], PreviousYearHasData: years.Present[year-1],
 		StatusCounts: map[string]int{
 			models.StatusReserved: 0, models.StatusStored: 0,
 			models.StatusCollected: 0, models.StatusCancelled: 0,
@@ -961,7 +1008,6 @@ func (h *Handler) overviewUncached(w http.ResponseWriter, r *http.Request, now t
 		return
 	}
 
-	resp.Year = parseYearParam(r, now.Year())
 	resp.TopOutstanding = []personOutstanding{}
 	yearStart := time.Date(resp.Year, 1, 1, 0, 0, 0, 0, time.UTC)
 	yearEnd := time.Date(resp.Year+1, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -1249,7 +1295,7 @@ func (h *Handler) Occupancy(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, "query failed", err)
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	resp := occupancyResponse{Halls: []hallOccupancy{}}
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM vehicles WHERE NOT archived`).Scan(&resp.Active); err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")

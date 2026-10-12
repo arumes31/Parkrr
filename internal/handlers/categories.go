@@ -155,7 +155,7 @@ func (h *Handler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, "could not update category", err)
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var old models.Category
 	err = tx.QueryRow(ctx,
 		`SELECT id, name, default_monthly_cost, default_yearly_cost, rates_synced,

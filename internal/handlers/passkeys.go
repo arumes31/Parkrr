@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -279,6 +281,34 @@ func (h *AuthHandler) DeletePasskey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
+	// Check lockouts even for a recent session. This gate is not a password
+	// attempt: refund only its reservation, preserving earlier failures.
+	key, ip, ok := h.checkRateLimit(w, r, u.Username)
+	if !ok {
+		return
+	}
+	h.refundReauth(key, ip)
+
+	var body struct {
+		Password string `json:"password"`
+	}
+	// Older clients send no DELETE body. When present, accept exactly one bounded
+	// JSON document; decodeJSON also enforces content type and known fields.
+	payload, err := io.ReadAll(io.LimitReader(r.Body, maxJSONBody+1))
+	if err != nil || len(payload) > maxJSONBody || (len(bytes.TrimSpace(payload)) > 0 && !json.Valid(payload)) {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	bodyRequest := *r
+	bodyRequest.Body = io.NopCloser(bytes.NewReader(payload))
+	if err := decodeJSON(&bodyRequest, &body); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if !h.requireStepUp(w, r, u, body.Password) {
+		return
+	}
+
 	n, lastCredential, err := h.WebAuthn.DeleteCredentialSafely(r.Context(), u.ID, id, h.PasskeyOnly)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not delete passkey")

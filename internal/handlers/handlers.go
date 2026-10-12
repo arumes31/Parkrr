@@ -219,7 +219,11 @@ const maxJSONBody = 1 << 20 // 1 MiB
 
 // pathID extracts the positive int64 "id" path value.
 func pathID(r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	s := r.PathValue("id")
+	if !validNumericParamLength(s) {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(s, 10, 64)
 	if err != nil || id <= 0 {
 		return 0, false
 	}

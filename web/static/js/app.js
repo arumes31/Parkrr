@@ -1,6 +1,7 @@
 import { createAPI } from './api.js';
 import { createTaxReview } from './tax-review.js';
 import { createTaxImport } from './tax-import.js';
+import { createRevenueChart } from './revenue-chart.js';
 
 /* Parkrr SPA – vanilla JS, no external dependencies. */
 (() => {
@@ -385,11 +386,12 @@ import { createTaxImport } from './tax-import.js';
         });
         return data ? data.password : null;
     }
-    async function withStepUp(doCall) {
+    async function withStepUp(doCall, { allowPassword = true } = {}) {
         try {
             return await doCall('');
         } catch (e) {
             if (!e || (e.message || '') !== 'reauth_required') throw e;
+            if (!allowPassword) throw new Error('Bitte erneut mit einem Passkey anmelden und die Aktion danach wiederholen.');
             const pw = await promptStepUpPassword();
             if (!pw) throw Object.assign(new Error('Abgebrochen'), { cancelled: true });
             return await doCall(pw);
@@ -755,7 +757,7 @@ import { createTaxImport } from './tax-import.js';
     }
 
     // Shared hover tooltip positioned over the chart (viewBox coords -> pixels).
-    function chartTip(box, svg, W, H) {
+    function chartTip(box, svg) {
         // Rein visuell: derselbe Wert geht fuer Screenreader ueber den aria-live-Ansager
         // in chartA11y hinaus. Ohne aria-hidden wuerde er jetzt doppelt angesagt, seit
         // die Huelle eine Gruppe statt eines Bildes ist.
@@ -763,10 +765,13 @@ import { createTaxImport } from './tax-import.js';
         box.append(tip);
         return {
             show: (vx, vy, html) => {
-                const r = svg.getBoundingClientRect();
+                const matrix = svg.getScreenCTM();
+                if (!matrix) return;
+                const point = new DOMPoint(vx, vy).matrixTransform(matrix);
+                const r = box.getBoundingClientRect();
                 tip.innerHTML = html;
-                tip.style.left = (vx / W * r.width) + 'px';
-                tip.style.top = (vy / H * r.height) + 'px';
+                tip.style.left = (point.x - r.left) + 'px';
+                tip.style.top = (point.y - r.top) + 'px';
                 tip.style.opacity = 1;
             },
             hide: () => { tip.style.opacity = 0; },
@@ -815,7 +820,7 @@ import { createTaxImport } from './tax-import.js';
         // property write is not — and it still overrides the flat --primary from CSS.
         const cLine = box.querySelector('.c-line');
         if (cLine) cLine.style.stroke = `url(#as-${id})`;
-        const tip = chartTip(box, svg, W, H);
+        const tip = chartTip(box, svg);
         if (hi >= 0 && !REDUCE_MOTION()) {
             const el2 = box.querySelector('.c-line');
             const len = el2.getTotalLength();
@@ -825,7 +830,10 @@ import { createTaxImport } from './tax-import.js';
         const overlay = svg.querySelector('.c-overlay');
         const at = (ev) => {
             if (hi < 0) return;
-            const r = svg.getBoundingClientRect(); const px = (ev.clientX - r.left) / r.width * W;
+            const matrix = svg.getScreenCTM();
+            if (!matrix) return;
+            // Height limits can letterbox the SVG; use its rendered coordinate system.
+            const px = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(matrix.inverse()).x;
             let i = Math.round((px - pl) / (iw / (n - 1 || 1))); i = Math.max(0, Math.min(hi, i));
             const cx = x(i), cy = y(values[i]);
             cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.style.opacity = 1;
@@ -869,7 +877,7 @@ import { createTaxImport } from './tax-import.js';
           <defs><linearGradient id="bf-${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--chart-c2)"/><stop offset="1" stop-color="var(--chart-c1)"/></linearGradient></defs>
           <g>${grid}</g><g>${bars}</g><g>${lab}</g></svg>`;
         const svg = box.querySelector('svg');
-        const tip = chartTip(box, svg, W, H);
+        const tip = chartTip(box, svg);
         const marks = svg.querySelectorAll('.c-bar');
         marks.forEach((b) => {
             const focus = () => {
@@ -1216,8 +1224,14 @@ import { createTaxImport } from './tax-import.js';
     // Reitern, und es war die Ursache der wechselnd fehlschlagenden Oberflächentests.
     // Die Befehlspalette löst dasselbe Problem seit jeher mit einer Sequenznummer.
     let renderSeq = 0;
+    let routeLayoutCleanup = null;
+    function clearRouteLayout() {
+        if (routeLayoutCleanup) routeLayoutCleanup();
+        routeLayoutCleanup = null;
+    }
     async function render() {
         const mySeq = ++renderSeq;
+        clearRouteLayout();
         const portalToken = consumePortalToken();
         if (portalToken) { await renderPortal(portalToken); return; }
         if (state.user && !$('#portal-view').hidden) {
@@ -1316,9 +1330,15 @@ import { createTaxImport } from './tax-import.js';
             const cards = [...page.children].filter(n => n.classList.contains('card'));
             const controls = cards.find(n => ['Status & Zahlung', 'Archiviert'].includes(n.querySelector('h3')?.textContent));
             if (cards[0] && controls && cards[0] !== controls) {
-                const overview = el('div', { class: 'vehicle-overview' }); cards[0].before(overview); overview.append(cards[0], controls);
+                const overview = el('div', { class: 'vehicle-overview' });
+                cards[0].classList.add('record-main');
+                controls.classList.add('record-side');
+                cards[0].before(overview);
+                overview.append(controls, cards[0]);
             }
             sectionIndex(page, [...page.querySelectorAll(':scope > .card h3')].filter(n => n.closest('.card')?.parentElement === page));
+        } else if (route === 'invoices') {
+            routeLayoutCleanup = watchInvoiceOverflow(page);
         } else if (route === 'backup') {
             const cards = [...page.children].filter(n => n.classList.contains('card'));
             const restore = cards.find(n => n.querySelector('h3')?.textContent === 'Wiederherstellen');
@@ -1327,6 +1347,31 @@ import { createTaxImport } from './tax-import.js';
         } else if (route === 'settings') {
             sectionIndex(page, [...page.querySelectorAll('.set-col > .card h3')]);
         }
+    }
+
+    function watchInvoiceOverflow(page) {
+        const region = page.querySelector('.invoice-table-scroll');
+        const table = region?.querySelector('table');
+        const hint = page.querySelector('.invoice-scroll-hint');
+        if (!region || !table || !hint) return null;
+        let active = true;
+        const update = () => {
+            if (!active || !region.isConnected) return;
+            const overflowing = region.scrollWidth > region.clientWidth + 1;
+            hint.hidden = !overflowing;
+            if (overflowing) region.setAttribute('aria-describedby', hint.id);
+            else region.removeAttribute('aria-describedby');
+        };
+        const observer = new ResizeObserver(update);
+        observer.observe(region);
+        observer.observe(table);
+        const frame = requestAnimationFrame(update);
+        document.fonts.ready.then(update);
+        return () => {
+            active = false;
+            observer.disconnect();
+            cancelAnimationFrame(frame);
+        };
     }
 
     // Mirror each route's leading heading into the visually-hidden page-level h1
@@ -1395,7 +1440,7 @@ import { createTaxImport } from './tax-import.js';
             const pct = Math.round(((proj - prevF) / prevF) * 100);
             const txt = (pct > 999 ? '▲ >+999' : pct >= 0 ? '▲ +' + pct : '▼ ' + Math.abs(pct)) + ' %';
             return { txt, cls: pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat',
-                title: 'Hochrechnung ≈ ' + eur(proj) + ' ggü. Vorjahr gesamt (' + eur(prevF) + ')', label: lbl('Prognose ggü. ' + (ov.year - 1)) };
+                title: 'Lineare Hochrechnung ≈ ' + eur(proj) + ' ggü. Vorjahr gesamt (' + eur(prevF) + ')', label: lbl('Lineare Hochrechnung ggü. ' + (ov.year - 1)) };
         }
         // Mode A (default): growth vs the same window last year. A tiny prior-year
         // base makes the ratio explode, so fall back to the absolute € gain (or
@@ -1487,26 +1532,36 @@ import { createTaxImport } from './tax-import.js';
         const unplaced = occ ? Math.max(0, Number(occ.active || 0) - Number(occ.placed || 0)) : 0;
         if (unplaced) items.push({ priority: 2, tone: 'normal', title: unplaced + ' aktive Gefährte ohne Platz',
             meta: 'Hallenzuordnung fehlt · Disposition', href: '#/vehicles?unplaced=1', action: 'Gefährte anzeigen' });
+        // Optional setup is not a daily emergency. A blocked backup remains visible.
         if (readiness && Array.isArray(readiness.items)) readiness.items.filter((item) => item.state !== 'ready').forEach((item) => items.push({
-            priority: item.state === 'blocked' ? 0 : 3, tone: item.state === 'blocked' ? 'critical' : 'normal',
+            priority: item.id === 'backup' && item.state === 'blocked' ? 0 : 3,
+            tone: item.id === 'backup' && item.state === 'blocked' ? 'critical' : 'normal',
             title: item.label, meta: item.reason + ' · Administration', href: item.href || '#/settings', action: 'Konfiguration öffnen',
         }));
         items.sort((a, b) => a.priority - b.priority);
-        const card = el('section', { class: 'today-card', 'aria-labelledby': 'today-title' },
-            el('div', { class: 'today-head' },
-                el('div', {}, el('h3', { id: 'today-title' }, 'Heute'), el('p', {}, items.length ? items.length + (items.length === 1 ? ' Aufgabe' : ' Aufgaben') + ' nach Dringlichkeit' : 'Keine dringenden Aufgaben')),
-                items.length ? el('span', { class: 'today-count' }, String(items.length)) : null));
-        const list = el('div', { class: 'today-list' });
-        if (!items.length) list.append(el('p', { class: 'today-empty' }, 'Alles im grünen Bereich. Neue Aufgaben erscheinen hier automatisch.'));
-        items.slice(0, 10).forEach((item) => list.append(el('a', { class: 'today-row today-' + item.tone, href: item.href },
+        const urgent = items.filter(item => item.priority <= 1);
+        const visible = urgent.slice(0, 3);
+        const remaining = [...urgent.slice(3), ...items.filter(item => item.priority > 1)];
+        const card = el('section', { class: 'today-card', 'aria-label': 'Aufgaben und Hinweise' });
+        const row = item => el('a', { class: 'today-row today-' + item.tone, href: item.href },
             el('span', { class: 'today-priority', 'aria-hidden': 'true' }),
             el('span', { class: 'today-copy' }, el('strong', {}, item.title), el('span', {}, item.meta)),
-            el('span', { class: 'today-action' }, item.action))));
-        card.append(list);
+            el('span', { class: 'today-action' }, item.action));
+        if (urgent.length) card.append(
+            el('div', { class: 'today-head' }, el('h3', {}, 'Heute'),
+                el('span', { class: 'today-count' }, urgent.length + ' dringend')),
+            el('div', { class: 'today-list' }, ...visible.map(row)));
+        // Nothing is discarded: secondary items (and overflow) stay one click away.
+        if (remaining.length) card.append(el('details', { class: 'today-more' },
+            el('summary', {}, el('span', {}, urgent.length ? 'Weitere Hinweise' : 'Hinweise'),
+                el('span', { class: 'today-more-count' }, remaining.length + (urgent.length > 3 ? ' · davon ' + (urgent.length - 3) + ' dringend' : ''))),
+            el('div', { class: 'today-list' }, ...remaining.map(row))));
+        if (!items.length) card.append(el('p', { class: 'today-empty' }, 'Heute keine offenen Aufgaben.'));
         return card;
     }
 
     routes.dashboard = async (page) => {
+        const requestedYear = dashYear;
         const missing = [];
         const optional = (path, label, fallback) => api.get(path).then(data => data ?? fallback).catch((err) => {
             if (err.status === 401) throw err;
@@ -1526,18 +1581,34 @@ import { createTaxImport } from './tax-import.js';
         dashYear = ov.year;
         page.innerHTML = '';
         page.classList.add('dashboard-view');
-        // Year switcher: browse past years; forward capped at the current year
-        // (future years would be all zeros).
-        const nowYear = new Date().getFullYear();
-        const yearSel = el('div', { class: 'pager', style: 'margin:0' },
-            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Vorheriges Jahr', disabled: ov.year <= 2000,
-                onclick: () => { dashYear = ov.year - 1; render(); } }, '‹'),
-            el('span', { class: 'info' }, String(ov.year)),
-            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächstes Jahr', disabled: ov.year >= nowYear,
-                onclick: () => { dashYear = ov.year + 1; render(); } }, '›'));
+        // Navigation follows source-data years, including real zero-price data.
+        // Future planning belongs to the optional chart, never these overview KPIs.
+        const nowYear = Number.isInteger(ov.current_year) ? ov.current_year : new Date().getFullYear();
+        const years = [...new Set([...(Array.isArray(ov.available_years) ? ov.available_years : []), ov.year, nowYear])]
+            .filter(year => Number.isInteger(year) && year <= nowYear).sort((a, b) => a - b);
+        const yearIndex = years.indexOf(ov.year);
+        const changeYear = async (year, selector) => {
+            dashYear = year;
+            await render();
+            const next = document.querySelector('.dashboard-year-nav ' + selector);
+            const focusTarget = next && !next.disabled ? next : document.querySelector('.dashboard-year-select');
+            focusTarget?.focus({ preventScroll: true });
+        };
+        const selectYear = el('select', { class: 'dashboard-year-select', 'aria-label': 'Dashboard-Jahr' },
+            ...years.map(year => el('option', { value: year, selected: year === ov.year }, String(year))));
+        selectYear.addEventListener('change', () => changeYear(Number(selectYear.value), '.dashboard-year-select'));
+        const yearSel = el('div', { class: 'pager dashboard-year-nav' },
+            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Vorheriges Jahr', disabled: yearIndex <= 0,
+                onclick: () => changeYear(years[yearIndex - 1], '[aria-label="Vorheriges Jahr"]') }, '‹'), selectYear,
+            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächstes Jahr', disabled: yearIndex >= years.length - 1,
+                onclick: () => changeYear(years[yearIndex + 1], '[aria-label="Nächstes Jahr"]') }, '›'));
         page.append(el('div', { class: 'page-head' }, el('h2', {}, 'Übersicht'),
             el('div', { class: 'page-head-actions' },
                 el('a', { class: 'btn btn-ghost btn-sm', href: '#/calendar', title: 'Abholungen, Reservierungen, fällige Rechnungen und Abholwünsche im Monat' }, 'Kalender'), yearSel)));
+        if (requestedYear != null && requestedYear !== ov.year) page.append(el('p', { class: 'load-notice', role: 'status' },
+            'Für ' + requestedYear + ' sind keine auswählbaren Jahresdaten verfügbar. Angezeigt wird ' + ov.year + '.'));
+        if (ov.has_year_data === false) page.append(el('p', { class: 'card-meta dashboard-year-empty' },
+            'Für ' + ov.year + ' sind noch keine umsatzrelevanten Vorgänge vorhanden. Offene Salden und Bestandszahlen zeigen weiterhin den Stand heute.'));
         if (missing.length) page.append(el('div', { class: 'load-notice', role: 'status' },
             el('span', {}, missing.join(', ') + ' konnten nicht geladen werden.'),
             el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => render() }, 'Erneut versuchen')));
@@ -1563,7 +1634,7 @@ import { createTaxImport } from './tax-import.js';
             el('div', { class: 'dash-hero-num' }, eur(ov.outstanding_total)),
             el('div', { class: 'dash-hero-sub' }, 'Stand heute · offene Salden zum Nachfassen')));
         const umsatz = stat(eur(ov.accrued_this_year), 'Umsatz ' + ov.year, { icon: 'trend', tone: 'teal' });
-        const yd = yoyDelta(ov, yoyMode);
+        const yd = ov.previous_year_has_data === true ? yoyDelta(ov, yoyMode) : null;
         if (yd) {
             umsatz.querySelector('.value').append(el('span', { class: 'yoy ' + yd.cls, title: yd.title }, ' ' + yd.txt));
             umsatz.querySelector('.label').textContent = yd.label;
@@ -1578,8 +1649,8 @@ import { createTaxImport } from './tax-import.js';
         page.append(moneyRow);
         // Compare-mode switch for the Umsatz delta — only when there is a prior year
         // to compare against. Choice is persisted across visits.
-        if ((Number(ov.accrued_prev_year) || 0) > 0 || (Number(ov.accrued_prev_full) || 0) > 0) {
-            const modeBtns = [['A', 'Zeitraum'], ['B', '% Vorjahr'], ['C', 'Prognose']].map(([m, lbl]) =>
+        if (ov.previous_year_has_data === true && ((Number(ov.accrued_prev_year) || 0) > 0 || (Number(ov.accrued_prev_full) || 0) > 0)) {
+            const modeBtns = [['A', 'Zeitraum'], ['B', '% Vorjahr'], ['C', 'Lineare Hochrechnung']].map(([m, lbl]) =>
                 el('button', { class: 'yoy-mode' + (yoyMode === m ? ' active' : ''), type: 'button',
                     'aria-pressed': String(yoyMode === m), title: YOY_MODE_TITLE[m],
                     onclick: () => { yoyMode = m; try { localStorage.setItem('parkrr-yoy', m); } catch (e) { /* storage blocked */ } render(); } }, lbl));
@@ -1701,41 +1772,11 @@ import { createTaxImport } from './tax-import.js';
             page.append(oweCard);
         }
 
-        // Überfällige Rechnungen — Mahnwesen light: wen mahnen, ein Tap zur Rechnung.
-        if (overdue.length) {
-            const odCard = el('div', { class: 'owe-card' });
-            const odTotal = overdue.reduce((s, o) => s + (Number(o.open_amount) || 0), 0);
-            odCard.append(el('div', { class: 'owe-head' },
-                el('span', { class: 'sec-eyebrow', style: 'color:var(--danger)' }, 'Überfällige Rechnungen'),
-                el('span', { class: 'muted', style: 'font-size:.75rem' }, overdue.length + ' · ' + eur(odTotal) + ' offen')));
-            overdue.slice(0, 6).forEach((o) => {
-                odCard.append(el('a', { class: 'owe-row', href: '#/invoices/' + o.id, style: 'text-decoration:none' },
-                    el('span', { class: 'owe-nm' }, esc(o.person_name), el('span', { class: 'muted', style: 'font-size:.72rem;margin-left:.4rem' }, 'Nr ' + esc(o.number) + ' · ' + o.days_overdue + ' Tg. überfällig')),
-                    el('span', { class: 'owe-amt', style: 'color:var(--danger)' }, eur(o.open_amount), el('span', { class: 'owe-chev' }, '›'))));
-            });
-            page.append(odCard);
-        }
-
-        // Verträge, die auslaufen — end_date in den nächsten 30 Tagen, ein Tap zum
-        // Gefährt (Vertrag verlängern / Status ändern).
-        if (ending.length) {
-            const enCard = el('div', { class: 'owe-card' });
-            enCard.append(el('div', { class: 'owe-head' },
-                el('span', { class: 'sec-eyebrow' }, 'Verträge laufen aus'),
-                el('span', { class: 'muted', style: 'font-size:.75rem' }, ending.length + ' · nächste 30 Tage')));
-            ending.slice(0, 6).forEach((e) => {
-                const soon = e.days_left <= 7;
-                enCard.append(el('a', { class: 'owe-row', href: '#/vehicles/' + e.id, style: 'text-decoration:none' },
-                    el('span', { class: 'owe-nm' }, esc(e.label), el('span', { class: 'muted', style: 'font-size:.72rem;margin-left:.4rem' }, esc(e.person_name))),
-                    el('span', { class: 'owe-amt', style: soon ? 'color:var(--danger)' : '' }, (e.days_left === 0 ? 'heute' : 'in ' + e.days_left + ' Tg.'), el('span', { class: 'owe-chev' }, '›'))));
-            });
-            page.append(enCard);
-        }
+        // Due invoices and ending contracts already have actionable rows in Heute.
+        // Do not repeat the same reminders as two more dashboard cards.
 
         // Revenue chart
-        const revCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Umsatz pro Monat · ' + ov.year));
-        revCard.append(chartLine(ov.revenue_by_month, MONTHS, 'Umsatz pro Monat'));
-        revCard.append(el('div', { class: 'legend' }, el('span', {}, el('span', { class: 'dotc', style: 'background:var(--primary)' }), 'Miete + Zusatzkosten')));
+        const revCard = createRevenueChart(ov, { el, eur, api, chartLine });
 
         // Extra charges per month
         const pcCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Zusatzkosten pro Monat · ' + ov.year));
@@ -2654,6 +2695,8 @@ import { createTaxImport } from './tax-import.js';
             el('thead', {}, el('tr', {}, el('th', {}, 'Pos'), el('th', {}, 'Beschreibung'),
                 el('th', { class: 'r' }, 'Menge'), el('th', { class: 'r' }, 'Einzel'), el('th', { class: 'r' }, 'Betrag'))),
             tb)));
+        doc.append(el('p', { class: 'invoice-scroll-hint no-print', id: 'invoice-scroll-hint', hidden: true },
+            'Weitere Spalten: horizontal scrollen · Tastatur: Pfeiltasten.'));
         const tot = el('div', { class: 'inv-totals' });
         if (iv.kleinunternehmer) {
             tot.append(totRow('Gesamtbetrag', eur(iv.total), true));
@@ -2684,8 +2727,9 @@ import { createTaxImport } from './tax-import.js';
                 ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => remindInvoice(iv) }, icon('mail', 15), ' Erinnerung') : null,
             // Server-rendered A4 PDF (authoritative deliverable). A plain GET anchor
             // carries the session cookie and opens the document inline.
-            el('a', { class: 'btn btn-ghost btn-sm', href: '/api/invoices/' + id + '/pdf', target: '_blank', rel: 'noopener' }, icon('receipt', 15), ' PDF'),
-            el('button', { class: 'btn btn-ghost btn-sm', onclick: () => window.print() }, 'Drucken')));
+            el('div', { class: 'invoice-document-actions', role: 'group', 'aria-label': 'Rechnungsdokument' },
+                el('a', { class: 'btn btn-ghost btn-sm', href: '/api/invoices/' + id + '/pdf', target: '_blank', rel: 'noopener' }, icon('receipt', 15), ' PDF'),
+                el('button', { class: 'btn btn-ghost btn-sm', onclick: () => window.print() }, 'Drucken'))));
         if (iv.status === 'teilbezahlt' || iv.status === 'bezahlt') {
             page.append(el('div', { class: 'card-meta no-print', style: 'margin:-.3rem 0 .4rem' }, 'Bezahlt ' + eur(iv.paid_amount) + ' von ' + eur(iv.total) + (iv.open_amount > 0.005 ? ' · offen ' + eur(iv.open_amount) : '')));
         }
@@ -4315,7 +4359,7 @@ import { createTaxImport } from './tax-import.js';
             categoryError.hidden = !revealError || categoryInput.validity.valid;
             categoryHelp.textContent = match?.archived
                 ? 'Archivierter Tarif · Für dieses bestehende Gefährt weiterhin gültig; Preis und Abrechnung bleiben anpassbar.'
-                : 'Tarif oder Fahrzeugtyp suchen. Preis und Abrechnung bleiben anpassbar.';
+                : 'Tarif suchen · Preis individuell anpassbar.';
             if (match && String(categorySelect.value) !== String(match.id)) {
                 categorySelect.value = String(match.id);
                 categorySelect.dispatchEvent(new Event('change', { bubbles: true }));
@@ -4371,7 +4415,7 @@ import { createTaxImport } from './tax-import.js';
         const periodField = period.closest('.form-field');
         const rateField = rate.closest('.form-field');
         startField.before(booking);
-        bookingGrid.append(startField, endField, summary, periodField, rateField);
+        bookingGrid.append(startField, endField, periodField, rateField, summary);
 
         const updateTotal = () => {
             end.min = start.value;
@@ -4434,9 +4478,9 @@ import { createTaxImport } from './tax-import.js';
                 { name: 'label', label: 'Bezeichnung', value: existing?.label, placeholder: 'z. B. Wohnwagen Hobby', optional: 'Fahrzeugdetails' },
                 { name: 'license_plate', label: 'Kennzeichen', value: existing?.license_plate, optional: 'Fahrzeugdetails' },
                 { name: 'start_date', label: 'Einstelldatum', type: 'date', required: true, value: existing?.start_date ? existing.start_date.slice(0, 10) : today() },
-                { name: 'end_date', label: 'Abholdatum (optional)', type: 'date', value: existing?.end_date ? existing.end_date.slice(0, 10) : '', help: 'Leer = noch eingelagert. Hier auch nachträglich änderbar.' },
+                { name: 'end_date', label: 'Abholdatum (optional)', type: 'date', value: existing?.end_date ? existing.end_date.slice(0, 10) : '', help: 'Leer lassen für laufende Miete.' },
                 { name: 'billing_period', label: 'Abrechnung', type: 'select', value: initPeriod, options: [{ value: 'monthly', label: 'monatlich' }, { value: 'yearly', label: 'jährlich' }] },
-                { name: 'rate', label: 'Preis (€)', type: 'number', step: '0.01', min: 0, required: true, value: initRate, help: 'Aus dem Tarif übernommen und fest hinterlegt. Eine spätere Tarifänderung ändert diesen Preis nicht.' },
+                { name: 'rate', label: 'Preis (€)', type: 'number', step: '0.01', min: 0, required: true, value: initRate, help: 'Fest vereinbart; bleibt bei Tarifänderungen erhalten.' },
                 { name: 'notes', label: 'Notizen', type: 'textarea', value: existing?.notes, optional: 'Notizen & Planer-Details' },
                 { name: 'needs_power', label: 'Ladebedarf (Strom) — E-Fahrzeug / Kühlung', type: 'checkbox', value: !!existing?.needs_power, optional: 'Notizen & Planer-Details' },
                 { name: 'planner_symbol', label: 'Planer-Symbol', type: 'select', value: existing?.planner_symbol || '', optional: 'Notizen & Planer-Details', wide: true, help: 'Standard: automatisch aus dem Tarif/Typ. Eigene Icons lassen sich im Planer verwalten.', options: [{ value: '', label: 'Automatisch (aus Typ)' }].concat(['PKW', 'Motorrad', 'Transporter', 'Wohnmobil', 'Wohnwagen', 'Anhänger', 'Boot / Trailer', 'Traktor', 'Ladewagen', 'Rückewagen', 'Kipper'].map((k) => ({ value: k, label: k }))).concat(customIcons.map((ic) => ({ value: 'custom:' + ic.id, label: 'Eigenes: ' + ic.name }))) },
@@ -6274,7 +6318,7 @@ import { createTaxImport } from './tax-import.js';
                 ul.append(auditItem(a));
             }
             q.offset += entries.length;
-            loadStatus.textContent = q.offset ? q.offset + ' Änderungen geladen' : 'Keine Änderungen für diese Auswahl.';
+            loadStatus.textContent = q.offset ? q.offset + (q.offset === 1 ? ' Änderung geladen' : ' Änderungen geladen') : 'Keine Änderungen für diese Auswahl.';
             moreBtn.hidden = entries.length < q.limit;
             if (!ul.children.length) ul.append(el('li', { class: 'muted' }, 'Keine Einträge.'));
         }
@@ -6931,7 +6975,7 @@ import { createTaxImport } from './tax-import.js';
                 el('div', { class: 'card-row' },
                     el('div', { style: 'flex:1' },
                         el('h3', {}, el('a', { class: 'record-link', href: '#/hall/' + hl.id }, hl.name)),
-                        el('div', { class: 'card-meta' }, (hl.spot_count || 0) + ' Gefährte' + (area ? ' · ' + Math.round(area).toLocaleString('de-DE') + ' m²' : ''))),
+                        el('div', { class: 'card-meta' }, (hl.spot_count || 0) + (hl.spot_count === 1 ? ' Gefährt' : ' Gefährte') + (area ? ' · ' + Math.round(area).toLocaleString('de-DE') + ' m²' : ''))),
                     el('div', { class: 'card-actions' },
                         el('button', { class: 'btn btn-ghost btn-sm', onclick: () => navigate('hall/' + hl.id) }, 'Planer ›'),
                         canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Umbenennen', onclick: () => hallForm(id, hl) }, icon('edit')),
@@ -7646,7 +7690,7 @@ import { createTaxImport } from './tax-import.js';
             drawOverlay.classList.toggle('edit', !P.tool); drawOverlay.style.cursor = ''; // reset; the hover handler re-applies a resize cursor over zone handles
             positionWallPop(); positionRoomBadge();
             const used = P.spots.length;
-            occN.textContent = used + ' Gefährte';
+            occN.textContent = used + (used === 1 ? ' Gefährt' : ' Gefährte');
             const tot = polyArea(P.floor); let ve = 0; P.spots.forEach((b) => { ve += b.w * b.h; });
             occBar.style.width = Math.round(Math.min(100, ve / Math.max(1, tot) * 100)) + '%';
         }
@@ -9583,7 +9627,7 @@ import { createTaxImport } from './tax-import.js';
         // (Design wechseln, Abmelden). Drei Gruppen, jede mit einer Ueberschrift.
         const group = (title) => body.append(el('div', { class: 'menu-sec' }, title));
         group('Betrieb');
-        if (isAdmin()) body.append(item('receipt', 'Rechnungen', () => navigate('billing')));
+        if (isAdmin()) body.append(item('receipt', 'Rechnungs-Einstellungen', () => navigate('billing')));
         body.append(item('euro', 'Zusatzkosten', () => navigate('finance')));
         if (isAdmin()) body.append(item('ledger', 'Steuerjahr', () => navigate('taxyear')));
         group('Verwaltung');
@@ -9853,6 +9897,7 @@ import { createTaxImport } from './tax-import.js';
         }
     }
     function showLogin(logoutFailed = false) {
+        clearRouteLayout();
         $('#app-view').hidden = true;
         $('#login-view').hidden = false;
         paintLoginBays();
@@ -10023,9 +10068,19 @@ import { createTaxImport } from './tax-import.js';
         return card;
     }
     async function delPasskey(c) {
-        if (!await confirmDialog('Passkey entfernen?', `„${c.name}“ wird entfernt. Anmeldung mit diesem Gerät ist danach nicht mehr möglich; andere Passkeys und dein Passwort bleiben gültig.`, 'Entfernen')) return;
-        try { await api.del('/passkeys/' + c.id); toast('Passkey entfernt', 'success'); render(); }
-        catch (e) { toast(e.message, 'error'); }
+        const remainingAccess = state.capabilities.passkey_only
+            ? 'Andere Passkeys bleiben gültig; mindestens ein Passkey muss erhalten bleiben.'
+            : 'Andere Passkeys und dein Passwort bleiben gültig.';
+        if (!await confirmDialog('Passkey entfernen?', `„${c.name}“ wird entfernt. Anmeldung mit diesem Gerät ist danach nicht mehr möglich. ${remainingAccess}`, 'Entfernen')) return;
+        try {
+            await withStepUp((password) => api.del('/passkeys/' + c.id, { password }), {
+                allowPassword: !state.capabilities.passkey_only,
+            });
+            toast('Passkey entfernt', 'success');
+            render();
+        } catch (e) {
+            if (!e?.cancelled) toast(e?.message || 'Entfernen fehlgeschlagen', 'error');
+        }
     }
 
     // Der Sprunglink wird IMMER gebunden — auch auf dem Kundenportal, das den
@@ -10247,7 +10302,7 @@ import { createTaxImport } from './tax-import.js';
     ];
     // Nur für Admins — ein Sprungziel, das mit 403 endet, hilft niemandem.
     const CMDK_NAV_ADMIN = [
-        { label: 'Rechnungen', sub: 'Nummernkreis & Ausstellung', url: '#/billing', kw: 'rechnung beleg ust nummer' },
+        { label: 'Rechnungs-Einstellungen', sub: 'Nummernkreis & Ausstellung', url: '#/billing', kw: 'rechnung beleg ust nummer' },
         { label: 'Benutzer', sub: 'Zugänge', url: '#/users', kw: 'konto rolle admin bearbeiter' },
         { label: 'Audit-Log', sub: 'Verlauf', url: '#/audit', kw: 'protokoll verlauf wer wann' },
         { label: 'Backup', sub: 'Sicherung', url: '#/backup', kw: 'sicherung archiv wiederherstellen s3' },
@@ -10562,17 +10617,18 @@ import { createTaxImport } from './tax-import.js';
             // eine unsignierte Mail und ein Produktname, den der Kunde nie gehoert hat.
             // Ist seller_name auf einer frischen Instanz noch leer, bleibt der
             // Produktname als Rueckfall stehen.
-            el('div', {}, el('h1', {}, esc(sum.operator_name || 'Parkrr')),
+            el('div', { class: 'portal-identity' }, el('h1', {}, esc(sum.operator_name || 'Parkrr')),
                 el('p', { class: 'muted' }, esc(sum.person_name))),
             // Sprachumschalter: die Wahl bleibt im Browser (localStorage) und gilt
             // beim nächsten Öffnen wieder.
             // WCAG 2.5.3 (Label in Name): der sichtbare Text ('EN'/'DE') MUSS im
             // barrierefreien Namen vorkommen, sonst findet Sprachsteuerung den Knopf
             // nicht — "klick EN" traf einen Knopf, der "Switch to English" hiess.
-            el('button', { class: 'btn btn-ghost btn-sm portal-lang', 'aria-label': lang === 'de' ? 'EN – Switch to English' : 'DE – Auf Deutsch umschalten',
-                onclick: () => { try { localStorage.setItem('parkrr_portal_lang', lang === 'de' ? 'en' : 'de'); } catch (e2) { /* egal */ } renderPortal(token); } },
-                lang === 'de' ? 'EN' : 'DE'),
-            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: leavePortal }, P9.sign_out)));
+            el('div', { class: 'portal-actions' },
+                el('button', { class: 'btn btn-ghost btn-sm portal-lang', 'aria-label': lang === 'de' ? 'EN – Switch to English' : 'DE – Auf Deutsch umschalten',
+                    onclick: () => { try { localStorage.setItem('parkrr_portal_lang', lang === 'de' ? 'en' : 'de'); } catch (e2) { /* egal */ } renderPortal(token); } },
+                    lang === 'de' ? 'EN' : 'DE'),
+                el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: leavePortal }, P9.sign_out))));
         wrap.append(el('div', { class: 'portal-card portal-balance' },
             el('div', { class: 'muted' }, P9.open_total),
             el('div', { class: 'portal-amt' + (sum.open_total > 0.005 ? ' owe' : '') }, eur(sum.open_total))));

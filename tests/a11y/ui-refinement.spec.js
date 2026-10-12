@@ -43,8 +43,10 @@ test('partial dashboard failure is visible and null optional lists are safe', as
     '/vehicles/ending-soon': route => route.fulfill({ contentType: 'application/json', body: 'null' }),
   } });
   await page.goto(origin + '/#/dashboard');
-  await expect(page.locator('.load-notice')).toContainText('Belegung');
-  await expect(page.locator('.load-notice button')).toHaveText('Erneut versuchen');
+  // The forecast owns a separate, initially hidden error region. Assert the
+  // visible dashboard failure instead of requiring one error node in the DOM.
+  await expect(page.locator('.load-notice:visible')).toContainText('Belegung');
+  await expect(page.locator('.load-notice:visible button')).toHaveText('Erneut versuchen');
   await expect(page.getByRole('heading', { name: 'Export (CSV)' })).toBeVisible();
 });
 

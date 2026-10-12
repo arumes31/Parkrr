@@ -74,3 +74,28 @@ test('raw JSON preview propagates network failures for retry without a false suc
     assert.equal(calls.length, 1);
     assert.equal(handled.length, 0);
 });
+
+test('DELETE forwards an optional step-up body with CSRF and same-origin credentials', async () => {
+    const { api, calls } = harness();
+    await api.del('/passkeys/12', { password: 'synthetic-password' });
+    assert.equal(calls[0].url, '/api/passkeys/12');
+    assert.equal(calls[0].options.method, 'DELETE');
+    assert.equal(calls[0].options.body, '{"password":"synthetic-password"}');
+    assert.equal(calls[0].options.credentials, 'same-origin');
+    assert.equal(calls[0].options.headers['Content-Type'], 'application/json');
+    assert.equal(calls[0].options.headers['X-CSRF-Token'], 'synthetic-csrf-token');
+});
+
+test('existing DELETE callers still send no request body', async () => {
+    const { api, calls } = harness();
+    await api.del('/vehicles/12');
+    assert.equal(calls[0].options.body, undefined);
+    assert.equal(calls[0].options.headers['Content-Type'], undefined);
+    assert.equal(calls[0].options.headers['X-CSRF-Token'], 'synthetic-csrf-token');
+});
+
+test('offline DELETE does not send step-up credentials', async () => {
+    const { api, calls } = harness({ online: false });
+    await assert.rejects(api.del('/passkeys/12', { password: 'synthetic-password' }), /Offline/);
+    assert.equal(calls.length, 0);
+});

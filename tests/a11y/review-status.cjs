@@ -12,7 +12,8 @@ const reportUrl = pathToFileURL(path.join(reportDir, 'index.html')).href;
 const output = path.join(reportDir, 'evidence');
 const followup = JSON.parse(fs.readFileSync(path.join(reportDir, 'review-followup.json'), 'utf8'));
 // Keep the previous report's evidence intact when verifying this follow-up.
-const evidencePrefix = 'annual-import-20261009';
+const evidencePrefix = process.env.PARKRR_REVIEW_EVIDENCE_PREFIX || 'annual-import-20261009';
+if (!/^[a-z0-9-]+$/.test(evidencePrefix)) throw Error('Invalid report evidence prefix');
 const answerKey = 'parkrr.review.answers.v1';
 // Allows a test-harness-only retry without repeating the bounded visual QA pass.
 const functionalOnly = process.argv.includes('--functional-only');
@@ -44,6 +45,19 @@ async function importAnswers(page, value) {
         assert.equal(await page.locator('.current-item:visible').count(), 9);
         assert.equal(await page.locator('#historical-audit').getAttribute('open'), null);
         assert.equal(await page.locator('h1').count(), 1);
+    });
+    await check('Dashboard addition explains read-only navigation and forecast without rewriting audit inventory', async () => {
+        const section = page.locator('#dashboard-outlook');
+        const text = await section.textContent();
+        assert.match(text, /Jahresnavigation/);
+        assert.match(text, /25 ursprünglichen Auditmaßnahmen/);
+        assert.match(text, /Keine Speicherung der Prognose/);
+        assert.match(text, /keine neue SQL-Migration/);
+        for (const summary of await section.locator('summary').all()) {
+            await summary.click();
+            assert.equal(await summary.evaluate(node => node.parentElement.open), true);
+            await summary.click();
+        }
     });
     await check('Received answers and recommendations are distinct from unshared drafts', async () => {
         assert.match(await page.locator('#answer-state-Q03').textContent(), /Aktuell geklärt/);

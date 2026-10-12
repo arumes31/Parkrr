@@ -126,6 +126,10 @@ type taxSettings struct {
 
 // parseTaxDate parses an ISO calendar date in the server's local timezone.
 func parseTaxDate(s string) (time.Time, error) {
+	// Bound the raw input before trimming so whitespace cannot bypass the cap.
+	if !validDateLength(s) {
+		return time.Time{}, errors.New("date is too long")
+	}
 	return time.ParseInLocation("2006-01-02", strings.TrimSpace(s), time.Local)
 }
 
@@ -440,8 +444,7 @@ func taxDateString(t *time.Time) any {
 
 // scanTaxID parses a positive resource ID from the request path.
 func scanTaxID(r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	return id, err == nil && id > 0
+	return pathID(r)
 }
 
 // taxActorID returns the authenticated user ID for nullable audit columns.
@@ -464,6 +467,9 @@ func taxConflict(w http.ResponseWriter, err error) bool {
 
 // nullableDate parses an optional ISO calendar date.
 func nullableDate(s string) (*time.Time, error) {
+	if !validDateLength(s) {
+		return nil, errors.New("date is too long")
+	}
 	if strings.TrimSpace(s) == "" {
 		return nil, nil
 	}
@@ -1460,7 +1466,11 @@ func sameTaxDay(a, b time.Time) bool {
 
 // taxYearPath parses a supported tax year from the request path.
 func taxYearPath(r *http.Request) (int, bool) {
-	year, err := strconv.Atoi(r.PathValue("year"))
+	s := r.PathValue("year")
+	if !validNumericParamLength(s) {
+		return 0, false
+	}
+	year, err := strconv.Atoi(s)
 	return year, err == nil && year >= minTaxYear && year <= maxTaxYear
 }
 

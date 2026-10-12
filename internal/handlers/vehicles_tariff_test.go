@@ -29,7 +29,7 @@ func TestTariffDuplicateUsesOneConsistentSourceSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback(context.Background())
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	// The copy has read its price before its INSERT waits for the category FK.
 	// A simultaneous source edit must not mix newer master data with that price.
 	if _, err := tx.Exec(ctx, `SELECT id FROM categories WHERE id=$1 FOR UPDATE`, category.ID); err != nil {

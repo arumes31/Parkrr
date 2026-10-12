@@ -225,7 +225,6 @@ type taxSnapshotFailureWriter struct{ err error }
 func (w taxSnapshotFailureWriter) Write([]byte) (int, error) { return 0, w.err }
 
 type taxSnapshotReceiptDB struct {
-	dbQuerier
 	total     int64
 	rows      pgx.Rows
 	isQueried bool

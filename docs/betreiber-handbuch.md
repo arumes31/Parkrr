@@ -25,6 +25,51 @@ Es gibt genau drei Stellen, die ein Betreiber regelmäßig ansieht:
 Wer `PARKRR_ALERT_EMAIL` gesetzt hat, bekommt Punkt 1 als Mail, wenn ein
 geplantes Backup fehlschlägt — dann reicht der Blick in den Posteingang.
 
+### Dashboard: Jahresauswahl und Umsatzprognose
+
+Die Jahresauswahl enthält Jahre mit Mietzeiträumen, Pauschalen, Zusatzkosten oder
+Zahlungen sowie immer das aktuelle Serverjahr. Die Pfeile überspringen echte
+Datenlücken; die Jahreszahl ist auch direkt auswählbar. Eine kostenlose Buchung
+ist ein Vorgang und verschwindet nicht wegen 0 € Umsatz. Mehrjährige Verträge
+berücksichtigen alle betroffenen Jahre, auch bei archivierten Vorgängen. Das
+Installationsdatum ist keine Grenze für nachgetragene historische Daten.
+
+Im Umsatzdiagramm lässt sich zwischen **Monat** und **Jahr** wechseln.
+**Prognose anzeigen** ist zunächst ausgeschaltet. Erst eingeschaltet ergänzt sie
+die bisher aufgelaufenen Mieterlöse um erwartete Restbeträge aus bestehenden
+Vereinbarungen. Die Monatswerte und die Jahresdarstellung verwenden dieselben
+Beträge. Das nächste Jahr ist nur innerhalb dieser Planung auswählbar; die
+übrigen Dashboard-Kennzahlen bleiben beim ausgewählten tatsächlichen Datenjahr.
+
+Cent-Rundungen werden je Vertrags- oder Kostenquelle über die Monatsgrenzen
+fortgeschrieben. Dadurch bleibt die Jahressumme erhalten, ohne Rundungsreste
+auf andere Verträge oder Monate zu verteilen. Tatsächliche Gutschriften behalten
+ihren negativen Betrag; die Vorschau erzeugt keine künstlichen Gutschriften.
+
+Unter **Annahmen & Details** sind Reservierungen und der Vorjahresvergleich
+separat zuschaltbar. Reservierungen sind geplante Mieterlöse, keine garantierten
+Zahlungen. Die Vorschau verwendet Mietbeginn und Mietende; widersprüchliche
+Reservierungsdaten werden als Prüfhinweis ausgewiesen. Verträge ohne Enddatum
+werden nur für den gewählten Prognosezeitraum unverändert fortgeführt. Befristete
+Verträge werden nicht automatisch verlängert. Bei Pauschalen wird die
+zugeordnete Fahrzeugmiete nicht zusätzlich gezählt, auch nicht automatisch nach
+Ablauf der Pauschale. Erfasste laufende Zusatzkosten und bereits datierte
+Einmalposten fließen ein; das reine Strombedarf-Häkchen erzeugt keinen Preis.
+
+Der Vorjahresvergleich ist eine getrennte Referenz, keine zusätzlich erwartete
+Buchung. Er fehlt ausdrücklich, wenn kein Datenjahr vorhanden oder das
+Vergleichsjahr noch nicht abgeschlossen ist. Historische Werte beruhen auf den
+vorhandenen Vertragsdaten, nicht auf vollständig eingefrorenen damaligen
+Vertragsständen. Testjahre eignen sich nicht als Nachweis einer Saisonalität.
+Die bisherige einfache Jahreshochrechnung heißt **Lineare Hochrechnung**.
+
+**Keine Geldbewegung:** Die Prognose liest Daten, speichert keine Beträge und
+ändert weder Preise, Zahlungen, offene Forderungen, Rechnungen noch Steuerwerte.
+Sie prognostiziert Mieterlöse, nicht den Zeitpunkt tatsächlicher Zahlungseingänge.
+Ein Rechnungsablauf ist dafür nicht erforderlich. Die Erweiterung benötigt keine
+neue Datenbankmigration. Ein späteres Update muss trotzdem auf sonstige bereits
+ausstehende Migrationen geprüft werden.
+
 ## 2. Backups: einrichten, prüfen, wiederherstellen
 
 **Einrichten:** `PARKRR_BACKUP_KEY` setzen (mindestens 32 Zeichen, getrennt vom
@@ -235,7 +280,9 @@ ein langsamer Download hält sie nicht offen. Fehlende Altverknüpfungen werden
 weiterhin als Lücken ausgewiesen, nicht rekonstruiert.
 
 Für Belege gilt standardmäßig ein Gesamtlimit von 24 MiB unkomprimierter Daten
-je Export: `PARKRR_TAX_EXPORT_MAX_RECEIPT_MB` (1–1024). Sie liegen während des
+je Export: `PARKRR_TAX_EXPORT_MAX_RECEIPT_MB` (ganze Zahl von 1–1024). Ein leerer
+Wert nutzt den Standard; ein ungültiger Wert verhindert den Anwendungsstart,
+statt unbemerkt ein anderes Limit zu verwenden. Die Belege liegen während des
 Downloads in einer privaten temporären Datei. Im gehärteten Container sind
 32 MiB `/tmp` vorgesehen. Vor größeren Limits ein ausreichend großes privates
 Volume über `TMPDIR` bereitstellen; parallele Exporte benötigen entsprechend

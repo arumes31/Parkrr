@@ -418,7 +418,7 @@ func (h *Handler) UpdateRecurringCharge(w http.ResponseWriter, r *http.Request) 
 		serverError(w, r, "could not update recurring charge", err)
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	if !lockFinancialSource(w, r, tx, "recurring", id, 0) {
 		return
 	}

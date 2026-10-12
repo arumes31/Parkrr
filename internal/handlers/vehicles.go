@@ -829,7 +829,7 @@ func (h *Handler) ChangeVehicleStatus(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, "could not change status", err)
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := tx.QueryRow(ctx, `SELECT person_id FROM vehicles WHERE id=$1`, id).Scan(&personID); err != nil {
 		ensureVehicleWritable(w, false, err)
 		return
@@ -917,7 +917,7 @@ func (h *Handler) ChangeVehicleStatus(w http.ResponseWriter, r *http.Request) {
 		if oldEnd != nil {
 			end = *oldEnd
 		}
-		// Cancelling a future reservation closes it without inventing an invalid
+		// Canceling a future reservation closes it without inventing an invalid
 		// rental interval; collection, in contrast, must have a valid actual date.
 		if end.Before(start) && req.Status == models.StatusCancelled {
 			end = start
@@ -1009,10 +1009,6 @@ func (h *Handler) VehicleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-func (h *Handler) recordStatus(r *http.Request, vehicleID int64, oldStatus, newStatus, note string) {
-	_ = h.recordStatusTx(r, h.Pool, vehicleID, oldStatus, newStatus, note)
 }
 
 func (h *Handler) recordStatusTx(r *http.Request, q execer, vehicleID int64, oldStatus, newStatus, note string) error {
@@ -1253,7 +1249,7 @@ func (h *Handler) DuplicateVehicle(w http.ResponseWriter, r *http.Request) {
 		serverError(w, r, "could not duplicate vehicle", err)
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var categoryID int64
 	var period string
 	var sourceRate float64

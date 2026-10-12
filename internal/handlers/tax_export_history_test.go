@@ -9,6 +9,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,8 +18,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// buildTaxPaymentHistory reads its three linked tables from one read-only
+// snapshot. The existing tax summary has separate reads; reject a changed
+// payment set rather than silently joining its stale receipts to new history.
+func (h *Handler) buildTaxPaymentHistory(ctx context.Context, rep taxYearReport) (taxPaymentHistory, error) {
+	tx, err := h.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return taxPaymentHistory{}, fmt.Errorf("begin payment history snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	history, err := loadTaxPaymentHistory(ctx, tx, rep)
+	if err != nil {
+		return history, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return history, fmt.Errorf("finish payment history snapshot: %w", err)
+	}
+	return history, nil
+}
 
 func TestTaxPaymentHistoryManualReversal(t *testing.T) {
 	for _, target := range []string{"charge", "invoice"} {
