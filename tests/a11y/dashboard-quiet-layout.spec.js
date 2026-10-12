@@ -45,7 +45,7 @@ const futureEndings = Array.from({ length: 11 }, (_, index) => ({
   days_left: 8 + index, end_date: '2026-10-' + (20 + index),
 }));
 
-async function openQuietDashboard(page, { urgent = true } = {}) {
+async function openQuietDashboard(page, { urgent = true, portalRequests, blockFonts = false } = {}) {
   const requests = await mockUI(page, { role: 'admin', overrides: {
     ...overrides,
     '/overview': { year: 2026, current_year: 2026, available_years: [2025, 2026],
@@ -59,9 +59,9 @@ async function openQuietDashboard(page, { urgent = true } = {}) {
     '/occupancy': { active: 5, placed: 2, halls: [], trend: [] },
     '/invoices/overdue': urgent ? [{ id: 71, person_id: 1, person_name: 'Demo Rechnung',
       number: 'TEST-71', days_overdue: 12, open_amount: 200 }] : [],
-    '/portal-requests': urgent ? [{ id: 81, person_id: 2, person_name: 'Demo Abholwunsch',
+    '/portal-requests': portalRequests ?? (urgent ? [{ id: 81, person_id: 2, person_name: 'Demo Abholwunsch',
       kind: 'pickup', status: 'offen', created_at: '2026-10-12T08:00:00Z',
-      payload: { date: '2026-10-14', note: 'Synthetischer Abholwunsch' } }] : [],
+      payload: { date: '2026-10-14', note: 'Synthetischer Abholwunsch' } }] : []),
     '/vehicles/ending-soon': [
       ...(urgent ? [
         { id: 11, label: 'Mietende heute', person_name: 'Demo Heute', days_left: 0, end_date: '2026-10-12' },
@@ -76,6 +76,7 @@ async function openQuietDashboard(page, { urgent = true } = {}) {
     ] },
     '/backup/status': { enabled: false, targets: {} },
   } });
+  if (blockFonts) await page.route(/\.woff2(?:\?|$)/, route => route.abort());
   await page.goto(origin + '/#/dashboard');
   await expect(page.locator('#page')).toHaveAttribute('aria-busy', 'false');
   await expect(page.locator('.today-card')).toBeVisible();
@@ -86,8 +87,27 @@ const writes = requests => requests.filter(request => request.method !== 'GET')
   .map(({ path, method }) => ({ path, method }));
 
 async function expectNoOverflow(page, target) {
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const viewport = await page.evaluate(() => ({ width: innerWidth,
+    scrollWidth: document.documentElement.scrollWidth, fonts: document.fonts.status,
+    theme: document.documentElement.dataset.theme }));
+  expect(viewport.scrollWidth, JSON.stringify(viewport)).toBeLessThanOrEqual(viewport.width);
   if (target) expect(await target.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+}
+
+async function expectRequestRowsContained(page) {
+  const rows = page.locator('.pr-row');
+  for (const row of await rows.all()) {
+    await expectNoOverflow(page, row);
+    const bounds = await row.boundingBox();
+    for (const action of await row.getByRole('button').all()) {
+      await expect(action).toBeVisible();
+      const box = await action.boundingBox();
+      expect(box.x, 'request action starts inside its row').toBeGreaterThanOrEqual(bounds.x - 1);
+      expect(box.x + box.width, 'request action ends inside its row').toBeLessThanOrEqual(bounds.x + bounds.width + 1);
+    }
+    expect(await row.locator('.pay-main').evaluate(node => node.scrollWidth <= node.clientWidth + 1),
+      'request text reflows inside the row without clipping').toBe(true);
+  }
 }
 
 async function expectAccessible(page, selectors) {
@@ -157,6 +177,8 @@ for (const width of [1440, 390, 320]) {
     for (const theme of ['light', 'dark']) {
       await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
       await expectNoOverflow(page, today);
+      // A card can spill into the page gutter without overflowing the viewport on Windows.
+      await expectRequestRowsContained(page);
       await expectAccessible(page, ['.today-card', '.revenue-chart']);
       if (captureScreenshots) await page.screenshot({ path: testInfo.outputPath(`dashboard-quiet-${theme}-${width}.png`), fullPage: true });
     }
@@ -298,6 +320,42 @@ for (const width of [1440, 390, 320]) {
     expect(writes(requests)).toEqual([{ path: '/vehicles', method: 'POST' }]);
     expect(errors).toEqual([]);
   });
+}
+
+for (const width of [320, 390, 1440]) {
+  for (const blockFonts of [false, true]) {
+    test(`customer request actions stay contained at ${width}px with ${blockFonts ? 'fallback' : 'loaded'} fonts`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const personName = 'Kundenname' + 'Lang'.repeat(16);
+      const email = 'kontakt.' + 'lang'.repeat(18) + '@example.invalid';
+      const requests = await openQuietDashboard(page, { blockFonts, portalRequests: [
+        { id: 81, person_id: 2, person_name: personName, kind: 'pickup', status: 'offen',
+          created_at: '2026-10-12T08:00:00Z', payload: { date: '2026-10-14', note: 'Notiz' + 'Lang'.repeat(24) } },
+        { id: 82, person_id: 3, person_name: 'Demo Kontakt', kind: 'contact_update', status: 'offen',
+          created_at: '2026-10-12T08:00:00Z', payload: { email } },
+      ] });
+      await page.evaluate(() => document.fonts.ready);
+      const availableFonts = await page.evaluate(() => [
+        document.fonts.check('14px "Hanken Grotesk"'),
+        document.fonts.check('700 14px "Bricolage Grotesque"'),
+      ]);
+      expect(availableFonts, 'verify webfont and fallback scenarios really differ').toEqual([!blockFonts, !blockFonts]);
+      const rows = page.locator('.pr-row');
+      await expect(rows).toHaveCount(2);
+      await expect(rows.first().getByRole('link', { name: personName, exact: true })).toHaveAttribute('href', '#/person/2');
+      await expect(rows.last()).toContainText(email);
+      await expect(rows.first().getByRole('button', { name: 'Erledigt', exact: true })).toBeVisible();
+      await expect(rows.last().getByRole('button', { name: 'Übernehmen', exact: true })).toBeVisible();
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+        await expectRequestRowsContained(page);
+        await expectAccessible(page, ['.pr-row']);
+      }
+      await rows.first().getByRole('button', { name: 'Ablehnen', exact: true }).focus();
+      await expect(rows.first().getByRole('button', { name: 'Ablehnen', exact: true })).toBeFocused();
+      expect(writes(requests)).toEqual([]);
+    });
+  }
 }
 
 for (const width of [1440, 390]) {

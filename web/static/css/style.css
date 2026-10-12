@@ -1195,7 +1195,11 @@ div.empty .big svg { width: 30px; height: 30px; }
     border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font:inherit}
 .portal-err{color:var(--danger);font-size:var(--text-base)}
 /* Betreiber-Postfach */
-.pr-row{display:flex;align-items:center;gap:.6rem;padding:.45rem 0;border-bottom:1px solid var(--border)}
+.pr-row{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;padding:.45rem 0;border-bottom:1px solid var(--border)}
+/* Keep request text readable; move actions below it when the card is too narrow. */
+.pr-row > .pay-main{flex:1 1 18rem;min-width:0;overflow-wrap:anywhere}
+.pr-row > .card-actions{flex-wrap:wrap;max-width:100%;margin-inline-start:auto}
+.pr-row > .card-actions > .btn{max-width:100%;overflow-wrap:anywhere}
 .pr-row:last-of-type{border-bottom:0}
 /* Portal-Sprachumschalter (Hundert 89): rechts im Kopf, klein und unaufdringlich */
 /* Das min-height:32px stand hier und schlug mit (0,2,0) die 44px-Regel des
