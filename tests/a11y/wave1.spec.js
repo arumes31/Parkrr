@@ -21,7 +21,7 @@ test('person form warns about likely duplicates without blocking save', async ({
     '/search': [{ kind: 'person', label: 'Demo Berger 1', sub: 'demo0@example.invalid · +43 000 000000', url: '#/person/1' }],
   } });
   await page.goto(origin + '/#/persons');
-  await page.getByRole('button', { name: '+ Neu', exact: true }).click();
+  await page.getByRole('button', { name: '+ Person', exact: true }).click();
   await page.locator('#f_first_name').fill('Demo');
   await page.locator('#f_last_name').fill('Berger');
   await page.locator('#f_last_name').blur();

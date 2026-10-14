@@ -316,17 +316,53 @@ import { createRevenueChart } from './revenue-chart.js';
     // Toasts run through a small FIFO queue so several messages in quick succession are shown one
     // after another instead of the last one clobbering the rest. Rapid repeats of the same plain
     // message are deduped, and the backlog is capped so it can never flood (QW3).
-    let toastQ = [], toastCur = null;
+    let toastQ = [], toastCur = null, toastDeadline = 0, toastRemaining = 0;
     function hideToast() { $('#toast').hidden = true; toastCur = null; clearTimeout(toastTimer); setTimeout(pumpToast, 150); }
+    // Abgelaufen, ohne dass die Aktion gewählt wurde: erst JETZT darf onExpire laufen
+    // (deleteWithUndo löscht dort). So endet das Rückgängig-Fenster nie vor dem Hinweis,
+    // auch nicht, wenn er wegen Berührung oder Fokus angehalten war.
+    function expireToast() { const it = toastCur; hideToast(); if (it && it.onExpire) it.onExpire(); }
+    function armToast(ms) { clearTimeout(toastTimer); toastDeadline = Date.now() + ms; toastTimer = setTimeout(expireToast, ms); }
+    // Lesezeit statt fester Dauer: ~60 ms pro Zeichen, nie unter der vom Aufrufer
+    // verlangten Mindestdauer.
+    const toastMs = (it) => Math.max(it.ms, 1200 + 60 * String(it.text || '').length);
     function pumpToast() {
         if (toastCur || !toastQ.length) return;
-        const it = toastQ.shift(); toastCur = it; const box = $('#toast');
+        const it = toastQ.shift(); toastCur = it; toastRemaining = 0; it.shownAt = Date.now(); const box = $('#toast');
         box.innerHTML = ''; box.className = 'toast' + (it.kind ? ' ' + it.kind : ''); box.hidden = false;
         box.append(document.createTextNode(it.text + (it.action ? '  ' : '')));
-        if (it.action) { const btn = el('button', { class: 'toast-undo', type: 'button' }, it.actionLabel); btn.addEventListener('click', () => { it.action(); hideToast(); }); box.append(btn); }
-        clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, it.ms);
+        if (it.action) {
+            const btn = el('button', { class: 'toast-undo', type: 'button', title: it.undo ? it.actionLabel + ' (Strg+Z)' : null }, it.actionLabel);
+            btn.addEventListener('click', () => { it.action(); hideToast(); });
+            box.append(btn);
+        }
+        armToast(toastMs(it));
         if (it.onShow) { const f = it.onShow; it.onShow = null; f(); } // fire once, when the toast is actually visible
     }
+    // Wer den Hinweis berührt oder per Tastatur/Screenreader hineinspringt, liest ihn
+    // gerade: dann läuft die Zeit nicht weiter.
+    function pauseToast() { if (!toastCur || toastRemaining) return; clearTimeout(toastTimer); toastRemaining = Math.max(0, toastDeadline - Date.now()); }
+    function resumeToast() {
+        const box = $('#toast');
+        if (!toastCur || !toastRemaining || box.matches(':hover') || box.contains(document.activeElement)) return;
+        const left = toastRemaining; toastRemaining = 0; armToast(Math.max(left, 1500));
+    }
+    $('#toast').addEventListener('pointerenter', pauseToast);
+    $('#toast').addEventListener('pointerleave', () => setTimeout(resumeToast, 0));
+    $('#toast').addEventListener('focusin', pauseToast);
+    $('#toast').addEventListener('focusout', () => setTimeout(resumeToast, 0));
+    // Strg+Z / ⌘Z nimmt die letzte Änderung zurück, solange ihr Hinweis sichtbar ist.
+    // Nicht in Eingabefeldern (dort gehört Strg+Z dem Text) und nicht im Planer, der
+    // ein eigenes Rückgängig führt.
+    document.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'z') return;
+        const it = toastCur;
+        if (!it || !it.undo || !it.action) return;
+        if (e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+        if (parseHash().name === 'hall') return;
+        e.preventDefault();
+        it.action(); hideToast();
+    });
     function enqueueToast(it) {
         const last = toastQ.length ? toastQ[toastQ.length - 1] : toastCur;
         if (!it.action && last && last.text === it.text && !last.action) return; // skip an immediate repeat
@@ -339,10 +375,18 @@ import { createRevenueChart } from './revenue-chart.js';
             let plain = toastQ.filter((t) => !t.action).length;
             for (let i = 0; i < toastQ.length && plain > 4;) { if (!toastQ[i].action) { toastQ.splice(i, 1); plain--; } else i++; }
         }
+        // Eine neue Meldung wartet nicht die ganze Lesezeit einer alten ab: ein einfacher
+        // Hinweis (ohne Aktion, nicht angehalten) weicht, sobald er 1,5 s sichtbar war.
+        if (toastCur && !toastCur.action && !toastRemaining) {
+            const minLeft = toastCur.shownAt + 1500 - Date.now();
+            if (toastDeadline - Date.now() > minLeft) armToast(Math.max(0, minLeft));
+        }
         pumpToast();
     }
     function toast(msg, kind = '') { enqueueToast({ text: t(msg), kind, ms: 3000 }); }
-    function toastAction(msg, actionLabel, onAction, ms = 4500, onShow = null) { enqueueToast({ text: t(msg), action: onAction, actionLabel: t(actionLabel), ms, onShow }); }
+    function toastAction(msg, actionLabel, onAction, ms = 4500, onShow = null, onExpire = null) {
+        enqueueToast({ text: t(msg), action: onAction, actionLabel: t(actionLabel), ms, onShow, onExpire, undo: actionLabel === 'Rückgängig' });
+    }
 
     // ---------- confirm ----------
     // Rot heisst "geht verloren oder ist nicht umkehrbar". Bisher war JEDE Rueckfrage
@@ -417,16 +461,15 @@ import { createRevenueChart } from './revenue-chart.js';
         // Optimistic: the entry disappears immediately; the API call only runs
         // once the undo window has passed. Undo (or a failure) brings it back.
         if (node) node.hidden = true;
-        // Start the 4500ms commit timer only once the undo toast is actually VISIBLE (onShow), so a
-        // queued/delayed undo can never appear after the delete already fired — the undo window and
-        // the commit are always aligned.
-        let timer = null;
-        const start = () => { if (cancelled) return; timer = setTimeout(async () => {
+        // Gelöscht wird, wenn der Hinweis ABLÄUFT (onExpire) — nicht nach einem eigenen
+        // Timer. Ein angehaltener oder länger stehender Hinweis verlängert damit auch das
+        // Rückgängig-Fenster; "Rückgängig" kann nie nach dem Löschen noch sichtbar sein.
+        const commit = async () => {
             if (cancelled) return;
             try { await doDelete(); toast('Gelöscht', 'success'); onDone && onDone(); }
             catch (e) { toast(e.message, 'error'); if (node) node.hidden = false; onDone && onDone(); }
-        }, 4500); };
-        toastAction('Wird gelöscht …', 'Rückgängig', () => { cancelled = true; clearTimeout(timer); if (node) node.hidden = false; toast('Abgebrochen'); }, 4500, start);
+        };
+        toastAction('Wird gelöscht …', 'Rückgängig', () => { cancelled = true; if (node) node.hidden = false; toast('Abgebrochen'); }, 4500, null, commit);
     }
 
     // ---------- form modal ----------
@@ -1023,7 +1066,8 @@ import { createRevenueChart } from './revenue-chart.js';
         page.innerHTML = '';
         const head = el('div', { class: 'page-head' }, el('h2', {}, opts.title));
         if (opts.onAdd && opts.canAdd !== false) {
-            head.append(el('button', { class: 'btn btn-primary btn-sm', onclick: opts.onAdd }, '+ Neu'));
+            // Name statt "+ Neu": auf dem Telefon schwebt der Knopf ohne Seitenkopf (btn-add).
+            head.append(el('button', { class: 'btn btn-primary btn-sm btn-add', onclick: opts.onAdd }, opts.addLabel || '+ Neu'));
         }
         page.append(head);
 
@@ -1292,14 +1336,43 @@ import { createRevenueChart } from './revenue-chart.js';
             if (err.status === 401) return;
             if (mySeq !== renderSeq) return; // der Abbruch gehört zur alten Route — nicht anzeigen
             page.innerHTML = '';
+            const { text, tech } = routeErrorText(err);
             page.append(el('div', { class: 'empty route-error', role: 'alert' },
                 el('div', { class: 'page-head' }, el('h2', {}, 'Ansicht nicht geladen')),
-                el('p', {}, err.message || 'Die Verbindung ist unterbrochen. Bitte erneut versuchen.'),
+                el('p', {}, text),
+                tech ? el('details', { class: 'route-error-tech' }, el('summary', {}, 'Technische Details'), el('code', {}, tech)) : null,
                 el('button', { class: 'btn btn-primary', type: 'button', onclick: () => render() }, 'Erneut versuchen')));
             syncPageTitle(host);
         } finally {
             if (mySeq === renderSeq) host.setAttribute('aria-busy', 'false');
         }
+    }
+    // Seitenfehler in Alltagssprache: der Status sagt, was jetzt zu tun ist. Der rohe
+    // Servertext ("query failed", "HTTP 503") hilft nur beim Nachforschen und steht
+    // deshalb eingeklappt darunter. Unbekannte 4xx-Texte kommen vom Server bereits
+    // als Satz für Menschen (Validierung) und bleiben stehen.
+    function routeErrorText(err) {
+        const status = err && err.status;
+        const raw = String((err && err.message) || '').trim();
+        const tech = raw ? (status ? 'HTTP ' + status + ' · ' : '') + raw : '';
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        let text;
+        if (!status && (offline || err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(raw))) {
+            text = 'Keine Verbindung zum Server. Prüfe das Netz und versuche es erneut.';
+        } else if (status === 403) {
+            text = 'Für diese Ansicht fehlen dir die Rechte. Ein Admin kann sie freischalten.';
+        } else if (status === 404) {
+            text = 'Diesen Eintrag gibt es nicht mehr – vielleicht wurde er gelöscht.';
+        } else if (status === 429) {
+            text = 'Zu viele Anfragen in kurzer Zeit. Warte einen Moment und versuche es dann erneut.';
+        } else if (status === 503 || /database|datenbank|connection refused/i.test(raw)) {
+            text = 'Die Datenbank antwortet gerade nicht. Deine Daten sind sicher – versuche es in einer Minute erneut. Bleibt es dabei, prüfe den Datenbank-Container.';
+        } else if (status >= 500) {
+            text = 'Der Server konnte die Ansicht nicht laden. Versuche es erneut; bleibt der Fehler, steht der Grund im Server-Protokoll.';
+        } else {
+            return { text: raw || 'Die Verbindung ist unterbrochen. Bitte erneut versuchen.', tech: '' };
+        }
+        return { text, tech };
     }
     const PAGE_CONTEXT = {
         persons: 'Kontakte finden, offene Salden prüfen und die nächste Saison vorbereiten.',
@@ -1334,11 +1407,24 @@ import { createRevenueChart } from './revenue-chart.js';
         const intro = page.querySelector('.page-context') || page.firstElementChild;
         intro.after(nav);
     }
+    // Nur-Lesen-Konten sehen weder Schieber noch Bearbeiten-Knöpfe – der Seitenhinweis
+    // versprach ihnen trotzdem "direkt ändern". Wo der Text eine Änderung verspricht,
+    // gibt es hier die ehrliche Fassung.
+    const PAGE_CONTEXT_READ = {
+        persons: 'Kontakte finden und offene Salden prüfen.',
+        vehicles: 'Status und Zahlung ansehen. Ändern können Bearbeiter und Admins.',
+        vehicle: 'Status, Standort, Fotos und Übergabeprotokolle ansehen.',
+        finance: 'Zusatzkosten und ihren Zahlstatus ansehen.',
+        tariffs: 'Standardpreise und Leistungen ansehen.',
+        garages: 'Garage wählen, Halle öffnen und die Belegung ansehen.',
+        garage: 'Halle auswählen, um Belegung und Grundriss anzusehen.',
+    };
     function finishRouteLayout(page, route) {
         page.classList.add('screen-' + route);
         const head = page.querySelector(':scope > .page-head, :scope > .detail-head');
         if (!head) return; // Access-denied, missing records, and the planner own their layout.
-        if (PAGE_CONTEXT[route]) head.after(el('p', { class: 'page-context' }, PAGE_CONTEXT[route]));
+        const context = (!canManage() && PAGE_CONTEXT_READ[route]) || PAGE_CONTEXT[route];
+        if (context) head.after(el('p', { class: 'page-context' }, context));
         const back = head.querySelector('.back-btn');
         if (back && !back.hasAttribute('aria-label')) back.setAttribute('aria-label', 'Zurück');
         if (route === 'person') {
@@ -1867,7 +1953,7 @@ import { createRevenueChart } from './revenue-chart.js';
         mountList(page, {
             stateKey: 'persons', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Personen', emptyIcon: 'users', emptyText: 'Noch keine Personen.', sourcePath: '/persons',
-            onAdd: canManage() ? () => personForm() : null,
+            onAdd: canManage() ? () => personForm() : null, addLabel: '+ Person',
             items: state.persons,
             searchText: (p) => norm(personName(p) + ' ' + p.email + ' ' + p.phone),
             // Filter toggle: only persons with an open balance (Mahn-/Nachfass-Sicht).
@@ -2290,7 +2376,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 el('div', { class: 'sec-group' },
                     el('h3', { class: 'sec-eyebrow' }, 'Pauschalen'),
                     activeAg.length ? el('span', { class: 'sec-count' }, activeAg.length) : null),
-                canBill() ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => agreementForm(id, vehicles) }, '+ Pauschale') : null));
+                canBill() ? el('button', { class: 'btn-sect', type: 'button', onclick: () => agreementForm(id, vehicles) }, '+ Pauschale') : null));
             if (!ags.length) frCard.append(el('div', { class: 'card-meta', style: 'margin-top:.3rem' }, 'Keine Pauschale – Abrechnung je Gefährt.'));
             else activeAg.forEach((a) => frCard.append(agreementRow(id, a, vehicles, chargeByVeh)));
             if (activeAg.length === 0 && ags.length) frCard.append(el('div', { class: 'card-meta', style: 'margin-top:.3rem' }, 'Keine laufende Pauschale.'));
@@ -2310,7 +2396,9 @@ import { createRevenueChart } from './revenue-chart.js';
         const vh = el('div', { class: 'page-head section-head' },
             el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Einzelne Gefährte'),
                 activeVeh.length ? el('span', { class: 'sec-count' }, activeVeh.length) : null));
-        if (canManage()) vh.append(el('button', { class: 'btn btn-primary btn-sm', onclick: () => vehicleForm(null, id) }, '+ Gefährt'));
+        // Ein Stil für alle Abschnitts-"Hinzufügen" (wie "+ Anhang", "+ Foto"): vorher
+        // standen fünf gefüllte Hauptknöpfe, ein Geister- und ein Textknopf auf einer Seite.
+        if (canManage()) vh.append(el('button', { class: 'btn-sect', type: 'button', onclick: () => vehicleForm(null, id) }, '+ Gefährt'));
         page.append(vh);
         if (!activeVeh.length) page.append(el('p', { class: 'muted' }, 'Keine einzeln abgerechneten Gefährte.'));
         else activeVeh.forEach((v) => page.append(vehicleCard(v, { linkable: true, chargeInfo: chargeByVeh[v.id] })));
@@ -2326,7 +2414,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const ch = el('div', { class: 'page-head section-head' },
             el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Zusatzkosten'),
                 chCount ? el('span', { class: 'sec-count' }, chCount) : null));
-        if (canBill()) ch.append(el('button', { class: 'btn btn-primary btn-sm', onclick: () => chargeForm(id) }, '+ Position'));
+        if (canBill()) ch.append(el('button', { class: 'btn-sect', type: 'button', onclick: () => chargeForm(id) }, '+ Position'));
         page.append(ch);
         if (!chCount) page.append(el('p', { class: 'muted' }, 'Keine Zusatzkosten.'));
         else {
@@ -2341,7 +2429,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const pz = el('div', { class: 'page-head section-head' },
             el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Zahlungen'),
                 activePayments ? el('span', { class: 'sec-count' }, activePayments) : null));
-        if (canBill()) pz.append(el('button', { class: 'btn btn-primary btn-sm', onclick: () => paymentForm(id, stats) }, '+ Zahlung'));
+        if (canBill()) pz.append(el('button', { class: 'btn-sect', type: 'button', onclick: () => paymentForm(id, stats) }, '+ Zahlung'));
         page.append(pz);
         const kontoCard = el('div', { class: 'card konto' },
             kontoFig('Eingegangen ' + stats.year, eur(stats.payments_year), 'in'),
@@ -2362,7 +2450,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const rz = el('div', { class: 'page-head section-head' },
             el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Rechnungen'),
                 invoices.length ? el('span', { class: 'sec-count' }, invoices.length) : null));
-        if (canBill()) rz.append(el('button', { class: 'btn btn-primary btn-sm', onclick: (e) => createInvoiceFor(id, e.currentTarget) }, '+ Rechnung'));
+        if (canBill()) rz.append(el('button', { class: 'btn-sect', type: 'button', onclick: (e) => createInvoiceFor(id, e.currentTarget) }, '+ Rechnung'));
         page.append(rz);
         if (!invoices.length) page.append(el('p', { class: 'muted' }, 'Noch keine Rechnungen. „+ Rechnung" erstellt eine aus den offenen Einzelposten.'));
         else page.append(collapsibleRows(invoices, (iv) => invoiceRow(iv)));
@@ -3367,6 +3455,7 @@ import { createRevenueChart } from './revenue-chart.js';
     // Enddatum, Archivierung, Historie) und meldet das ECHTE Ergebnis (ok/fehl).
     const bulkSel = new Set();
     let bulkMode = false;
+    let vehFiltersOpen = false; // Telefon: Filtergruppe der Gefährte-Liste aufgeklappt
 
     function bulkBar() {
         const bar = el('div', { class: 'bulk-bar', hidden: !bulkMode });
@@ -3442,7 +3531,7 @@ import { createRevenueChart } from './revenue-chart.js';
         mountList(page, {
             stateKey: 'vehicles', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Gefährte', emptyIcon: 'car', emptyText: 'Keine Gefährte in dieser Ansicht.', sourcePath: '/vehicles',
-            onAdd: canManage() ? () => vehicleForm() : null,
+            onAdd: canManage() ? () => vehicleForm() : null, addLabel: '+ Gefährt',
             items: vehicles,
             searchText: (v) => norm([v.label, v.license_plate, v.category_name, v.person_name].join(' ')),
             sorts: [
@@ -3500,7 +3589,21 @@ import { createRevenueChart } from './revenue-chart.js';
                     'aria-pressed': String(!!cs.unplacedOnly), onclick: () => updateRouteQuery({ unplaced: cs.unplacedOnly ? null : 1 }) }, 'Ohne Platz');
                 const endingBtn = el('button', { class: 'btn btn-sm ' + (cs.endingDays ? 'btn-primary' : 'btn-ghost'), type: 'button',
                     'aria-pressed': String(!!cs.endingDays), onclick: () => updateRouteQuery({ ending: cs.endingDays ? null : 30 }) }, 'Endet bald');
-                return [stSel, peSel, activeBtn, unplacedBtn, endingBtn, arLabel, bulkBtn];
+                // Telefon: neun Bedienelemente füllten über die Hälfte des ersten Bildschirms.
+                // Die Filter liegen dort hinter "Filter (n)"; am Desktop löst sich die Gruppe
+                // per display:contents auf und alles steht wie bisher in der Leiste. Der
+                // Offen-Zustand überlebt das Neuzeichnen nach jedem Filterwechsel.
+                const active = [cs.status, cs.person, cs.activeOnly, cs.unplacedOnly, cs.endingDays, cs.showArchived].filter(Boolean).length;
+                const group = el('div', { class: 'filter-group' + (vehFiltersOpen ? ' open' : ''), id: 'veh-filters', role: 'group', 'aria-label': 'Filter' },
+                    stSel, peSel, activeBtn, unplacedBtn, endingBtn, arLabel);
+                const filterBtn = el('button', { class: 'btn btn-ghost btn-sm filter-toggle', type: 'button', 'aria-expanded': String(vehFiltersOpen), 'aria-controls': 'veh-filters' },
+                    'Filter', el('span', { class: 'filter-count' + (active ? ' on' : ''), 'aria-label': active + ' aktiv' }, String(active)));
+                filterBtn.addEventListener('click', () => {
+                    vehFiltersOpen = !vehFiltersOpen;
+                    group.classList.toggle('open', vehFiltersOpen);
+                    filterBtn.setAttribute('aria-expanded', String(vehFiltersOpen));
+                });
+                return [filterBtn, group, bulkBtn];
             },
             // Hide archived (closed) vehicles unless the Archiv toggle is on.
             extraFilter: (v, cs) => (cs.showArchived || !v.archived) &&
@@ -3612,6 +3715,11 @@ import { createRevenueChart } from './revenue-chart.js';
         if (compact) return el('span', { class: 'veh-loc veh-loc-ic empty', role: 'img', title: 'Nicht platziert', 'aria-label': 'Nicht platziert' }, icon('pin', 20));
         return el('span', { class: 'veh-loc empty' }, '○ Nicht platziert');
     }
+    // Kennzeichen als kleines Schild: im Hof ist es die Identität eines Fahrzeugs. Nur
+    // wenn es nicht ohnehin schon der Titel ist (vehicleTitle fällt darauf zurück).
+    const plateChip = (v) => (v.license_plate && v.label
+        ? el('span', { class: 'plate' }, el('span', { class: 'sr-only' }, 'Kennzeichen '), el('span', {}, v.license_plate))
+        : null);
     function vehicleCard(v, { linkable = true, chargeInfo = null } = {}) {
         const title = vehicleTitle(v);
         const rateUnit = v.billing_period === 'yearly' ? '/Jahr' : '/Monat';
@@ -3627,6 +3735,7 @@ import { createRevenueChart } from './revenue-chart.js';
             (c.covered ? 'Aufgelaufen (Rest): ' : 'Aufgelaufen: ') + eur(c.owed));
         const main = el('div', { style: 'flex:1;' + (linkable ? 'cursor:pointer' : ''), onclick: linkable ? () => navigate('vehicles/' + v.id) : null },
             el('h3', {}, esc(title)),
+            plateChip(v),
             el('div', { class: 'card-meta' }, el('span', { class: 'badge badge-cat' }, esc(v.category_name)), ' ', esc(v.person_name),
                 v.photo_count ? el('span', { class: 'muted' }, '  ', icon('camera', 13), ' ' + v.photo_count) : null),
             el('div', { class: 'card-meta' }, rateLine),
@@ -4582,8 +4691,10 @@ import { createRevenueChart } from './revenue-chart.js';
             fields: [
                 { name: 'person_id', label: 'Person', type: 'select', required: true, value: existing?.person_id ?? presetPerson ?? state.persons[0].id, options: state.persons.map((p) => ({ value: p.id, label: personName(p) })) },
                 { name: 'category_id', label: 'Tarif / Typ', type: 'select', required: true, value: initCat, options: state.categories.filter((c) => !c.archived || c.id === initCat).map((c) => ({ value: c.id, label: `${c.name} (${eur(c.default_monthly_cost)}/M, ${eur(c.default_yearly_cost)}/J)` + (c.archived ? ' · archiviert' : '') })) },
+                // Kennzeichen sichtbar ohne Aufklappen: beim Einstellen im Hof ist es das,
+                // was man vom Fahrzeug abliest. Die Bezeichnung bleibt optional.
+                { name: 'license_plate', label: 'Kennzeichen', value: existing?.license_plate, placeholder: 'z. B. W 12345 K' },
                 { name: 'label', label: 'Bezeichnung', value: existing?.label, placeholder: 'z. B. Wohnwagen Hobby', optional: 'Fahrzeugdetails' },
-                { name: 'license_plate', label: 'Kennzeichen', value: existing?.license_plate, optional: 'Fahrzeugdetails' },
                 { name: 'start_date', label: 'Einstelldatum', type: 'date', required: true, value: existing?.start_date ? existing.start_date.slice(0, 10) : today() },
                 { name: 'end_date', label: 'Abholdatum (optional)', type: 'date', value: existing?.end_date ? existing.end_date.slice(0, 10) : '', help: 'Leer lassen für laufende Miete.' },
                 { name: 'billing_period', label: 'Abrechnung', type: 'select', value: initPeriod, options: [{ value: 'monthly', label: 'monatlich' }, { value: 'yearly', label: 'jährlich' }] },
@@ -5000,7 +5111,7 @@ import { createRevenueChart } from './revenue-chart.js';
         page.append(el('div', { class: 'page-head' },
             el('div', {}, el('button', { class: 'back-btn', type: 'button', onclick: () => navigate('settings'), 'aria-label': 'Zurück zu Einstellungen' }, '‹'),
                 el('h2', { style: 'display:inline;margin-left:.65rem' }, 'Übergabevorlagen')),
-            canManage() ? el('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => handoverTemplateForm() }, '+ Neu') : null));
+            canManage() ? el('button', { class: 'btn btn-primary btn-sm btn-add', type: 'button', onclick: () => handoverTemplateForm() }, '+ Vorlage') : null));
         page.append(el('p', { class: 'route-intro' }, 'Textbausteine und Checklisten für Ein- und Auslagerungen. Eingefügter Text bleibt im Protokoll vollständig bearbeitbar.'));
         if (!templates.length) {
             page.append(emptyState('receipt', 'Noch keine Übergabevorlagen.'));
@@ -5062,7 +5173,7 @@ import { createRevenueChart } from './revenue-chart.js';
         mountList(page, {
             stateKey: 'charges', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Zusatzkosten', emptyIcon: 'receipt', emptyText: 'Keine Zusatzkosten erfasst.', sourcePath: '/charges',
-            onAdd: canBill() ? () => chargeForm() : null,
+            onAdd: canBill() ? () => chargeForm() : null, addLabel: '+ Position',
             items: charges,
             searchText: (c) => norm([c.person_name, c.description].join(' ')),
             sorts: [{ label: 'Neueste zuerst', cmp: (a, b) => new Date(b.charged_on) - new Date(a.charged_on) }, { label: 'Betrag', cmp: (a, b) => b.total - a.total }],
@@ -5374,9 +5485,9 @@ import { createRevenueChart } from './revenue-chart.js';
                 : 'Katalog für Zusatzleistungen (Strom, Reinigung …).'));
 
         const list = el('div', {});
-        // "+ Neu" opens a blank, already-expanded inline card at the top.
+        // "Neuer Tarif/Dienst" opens a blank, already-expanded inline card at the top.
         if (manage) {
-            const addBtn = el('button', { class: 'btn btn-primary btn-sm' },
+            const addBtn = el('button', { class: 'btn btn-primary btn-sm btn-add' },
                 icon('plus', 15), isCat ? ' Neuer Tarif' : ' Neuer Dienst');
             addBtn.addEventListener('click', () => {
                 // Keep at most one unsaved blank card, and clear the empty-state so
@@ -5583,7 +5694,7 @@ import { createRevenueChart } from './revenue-chart.js';
         mountList(page, {
             stateKey: 'users', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Benutzer', emptyIcon: 'users', emptyText: 'Keine Benutzer.',
-            onAdd: () => userForm(), items: users,
+            onAdd: () => userForm(), addLabel: '+ Benutzer', items: users,
             controls: (refresh, cs) => {
                 const roles = el('select', { 'aria-label': 'Rolle filtern' }, el('option', { value: '' }, 'Alle Rollen'),
                     ...Object.entries(ROLE_LABEL).map(([value, label]) => el('option', { value, selected: value === cs.role }, label)));
@@ -7038,7 +7149,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const garages = await api.get('/garages');
         page.innerHTML = '';
         const head = el('div', { class: 'page-head' }, el('h2', {}, 'Stellplätze'));
-        if (canManage()) head.append(el('button', { class: 'btn btn-primary btn-sm', onclick: () => garageForm() }, '+ Garage'));
+        if (canManage()) head.append(el('button', { class: 'btn btn-primary btn-sm btn-add', onclick: () => garageForm() }, '+ Garage'));
         page.append(head);
         if (!garages.length) { page.append(emptyState('box', 'Noch keine Garage. Lege zuerst eine Garage an und füge anschließend ihre Hallen hinzu.')); return; }
         const list = el('div', { class: 'storage-list' });
@@ -7214,8 +7325,10 @@ import { createRevenueChart } from './revenue-chart.js';
         // Fokussierbar, damit der scrollbare Plan auch per Tastatur (Pfeiltasten)
         // erreichbar ist — axe: scrollable-region-focusable.
         const planWrap = el('div', { class: 'gp-planwrap', tabindex: '0', role: 'region', 'aria-label': 'Hallenplan' }, planEl);
+        // Tippen statt Ziehen: Hinweiszeile über dem Plan, solange ein Gefährt "bereit" ist.
+        const armBar = el('div', { class: 'gp-armbar', role: 'status', hidden: true });
         const canvas = el('div', { class: 'gp-canvas card' },
-            el('div', { class: 'gp-canvas-top' }, ctitle, el('span', { class: 'gp-spacer' }), toolbar), metrics, planWrap);
+            el('div', { class: 'gp-canvas-top' }, ctitle, el('span', { class: 'gp-spacer' }), toolbar), metrics, armBar, planWrap);
 
         // rail
         const rail = el('div', { class: 'gp-rail' });
@@ -7224,11 +7337,15 @@ import { createRevenueChart } from './revenue-chart.js';
         // zugeklappten Text, und wer den Grundriss änderte, verlor ihn beim Wechsel.
         const plannerGuide = el('details', { class: 'planner-guide' }, el('summary', {}, 'Bedienung & Speichern',
             el('span', { class: 'planner-guide-hint' }, 'Gültige Platzierungen speichern sofort · Grundriss mit „Speichern“')),
-            el('p', {}, 'Stellplätze: Gefährt auswählen und im Plan platzieren. Gültige Platzierungen werden direkt gespeichert. Im Garagenplaner den Grundriss bearbeiten und mit „Speichern“ übernehmen.'));
+            el('p', {}, 'Stellplätze: Gefährt in „Nicht platziert“ antippen (oder Enter) und dann die Fläche antippen – oder es auf die Fläche ziehen. Gültige Platzierungen werden direkt gespeichert. Im Garagenplaner den Grundriss bearbeiten und mit „Speichern“ übernehmen.'));
         root.append(appbar, plannerGuide, stage);
 
         // Transparent capture layer for interactive wall drawing / node editing (plan mode).
         const drawOverlay = el('div', { class: 'gp-drawoverlay' }); drawOverlay.style.display = 'none'; planEl.append(drawOverlay);
+        // Vorschau des "bereit" gewählten Gefährts; liegt in planEl, weil draw() die Blockebene leert.
+        const armPrev = el('div', { class: 'gp-preview gp-armprev', hidden: true, 'aria-hidden': 'true' }, el('span', { class: 'gp-pl' }));
+        planEl.append(armPrev);
+        let armed = null; // { p, x, y, w, h } — Gefährt aus "Nicht platziert", wartet auf den Ablageort
         let nodeDrag = null, opDrag = null, zoneDrag = null, zoneDraw = null;
         // FE4 — multi-select of the CURRENT subsystem's objects only: zones in the Garagenmanager
         // (plan), vehicles in the Stellplatzsystem (manage) — mirroring interactive(b). selSet holds
@@ -7490,6 +7607,17 @@ import { createRevenueChart } from './revenue-chart.js';
         const keyHandler = (e) => {
             if (!root.isConnected) { window.removeEventListener('keydown', keyHandler); return; }
             const m = e.ctrlKey || e.metaKey, tag = (e.target.tagName || '').toLowerCase(), typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
+            // Bereit gewähltes Gefährt: Pfeile verschieben die Vorschau (⇧ = 0,1 m), Enter legt ab, Esc bricht ab.
+            if (armed && !typing && !m && !e.altKey) {
+                const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+                if (dir) {
+                    e.preventDefault();
+                    const st = e.shiftKey ? 0.1 : ((P.snap && P.gridStep) ? P.gridStep : 0.5);
+                    armed.x = round2(armed.x + dir[0] * st); armed.y = round2(armed.y + dir[1] * st); updateArm(); return;
+                }
+                if (e.key === 'Enter') { e.preventDefault(); commitArmed(); return; }
+                if (e.key === 'Escape') { e.preventDefault(); disarm(); return; }
+            }
             if (m && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); }
             else if (m && e.key.toLowerCase() === 'y') { e.preventDefault(); doRedo(); }
             else if (m && !typing && e.key.toLowerCase() === 'c' && P.mode === 'plan' && canManageNow && (selSet.length || P.sel != null)) { e.preventDefault(); copySel(); } // Strg+C = Auswahl kopieren
@@ -7808,6 +7936,7 @@ import { createRevenueChart } from './revenue-chart.js';
             occN.textContent = used + (used === 1 ? ' Gefährt' : ' Gefährte');
             const tot = polyArea(P.floor); let ve = 0; P.spots.forEach((b) => { ve += b.w * b.h; });
             occBar.style.width = Math.round(Math.min(100, ve / Math.max(1, tot) * 100)) + '%';
+            updateArm();
         }
         function drawFloor() {
             svg.innerHTML = '';
@@ -8688,13 +8817,13 @@ import { createRevenueChart } from './revenue-chart.js';
             [['0,1 m', 0.1, '0,1 Meter'], ['¼ m', 0.25, 'Viertelmeter'], ['½ m', 0.5, 'Halbmeter'], ['1 m', 1, '1 Meter']].forEach(([lab, step, spoken]) => { const on = P.snap && P.gridStep === step; seg.append(el('button', { class: on ? 'on' : '', 'aria-pressed': String(on), 'aria-label': 'Raster ' + spoken, onclick: () => { P.snap = true; P.gridStep = step; renderToolbar(); } }, lab)); });
             toolbar.append(seg);
             // Auto-Snap: objects fang flush against each other (in addition to the floor line).
-            if (canManageNow) toolbar.append(tb(icon('magnet', 15), 'Auto-Snap: Objekte fangen aneinander', () => { P.autoSnap = !P.autoSnap; renderToolbar(); toast(P.autoSnap ? 'Auto-Snap an' : 'Auto-Snap aus'); }, P.autoSnap));
-            if (canManageNow) toolbar.append(tb(icon('shield', 15), 'Pufferzonen zwischen Fahrzeugen (Taste P)', () => { P.buffer = !P.buffer; renderToolbar(); draw(); toast(P.buffer ? 'Pufferzonen an · ' + P.bufferM.toFixed(1).replace('.', ',') + ' m' : 'Pufferzonen aus'); }, P.buffer));
-            if (canManageNow) toolbar.append(tb(icon('car', 15), P.allowBlocking ? 'Zuparken erlaubt: Auto-Anordnen nutzt jeden m² (kein Auspark-Pfad-Check)' : 'Auspark-Pfad garantiert: kein Gefährt wird zugeparkt (Fahrstraße/Tor nötig)', () => { P.allowBlocking = !P.allowBlocking; renderToolbar(); toast(P.allowBlocking ? 'Zuparken erlaubt (max. Auslastung)' : 'Auspark-Pfad garantiert'); }, P.allowBlocking));
+            if (canManageNow) toolbar.append(tb(icon('magnet', 15), 'Auto-Snap: Objekte fangen aneinander', () => { P.autoSnap = !P.autoSnap; renderToolbar(); toast(P.autoSnap ? 'Auto-Snap an' : 'Auto-Snap aus'); }, P.autoSnap, 'gp-rare'));
+            if (canManageNow) toolbar.append(tb(icon('shield', 15), 'Pufferzonen zwischen Fahrzeugen (Taste P)', () => { P.buffer = !P.buffer; renderToolbar(); draw(); toast(P.buffer ? 'Pufferzonen an · ' + P.bufferM.toFixed(1).replace('.', ',') + ' m' : 'Pufferzonen aus'); }, P.buffer, 'gp-rare'));
+            if (canManageNow) toolbar.append(tb(icon('car', 15), P.allowBlocking ? 'Zuparken erlaubt: Auto-Anordnen nutzt jeden m² (kein Auspark-Pfad-Check)' : 'Auspark-Pfad garantiert: kein Gefährt wird zugeparkt (Fahrstraße/Tor nötig)', () => { P.allowBlocking = !P.allowBlocking; renderToolbar(); toast(P.allowBlocking ? 'Zuparken erlaubt (max. Auslastung)' : 'Auspark-Pfad garantiert'); }, P.allowBlocking, 'gp-rare'));
             if (canManageNow && P.mode === 'plan') toolbar.append(tb(icon('ruler', 15), 'Messen: Punkt A klicken, Punkt B klicken (Distanz + Winkel). Fängt an Wand-Ecken und -Kanten (Rand); ⇧ oder achsennah = waagrecht/senkrecht. Nochmal klicken = neu.', () => setTool(P.tool === 'measure' ? null : 'measure'), P.tool === 'measure'));
             // Adjustable buffer distance (vehicle↔vehicle), shown only while buffers are on. 0.5 m steps,
             // 0–5 m. draw() re-runs the bands + collision uses P.bufferM live. Session-only, like the toggle.
-            if (canManageNow && P.buffer) { const bseg = el('div', { class: 'gp-seg', title: 'Pufferdistanz zwischen Fahrzeugen' });
+            if (canManageNow && P.buffer) { const bseg = el('div', { class: 'gp-seg gp-rare', title: 'Pufferdistanz zwischen Fahrzeugen' });
                 const setBuf = (d) => { P.bufferM = Math.max(0, Math.min(5, +(P.bufferM + d).toFixed(1)));
                     P.spots.forEach((s) => { s._invalid = !validVeh(s, s._id); }); // re-flag vehicles now too close under the new clearance
                     draw(); toast('Puffer ' + P.bufferM.toFixed(1).replace('.', ',') + ' m'); }; // draw() re-renders the toolbar; toast announces the value (a11y)
@@ -8709,19 +8838,24 @@ import { createRevenueChart } from './revenue-chart.js';
                 toolbar.append(dseg); }
             // Manage custom planner icons (upload / rename / replace / delete) — placed on
             // the toolbar so it's reachable without first selecting a vehicle.
-            if (canManageNow && P.mode === 'manage') toolbar.append(tb(el('span', {}, icon('image', 15), ' Icons'), 'Eigene Planer-Icons verwalten', async () => { await plannerIconsDialog(); try { P.plannerIcons = await api.get('/planner-icons'); } catch (e) { /* keep old */ } draw(); if (P.sel) renderRail(); }));
+            if (canManageNow && P.mode === 'manage') toolbar.append(tb(el('span', {}, icon('image', 15), ' Icons'), 'Eigene Planer-Icons verwalten', async () => { await plannerIconsDialog(); try { P.plannerIcons = await api.get('/planner-icons'); } catch (e) { /* keep old */ } draw(); if (P.sel) renderRail(); }, undefined, 'gp-rare'));
             if (canManageNow && P.mode === 'manage') { const rb = tb(el('span', {}, icon('rotate', 15), ' Drehen'), 'Auswahl drehen', rotateSel); rb.disabled = !(P.sel && P.spots.find((s) => s._id === P.sel)); toolbar.append(rb); }
-            toolbar.append(tb('−', 'Verkleinern', () => { P.zoom = Math.max(0.5, +(P.zoom - 0.15).toFixed(2)); layout(); }));
-            toolbar.append(el('span', { class: 'gp-zoomlbl' }, Math.round((P.zoom || 1) * 100) + '%'));
-            toolbar.append(tb('+', 'Vergrößern', () => { P.zoom = Math.min(8, +(P.zoom + 0.15).toFixed(2)); layout(); }));
+            toolbar.append(tb('−', 'Verkleinern', () => { P.zoom = Math.max(0.5, +(P.zoom - 0.15).toFixed(2)); layout(); }, undefined, 'gp-rare'));
+            toolbar.append(el('span', { class: 'gp-zoomlbl gp-rare' }, Math.round((P.zoom || 1) * 100) + '%'));
+            toolbar.append(tb('+', 'Vergrößern', () => { P.zoom = Math.min(8, +(P.zoom + 0.15).toFixed(2)); layout(); }, undefined, 'gp-rare'));
             toolbar.append(tb('⤢ Passen', 'Einpassen & Raster an die Wände anpassen', () => { fitView(); }));
-            toolbar.append(tb('⭳ Export', 'Als PNG / PDF / SVG / DXF exportieren', () => openExportMenu()));
-            if (canManageNow) toolbar.append(tb('▤ Vorlagen', 'Wand-Layouts speichern & wiederverwenden', () => openTemplateMenu()));
-            toolbar.append(tb('?', 'Tastaturkürzel (Taste ?)', () => toggleShortcutHelp()));
+            toolbar.append(tb('⭳ Export', 'Als PNG / PDF / SVG / DXF exportieren', () => openExportMenu(), undefined, 'gp-rare'));
+            if (canManageNow) toolbar.append(tb('▤ Vorlagen', 'Wand-Layouts speichern & wiederverwenden', () => openTemplateMenu(), undefined, 'gp-rare'));
+            toolbar.append(tb('?', 'Tastaturkürzel (Taste ?)', () => toggleShortcutHelp(), undefined, 'gp-rare'));
             // Always render the save control (fixed width, centred) so it never appears/disappears
             // and reflows the wrapping toolbar mid-edit — that shift caused mis-clicks. Dirty → an
             // active "● Speichern"; clean → a disabled "✓ Gespeichert" status in the same slot.
             if (canManageNow) { const sv = tb(P.dirty ? '● Speichern' : '✓ Gespeichert', P.dirty ? 'Jetzt speichern (Auto-Save aktiv)' : 'Alle Änderungen gespeichert', () => { if (P.dirty) doSaveGeom(); }, false, P.dirty ? 'btn-primary' : ''); sv.disabled = !P.dirty; sv.style.minWidth = '7.5rem'; sv.style.textAlign = 'center'; toolbar.append(sv); }
+            // Telefon (≤ 900 px): seltene Werkzeuge (gp-rare) liegen hinter „Mehr“, damit der Plan
+            // im ersten Bildschirm beginnt. Am Desktop blendet CSS den Knopf aus und zeigt alles.
+            toolbar.append(tb(P.moreTools ? '× Weniger' : '⋯ Mehr', P.moreTools ? 'Seltene Werkzeuge ausblenden' : 'Weitere Werkzeuge',
+                () => { P.moreTools = !P.moreTools; renderToolbar(); }, !!P.moreTools, 'gp-more'));
+            toolbar.classList.toggle('show-rare', !!P.moreTools);
         }
         function rotateSel() {
             const b = P.spots.find((s) => s._id === P.sel); if (!b) return;
@@ -8876,7 +9010,17 @@ import { createRevenueChart } from './revenue-chart.js';
             return card;
         }
         function vehCard(p) {
-            const c = el('div', { class: 'gp-vehc', title: 'Auf die Fläche ziehen' }); c.dataset.pid = p.id;
+            const isArmed = !!(armed && armed.p.id === p.id);
+            const c = el('div', { class: 'gp-vehc' + (isArmed ? ' is-armed' : ''), title: canManageNow ? 'Antippen oder auf die Fläche ziehen' : '' }); c.dataset.pid = p.id;
+            // Echter Knopf über der ganzen Karte (kein Wrapper: ✎ und „Maße festlegen“ sind
+            // eigene Knöpfe). Maus und Finger laufen über den Zieh-Pfad am Rail (kurzer Tipp
+            // = auswählen); dieser Klick bedient nur die Tastatur (detail === 0).
+            if (canManageNow) {
+                const pick = el('button', { class: 'gp-vpick', type: 'button', 'aria-pressed': String(isArmed),
+                    'aria-label': p.label + (isArmed ? ' ist bereit – Fläche antippen oder Enter' : ' zum Platzieren auswählen') });
+                pick.addEventListener('click', (e) => { if (e.detail !== 0) return; if (isArmed) disarm(); else arm(p, true); });
+                c.append(pick);
+            }
             const hasDims = (p.length_m != null && p.width_m != null && p.height_m != null);
             let dimNode;
             if (hasDims) dimNode = el('div', { class: 'gp-vdm num' }, [p.length_m, p.width_m, p.height_m].map((n) => n.toFixed(1).replace('.', ',')).join(' × ') + ' m' + (p.weight_t != null ? ' · ' + p.weight_t.toFixed(2).replace('.', ',') + ' t' : ''));
@@ -8884,6 +9028,7 @@ import { createRevenueChart } from './revenue-chart.js';
             else dimNode = el('div', { class: 'gp-vdm num' }, 'Maße offen');
             c.append(el('span', { class: 'gp-vic' }, icon('car', 15)),
                 el('div', { style: 'min-width:0' }, el('div', { class: 'gp-vnm' }, p.label, p.type ? el('span', { class: 'gp-chip' }, p.type) : null), dimNode));
+            if (isArmed) c.append(el('span', { class: 'gp-armpill', 'aria-hidden': 'true' }, 'bereit'));
             if (canManageNow) {
                 const ed = el('button', { class: 'gp-vedit', title: 'Maße bearbeiten' }, '✎');
                 ed.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -9022,7 +9167,7 @@ import { createRevenueChart } from './revenue-chart.js';
         }
         function renderManageRail() {
             rail.append(hallSwitchCard(false));
-            const palCard = el('div', { class: 'gp-rcard card' }, el('h3', {}, 'Nicht platziert', el('span', { class: 'eyebrow' }, P.palette.length + ' · ziehen →')));
+            const palCard = el('div', { class: 'gp-rcard card gp-unplaced' }, el('h3', {}, 'Nicht platziert', el('span', { class: 'eyebrow' }, P.palette.length + (canManageNow ? ' · antippen oder ziehen' : ''))));
             const search = el('input', { class: 'gp-palsearch', type: 'search', placeholder: 'Gefährt suchen…', value: P.palQuery || '' });
             const pal = el('div', { class: 'gp-pal' });
             const fillPal = () => {
@@ -9653,18 +9798,34 @@ import { createRevenueChart } from './revenue-chart.js';
         });
         drawOverlay.addEventListener('pointercancel', () => { if (nodeDrag || opDrag || zoneDrag || zoneDraw) { nodeDrag = null; opDrag = null; zoneDrag = null; zoneDraw = null; draw(); } });
 
-        // ---- palette drag → place ----
+        // ---- palette drag → place (und Tippen statt Ziehen) ----
+        // Ein Zug beginnt erst ab 6 px Bewegung. Bleibt der Finger liegen, war es ein Tipp:
+        // das Gefährt wird "bereit" und der nächste Tipp auf die Fläche legt es ab. Bisher
+        // meldete ein Tipp nur "Auf die Fläche ziehen" — Tastatur- und Schalternutzer
+        // konnten ein bestimmtes Gefährt gar nicht platzieren (WCAG 2.1.1).
         let drag = null, prev = null;
         rail.addEventListener('pointerdown', (e) => {
             if (e.button !== 0 || P.mode !== 'manage' || !canManageNow) return;
             const c = e.target.closest('.gp-vehc'); if (!c) return;
             const p = P.palette.find((x) => x.id == c.dataset.pid); if (!p) return; e.preventDefault();
-            const g = el('div', { class: 'gp-ghost' }, icon('car', 14), ' ' + p.label); document.body.append(g);
-            prev = el('div', { class: 'gp-preview' }, el('span', { class: 'gp-pl' })); layer.append(prev);
-            drag = { p, g }; moveDrag(e); c.setPointerCapture(e.pointerId);
+            drag = { p, g: null, sx: e.clientX, sy: e.clientY }; c.setPointerCapture(e.pointerId);
         });
-        rail.addEventListener('pointermove', (e) => { if (drag) moveDrag(e); });
-        rail.addEventListener('pointerup', (e) => { if (drag) dropDrag(e); });
+        rail.addEventListener('pointermove', (e) => {
+            if (!drag) return;
+            if (!drag.g) {
+                if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 6) return;
+                if (armed) disarm();
+                drag.g = el('div', { class: 'gp-ghost' }, icon('car', 14), ' ' + drag.p.label); document.body.append(drag.g);
+                prev = el('div', { class: 'gp-preview' }, el('span', { class: 'gp-pl' })); layer.append(prev);
+            }
+            moveDrag(e);
+        });
+        rail.addEventListener('pointerup', (e) => {
+            if (!drag) return;
+            if (drag.g) { dropDrag(e); return; }
+            const p = drag.p; drag = null;
+            if (armed && armed.p.id === p.id) disarm(); else arm(p, false);
+        });
         // pointercancel (touch interruption etc.): drop any in-flight drag/edit state
         // so it can't get stuck and block further interaction.
         const cancelGesture = () => {
@@ -9677,7 +9838,9 @@ import { createRevenueChart } from './revenue-chart.js';
         svg.addEventListener('pointercancel', cancelGesture);
         layer.addEventListener('pointercancel', cancelGesture);
         rail.addEventListener('pointercancel', cancelGesture);
-        function calcPlace(e) { const r = planEl.getBoundingClientRect(), v = drag.p, def = catFoot(v.type); const w = num(v.length_m, def[0]), h = num(v.width_m, def[1]); let x = (e.clientX - r.left) / P.CELL - w / 2, y = (e.clientY - r.top) / P.CELL - h / 2; x = gsnap(x); y = gsnap(y); const p = snapPos({ rot: 0, w, h }, x, y); return { x: p.x, y: p.y, w, h }; }
+        const footFor = (v) => { const def = catFoot(v.type); return { w: num(v.length_m, def[0]), h: num(v.width_m, def[1]) }; };
+        function placeAt(v, clientX, clientY) { const r = planEl.getBoundingClientRect(), { w, h } = footFor(v); let x = (clientX - r.left) / P.CELL - w / 2, y = (clientY - r.top) / P.CELL - h / 2; x = gsnap(x); y = gsnap(y); const p = snapPos({ rot: 0, w, h }, x, y); return { x: p.x, y: p.y, w, h }; }
+        function calcPlace(e) { return placeAt(drag.p, e.clientX, e.clientY); }
         function moveDrag(e) {
             drag.g.style.left = (e.clientX + 14) + 'px'; drag.g.style.top = (e.clientY + 14) + 'px';
             const pc = calcPlace(e), ins = rectInPoly(pc, P.floor), col = collide({ kind: 'veh', x: pc.x, y: pc.y, w: pc.w, h: pc.h }, null), bad = !ins || col;
@@ -9688,8 +9851,13 @@ import { createRevenueChart } from './revenue-chart.js';
             const pc = calcPlace(e), rr = planEl.getBoundingClientRect(), over = e.clientX >= rr.left && e.clientX <= rr.right && e.clientY >= rr.top && e.clientY <= rr.bottom;
             drag.g.remove(); if (prev) { prev.remove(); prev = null; } const p = drag.p; drag = null;
             if (!over) { toast('Auf die Fläche ziehen', 'warn'); return; }
-            if (!rectInPoly(pc, P.floor)) { toast('Außerhalb der Hallenfläche — bleibt in „Nicht platziert"', 'warn'); return; }
-            if (collide({ kind: 'veh', x: pc.x, y: pc.y, w: pc.w, h: pc.h }, null)) { toast('Kein Platz frei hier — bleibt in „Nicht platziert“ · „Auto-Anordnen“ packt es automatisch', 'warn'); return; }
+            await placeFromPalette(p, pc);
+        }
+        // Gemeinsamer Ablageweg für Ziehen und Tippen. Ungültig heißt: nichts wird
+        // gespeichert, das Gefährt bleibt in „Nicht platziert“ (wie bisher).
+        async function placeFromPalette(p, pc) {
+            if (!rectInPoly(pc, P.floor)) { toast('Außerhalb der Hallenfläche — bleibt in „Nicht platziert"', 'warn'); return false; }
+            if (collide({ kind: 'veh', x: pc.x, y: pc.y, w: pc.w, h: pc.h }, null)) { toast('Kein Platz frei hier — bleibt in „Nicht platziert“ · „Auto-Anordnen“ packt es automatisch', 'warn'); return false; }
             try {
                 const geom = { x: round2(pc.x), y: round2(pc.y), w: round2(pc.w), h: round2(pc.h), rot: 0, status: 'busy' };
                 // Hall-unique persisted spot label (uq_spots_hall_label) — suffix the vehicle id
@@ -9704,9 +9872,72 @@ import { createRevenueChart } from './revenue-chart.js';
                 P.palette = P.palette.filter((x) => x.id !== p.id); P.sel = spot.id;
                 const nb = P.spots[P.spots.length - 1];
                 if ((nb.H != null && nb.H > P.tor) || (nb.t != null && nb.t > P.load)) toast('⚠ ' + p.label + ' platziert · Höhe/Gewicht', 'warn'); else toast('✓ ' + p.label + ' platziert', 'ok');
+                if (armed && armed.p.id === p.id) armed = null;
                 draw();
-            } catch (err) { toast(err.message || 'Platzieren fehlgeschlagen', 'error'); }
+                return true;
+            } catch (err) { toast(err.message || 'Platzieren fehlgeschlagen', 'error'); return false; }
         }
+        // Erster gültiger Platz für ein Gefährt dieser Größe, zeilenweise von links oben
+        // im Raster der gewählten Schrittweite (½ m, wenn frei). Nur ein Vorschlag: der
+        // Benutzer verschiebt ihn oder tippt woanders hin.
+        function findFree(w, h) {
+            if (!P.floor || P.floor.length < 3) return null;
+            const xs = P.floor.map((q) => q[0]), ys = P.floor.map((q) => q[1]);
+            const step = (P.snap && P.gridStep) ? Math.max(P.gridStep, 0.25) : 0.5;
+            const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+            for (let y = y0; y + h <= y1 + 1e-6; y += step) {
+                for (let x = x0; x + w <= x1 + 1e-6; x += step) {
+                    const cand = { kind: 'veh', x: round2(x), y: round2(y), w, h };
+                    if (rectInPoly(cand, P.floor) && !collide(cand, null)) return cand;
+                }
+            }
+            return null;
+        }
+        function arm(p, viaKeyboard) {
+            const { w, h } = footFor(p), free = findFree(w, h);
+            let x, y;
+            if (free) { x = free.x; y = free.y; }
+            else { const xs = P.floor.map((q) => q[0]), ys = P.floor.map((q) => q[1]); x = round2((Math.min(...xs) + Math.max(...xs) - w) / 2); y = round2((Math.min(...ys) + Math.max(...ys) - h) / 2); }
+            armed = { p, x, y, w, h };
+            renderRail(); updateArm();
+            try { armPrev.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) { /* ältere Browser */ }
+            if (viaKeyboard) rail.querySelector('.gp-vehc[data-pid="' + p.id + '"] .gp-vpick')?.focus({ preventScroll: true });
+        }
+        function disarm() {
+            if (!armed) return;
+            const id = armed.p.id; armed = null;
+            renderRail(); updateArm();
+            rail.querySelector('.gp-vehc[data-pid="' + id + '"] .gp-vpick')?.focus({ preventScroll: true });
+        }
+        function updateArm() {
+            if (!armed || P.mode !== 'manage') { armBar.hidden = true; armPrev.hidden = true; return; }
+            const cand = { kind: 'veh', x: armed.x, y: armed.y, w: armed.w, h: armed.h };
+            const ins = rectInPoly(cand, P.floor), col = collide(cand, null), ok = ins && !col;
+            armPrev.hidden = false;
+            armPrev.className = 'gp-preview gp-armprev' + (ok ? '' : ' bad');
+            armPrev.style.left = (armed.x * P.CELL) + 'px'; armPrev.style.top = (armed.y * P.CELL) + 'px';
+            armPrev.style.width = (armed.w * P.CELL) + 'px'; armPrev.style.height = (armed.h * P.CELL) + 'px';
+            armPrev.querySelector('.gp-pl').textContent = !ins ? 'außerhalb der Fläche' : col ? 'belegt/ausgenommen' : armed.p.label;
+            armBar.hidden = false; armBar.textContent = '';
+            armBar.append(el('span', {}, el('b', {}, armed.p.label), ' bereit · ',
+                ok ? 'Fläche antippen oder Enter legt hier ab' : 'hier ist kein Platz – Fläche antippen oder mit den Pfeiltasten verschieben',
+                ' · Esc bricht ab'),
+                el('button', { class: 'gp-tbtn', type: 'button', onclick: disarm }, 'Abbrechen'));
+        }
+        async function commitArmed() {
+            const a = armed; if (!a) return;
+            const ok = await placeFromPalette(a.p, { x: a.x, y: a.y, w: a.w, h: a.h });
+            if (ok) { updateArm(); requestAnimationFrame(() => rail.querySelector('.gp-vpick')?.focus({ preventScroll: true })); }
+        }
+        // Bereit + Tipp auf die Fläche: dort ablegen. Läuft vor Auswahl, Rahmen und
+        // Verschieben (Capture), damit der Tipp nicht zusätzlich etwas markiert.
+        planWrap.addEventListener('pointerdown', (e) => {
+            if (!armed || e.button !== 0 || spaceDown || P.mode !== 'manage') return;
+            e.preventDefault(); e.stopPropagation();
+            const pc = placeAt(armed.p, e.clientX, e.clientY);
+            armed.x = pc.x; armed.y = pc.y; updateArm();
+            commitArmed();
+        }, true);
 
         // Arrive-from-vehicle focus: select the target spot, then scroll it into view
         // and pulse it once so it's easy to spot. Consumed once.

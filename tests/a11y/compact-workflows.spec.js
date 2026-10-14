@@ -13,9 +13,11 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem('parkrr-veh', '0');
   });
 });
+// Die Hinzufügen-Knöpfe tragen den Namen ihrer Liste statt „+ Neu“.
+const ADD = { persons: '+ Person', vehicles: '+ Gefährt', finance: '+ Position' };
 const openNew = async (page, route) => {
   await page.goto(origin + '/#/' + route);
-  await page.getByRole('button', { name: '+ Neu', exact: true }).click();
+  await page.getByRole('button', { name: ADD[route], exact: true }).click();
   await expect(page.locator('#modal')).toBeVisible();
 };
 const save = async (page, writes) => {
@@ -164,9 +166,12 @@ test('vehicle rate follows the tariff only until manually changed; optional sett
   await expect(page.locator('#vehicle-rental-total')).toHaveText(/0,00/);
   await page.getByRole('button', { name: 'monatlich', exact: true }).click();
   await expect(page.locator('#f_rate')).toHaveValue('0');
-  await expect(page.getByLabel('Kennzeichen', { exact: true })).toBeHidden();
-  await page.getByText('Fahrzeugdetails', { exact: true }).click();
+  // Kennzeichen steht seit dem Vorher-Nachher-Durchgang ohne Aufklappen im Dialog;
+  // unter „Fahrzeugdetails“ bleibt die Bezeichnung.
   await expect(page.getByLabel('Kennzeichen', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Bezeichnung', { exact: true })).toBeHidden();
+  await page.getByText('Fahrzeugdetails', { exact: true }).click();
+  await expect(page.getByLabel('Bezeichnung', { exact: true })).toBeVisible();
   await page.getByText('Fahrzeugdetails', { exact: true }).click();
   await page.getByText('Notizen & Planer-Details', { exact: true }).click();
   await page.getByLabel('Notizen', { exact: true }).fill('Strom benötigt');

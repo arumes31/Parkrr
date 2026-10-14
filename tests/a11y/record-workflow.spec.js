@@ -21,7 +21,7 @@ test('person creation/edit, detail navigation and additional-cost payment surviv
   const lastName = 'Funktionsprüfung-' + tag;
   try {
     await page.goto('/#/persons');
-    await page.getByRole('button', { name: '+ Neu', exact: true }).click();
+    await page.getByRole('button', { name: '+ Person', exact: true }).click();
     const modal = page.locator('#modal');
     await modal.getByLabel('Vorname', { exact: true }).fill('UI');
     await modal.getByLabel('Nachname', { exact: true }).fill(lastName);
@@ -48,7 +48,7 @@ test('person creation/edit, detail navigation and additional-cost payment surviv
     expect(people.find(person => person.id === personId).phone).toBe('+43 123 456789');
 
     await page.goto('/#/finance');
-    await page.getByRole('button', { name: '+ Neu', exact: true }).click();
+    await page.getByRole('button', { name: '+ Position', exact: true }).click();
     await modal.getByRole('combobox', { name: 'Person', exact: true }).selectOption(String(personId));
     await modal.getByRole('combobox', { name: 'Bezeichnung', exact: true }).fill(lastName);
     await modal.getByRole('spinbutton', { name: 'Betrag (€)', exact: true }).fill('12.50');
