@@ -320,6 +320,10 @@ a.btn { text-decoration: none; }
    zugleich der Zweck. */
 .btn-ghost { background: transparent; border-color: var(--text-muted); }
 .btn-ghost:hover { background: var(--bg-elev-2); }
+/* Unumkehrbare Nebenaktion (Storno): rot umrandet statt rot gefuellt, damit sie
+   nicht mit der Hauptaktion konkurriert, aber auch nicht wie "Drucken" aussieht. */
+.btn-ghost-danger { background: transparent; color: var(--danger-hover); border-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.btn-ghost-danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); border-color: var(--danger); }
 .btn-sm { min-height: 36px; padding: 0.35rem 0.7rem; font-size: var(--text-base); }
 .btn-block { width: 100%; }
 .btn:disabled, .btn-icon:disabled { cursor: not-allowed; opacity: 0.55; transform: none; }
@@ -428,8 +432,13 @@ textarea { resize: vertical; min-height: 72px; }
 .u-pw-row .input-affix { flex: 1; min-width: 0; }
 .u-pw-row > .btn { flex: none; }
 .u-edit { margin-top: 0.55rem; }
-.u-dz-actions { display: flex; gap: 0.5rem; margin-top: 0.55rem; flex-wrap: wrap; }
+.u-dz-actions, .person-danger-actions { display: flex; gap: 0.5rem; margin-top: 0.55rem; flex-wrap: wrap; }
 .u-dz-actions .btn { flex: 0 1 auto; }
+/* Gefahrenzone der Personenseite: eigene Karte am Seitenende, daher ohne die
+   Trennlinie, die das Etikett innerhalb aufgeklappter Tarif-/Benutzerkarten traegt. */
+.person-danger { margin-top: 1.6rem; }
+.person-danger .tf-danger-label { margin-top: 0; padding-top: 0; border-top: 0; }
+.person-danger .card-meta { margin: 0.35rem 0 0; max-width: 72ch; }
 
 /* Tarife/Dienste: inline-editable config cards (accordion). */
 .cfg-head { display: flex; align-items: center; gap: 0.65rem; width: 100%; background: transparent; border: none; padding: 0; color: inherit; font: inherit; text-align: left; }
@@ -747,7 +756,7 @@ textarea { resize: vertical; min-height: 72px; }
 .stat.stat-click:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .stat.stat-click:hover { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); }
 /* Zusatzzeile unter dem Label: erklärt, WARUM die Kachel diese Farbe hat. */
-.stat .stat-note { font-size: var(--text-base); color: var(--text-muted); margin-top: 0.4rem; line-height: 1.4; }
+.stat .stat-note { font-size: var(--text-base); color: var(--text-muted); margin-top: 0.4rem; line-height: 1.4; overflow-wrap: anywhere; hyphens: auto; }
 .stat.tone-red .stat-note { color: var(--danger); font-weight: 600; }
 .stat.tone-teal .stat-ic, .stat.tone-green .stat-ic, .stat.tone-amber .stat-ic, .stat.tone-red .stat-ic { opacity: 0.85; }
 .stat.tone-teal .stat-ic { color: var(--primary-ink); }
@@ -962,6 +971,9 @@ div.empty .big svg { width: 30px; height: 30px; }
 .menu-sec:first-of-type { padding-top: .35rem; }
 .menu-item .ic { width: 1.4rem; text-align: center; opacity: 0.85; }
 .menu-item.danger { color: var(--danger-hover); }
+/* Aktuelle Seite im Menue — dieselbe Sprache wie der aktive Reiter der Leiste. */
+.menu-item[aria-current="page"] { background: var(--primary-soft); color: var(--tab-active); font-weight: 700; }
+.menu-item[aria-current="page"] .ic { opacity: 1; }
 
 /* ---------- Toolbar: search / sort / actions ---------- */
 .toolbar { display: flex; gap: 0.5rem; margin-bottom: 0.8rem; flex-wrap: wrap; align-items: center; }
@@ -1086,6 +1098,9 @@ div.empty .big svg { width: 30px; height: 30px; }
 /* ---------- Section rhythm: eyebrow section headers ---------- */
 .section-head { margin-top: 1.6rem; margin-bottom: 0.7rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); align-items: baseline; }
 .sec-eyebrow { margin: 0; font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--primary-ink); }
+/* Innerhalb einer Karte gewann `.card h3` (18px) — "PAUSCHALEN" stand doppelt so
+   gross wie jede andere Abschnittsmarke der Personenseite. */
+.card .sec-eyebrow { margin: 0; font-size: var(--text-xs); }
 .sec-group { display: flex; align-items: baseline; gap: 0.5rem; }
 .sec-count { background: var(--bg-elev-2); color: var(--text-muted); font-size: var(--text-xs); font-weight: 700; padding: 0.1rem 0.45rem; border-radius: 999px; font-variant-numeric: tabular-nums; }
 
@@ -1179,7 +1194,8 @@ div.empty .big svg { width: 30px; height: 30px; }
 .cal-day{font-size:var(--text-xs);color:var(--text-muted);font-variant-numeric:tabular-nums}
 .cal-ev{display:block;font-size:var(--text-xs);line-height:1.25;padding:1px 5px;border-radius:6px;color:#fff;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none}
-.cal-pickup{background:#0F7A73}.cal-reserve{background:#5B6DC8}.cal-due{background:#B4552F}.cal-wish{background:#8a6d1f}
+/* Reserviert ist ueberall Amber (Status-Schieber, Planer) — nur hier war es Indigo. */
+.cal-pickup{background:#0F7A73}.cal-reserve{background:var(--warning);color:var(--on-warning)}.cal-due{background:#B4552F}.cal-wish{background:#8a6d1f}
 .cal-legend{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.6rem;font-size:var(--text-sm);align-items:center}
 .cal-legend .cal-ev{display:inline-block}
 @media (max-width:639px){.cal-cell{min-height:56px}.cal-ev{font-size:var(--text-2xs)}}
@@ -1370,6 +1386,8 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
 .app-title,.app-title span{ font-weight:800; }
 .app-header .btn-icon{ color:var(--text-muted); background:var(--bg-elev); border:1px solid var(--border); border-radius:var(--radius-sm); }
 .app-header .btn-icon:hover{ background:var(--bg-elev-2); color:var(--text); }
+/* Liegt die aktuelle Seite im Menue, zeigt ☰ das wie ein aktiver Reiter an. */
+.app-header #menu-btn.is-current{ background:var(--primary-soft); color:var(--tab-active); border-color:color-mix(in srgb, var(--tab-active) 45%, transparent); }
 
 /* Backup-Indikator: mit der flachen Kopfzeile entfällt die frühere
    Verlaufs-Sonderpalette — die normalen Zustandsfarben (.bkdot--*) gelten wieder.
@@ -1526,7 +1544,7 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
 .card.pcard.is-owed::before{ background:var(--accent); opacity:.95; }
 .pcard__status{ display:flex; align-items:center; margin-right:.3rem; flex:none; }
 .pcard__owe{ font-family:var(--font-head); font-weight:800; font-variant-numeric:tabular-nums; color:var(--accent-text); font-size:var(--text-md); white-space:nowrap; }
-.pcard__paid{ font-family:var(--font-mono); font-weight:700; font-size:var(--text-2xs); letter-spacing:.09em; text-transform:uppercase; color:var(--success-text); background:color-mix(in srgb, var(--success) 15%, transparent); border-radius:999px; padding:.18rem .55rem; white-space:nowrap; }
+.pcard__paid{ font-family:var(--font-mono); font-weight:700; font-size:var(--text-xs); letter-spacing:.09em; text-transform:uppercase; color:var(--success-text); background:color-mix(in srgb, var(--success) 15%, transparent); border-radius:999px; padding:.18rem .55rem; white-space:nowrap; }
 
 /* ===== REDESIGN · iteration 3 (feedback) ===== */
 
@@ -1563,6 +1581,8 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
 /* Horizontal bars → taller, defined track + bolder fill so the extent reads */
 .bar-track{ height:16px; box-shadow:inset 0 0 0 1px var(--border); }
 .bar-fill{ min-width:8px; box-shadow:0 1px 3px rgba(0,0,0,.18); }
+/* Null bleibt leer: die Mindestbreite malte fuer "storniert 0" einen roten Strich. */
+.bar-fill.is-zero{ min-width:0; box-shadow:none; }
 .bar-val{ font-weight:800; color:var(--text); font-size:var(--text-md); }
 .status-name{ font-weight:600; color:var(--text); }
 
@@ -1662,6 +1682,9 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
 .pay-row .pay-method, .pay-head .pay-method{ font-weight:650; font-size:var(--text-md); }
 .pay-row .pay-date, .pay-head .pay-date{ font-size:var(--text-sm); color:var(--text-muted); overflow-wrap:anywhere; }
 .pay-row .pay-amt, .pay-head .pay-amt{ font-weight:750; font-size:var(--text-md); font-variant-numeric:tabular-nums; color:var(--success-text, var(--success)); white-space:nowrap; }
+/* Rechnungsliste: "überfällig seit …" steht als Text da; die Farbe verstärkt nur. */
+.pay-row .pay-date.is-overdue{ color:var(--danger-hover); font-weight:600; }
+.toolbar .inv-filter{ margin-bottom:0; }
 
 /* Payment card with a collapsible attribution breakdown (which Gefährt/Zeitraum). */
 .pay-card{ display:flex; flex-direction:column; }
@@ -1702,13 +1725,13 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
 .inv-title .inv-h{ font-weight:800; letter-spacing:.12em; font-size:1.2rem; color:var(--doc-ink-strong); }
 .inv-title .inv-num{ color:var(--doc-ink-muted); font-variant-numeric:tabular-nums; }
 .inv-parties{ display:flex; justify-content:space-between; gap:1rem; margin:1rem 0; flex-wrap:wrap; }
-.inv-label{ font-size:var(--text-2xs); font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--doc-ink-muted); }
+.inv-label{ font-size:var(--text-xs); font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--doc-ink-muted); }
 .inv-strong{ font-weight:700; }
 .inv-meta{ min-width:200px; }
 .inv-metarow{ display:flex; justify-content:space-between; gap:1rem; font-size:var(--text-base); padding:.1rem 0; }
 .inv-table{ width:100%; border-collapse:collapse; margin:.6rem 0; font-size:var(--text-base); }
 .inv-table th, .inv-table td{ padding:.45rem .5rem; border-bottom:1px solid var(--doc-rule); text-align:left; }
-.inv-table th{ font-size:var(--text-2xs); text-transform:uppercase; letter-spacing:.06em; color:var(--doc-ink-muted); background:var(--doc-fill); border-bottom:1.5px solid var(--doc-rule-strong); }
+.inv-table th{ font-size:var(--text-xs); text-transform:uppercase; letter-spacing:.06em; color:var(--doc-ink-muted); background:var(--doc-fill); border-bottom:1.5px solid var(--doc-rule-strong); }
 .inv-table .r{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .inv-totals{ margin-left:auto; max-width:320px; margin-top:.4rem; }
 .inv-totrow{ display:flex; justify-content:space-between; padding:.25rem 0; font-size:var(--text-md); }
@@ -1741,7 +1764,7 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
 .alloc-foot .is-credit{ color:var(--success-text, var(--success)); font-weight:700; }
 
 /* Rechnungs-Status-Badge */
-.inv-badge{ display:inline-block; font-size:var(--text-2xs); font-weight:800; letter-spacing:.04em; text-transform:uppercase;
+.inv-badge{ display:inline-block; font-size:var(--text-xs); font-weight:800; letter-spacing:.04em; text-transform:uppercase;
   padding:.1rem .4rem; border-radius:6px; vertical-align:middle; }
 .inv-badge.ok{ background:color-mix(in srgb, var(--success) 15%, transparent); color:var(--success-text); }
 .inv-badge.warn{ background:color-mix(in srgb, var(--warning) 15%, transparent); color:var(--warning-text); }
@@ -2248,6 +2271,8 @@ h1,h2,h3{ font-weight:800; letter-spacing:-.02em; }
 .portal-card > .portal-row:first-of-type { border-top: 0; }
 a.portal-row.link { text-decoration: none; color: inherit; }
 a.portal-row.link:hover { color: var(--primary-ink); }
+.portal-pdf { display: inline-flex; align-items: center; gap: .3rem; margin-top: .3rem; font-size: var(--text-xs); font-weight: 700; letter-spacing: .04em; color: var(--primary-ink); }
+.portal-pdf svg { flex: none; }
 .portal-foot { text-align: center; font-size: var(--text-base); padding-bottom: env(safe-area-inset-bottom); }
 
 @media (forced-colors: active) {
@@ -2431,8 +2456,12 @@ a.portal-row.link:hover { color: var(--primary-ink); }
 .invoice-scroll-hint { margin:.5rem 0 .75rem; font-size:var(--text-sm); line-height:1.5; }
 .invoice-document-actions { display:flex; align-items:center; gap:.5rem; flex-wrap:nowrap; max-width:100%; }
 .screen-invoices > .detail-head h2 { flex-basis:60% !important; }
+/* Alle Rechnungsaktionen bilden einen Block, der als Ganzes umbricht. Storno steht
+   zuletzt und mit etwas Abstand — die unumkehrbare Aktion nicht im Fluss der übrigen. */
+.invoice-actions { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; max-width:100%; }
+.invoice-actions > .btn-ghost-danger { margin-inline-start:.5rem; }
 @media (min-width:640px) {
-    .screen-invoices .invoice-document-actions { margin-inline-start:auto; }
+    .screen-invoices .invoice-actions { margin-inline-start:auto; justify-content:flex-end; }
 }
 /* Give tax amounts a full mobile row; size to the card, never split off the euro. */
 .screen-taxyear > .stat-grid { grid-template-columns:repeat(auto-fit,minmax(min(100%,18rem),1fr)); }
@@ -2545,6 +2574,12 @@ a.portal-row.link:hover { color: var(--primary-ink); }
 .planner-guide { margin:.75rem 0; color:var(--text-muted); font-size:var(--text-base); }
 .planner-guide summary { cursor:pointer; padding:.5rem 0; }
 .planner-guide p { max-width:72ch; margin:.5rem 0 1rem; }
+/* Die Anleitung sitzt auf der immer dunklen Planer-Flaeche. --text-muted ist das
+   APP-Grau und mass im hellen Theme 3,43:1 auf #0a141e (axe: color-contrast).
+   --gpmuted misst dort rund 7:1. */
+.gp .planner-guide { color:var(--gpmuted); }
+.planner-guide-hint { margin-left:.6rem; color:var(--gpink); font-size:var(--text-sm); }
+.planner-guide-hint::before { content:'·'; margin-right:.6rem; color:var(--gpmuted); }
 .gp-brand { min-width:0; }
 .gp-brand h2 { font-size:var(--text-md); margin:0; overflow-wrap:anywhere; }
 .gp-toolbar { flex-wrap:wrap; }
@@ -2771,6 +2806,10 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
     .linkbtn { min-height: 44px; }
     /* Auswahlkästchen der Mehrfachauswahl: 18px war auf dem Telefon kaum zu treffen. */
     .bulk-wrap > .bulk-cb { width: 24px; height: 24px; }
+    /* "Archiv" & Co.: das Kästchen mass ~13px; das Label ist mit klickbar, die
+       Zeile bekommt deshalb die volle Zielhöhe. */
+    .toggle-inline { min-height: 44px; }
+    .toggle-inline input { width: 24px; height: 24px; }
 }
 
 /* Steuerjahr (Einnahmenaufstellung) */

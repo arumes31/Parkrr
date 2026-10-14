@@ -197,7 +197,9 @@ for (const role of ['admin', 'editor', 'reader']) {
     await page.getByRole('button', { name: 'Menü', exact: true }).click();
     const menu = page.getByRole('dialog', { name: 'Menü', exact: true });
     const billing = menu.getByRole('button', { name: 'Rechnungs-Einstellungen', exact: true });
-    await expect(menu.getByRole('button', { name: 'Rechnungen', exact: true })).toHaveCount(0);
+    // "Rechnungen" ist seit dem Rechnungslisten-Durchgang die echte Liste (alle Rollen)
+    // und darf nie wieder zu den Einstellungen führen.
+    await expect(menu.getByRole('button', { name: 'Rechnungen', exact: true })).toHaveCount(1);
     if (role === 'admin') {
       await billing.click();
       await expect(page).toHaveURL(/#\/billing$/);
@@ -215,7 +217,7 @@ for (const role of ['admin', 'editor', 'reader']) {
       await result.click();
       await expect(page).toHaveURL(/#\/billing$/);
     } else {
-      await expect(palette.getByRole('status')).toHaveText('Keine Treffer.');
+      await expect(palette.getByRole('option').filter({ hasText: 'Rechnungen' })).toHaveCount(1);
       await expect(palette.getByText('Rechnungs-Einstellungen', { exact: true })).toHaveCount(0);
       await page.keyboard.press('Escape');
       await open(page, 'billing');

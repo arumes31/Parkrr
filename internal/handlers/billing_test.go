@@ -665,6 +665,77 @@ func TestOverdueInvoices(t *testing.T) {
 	}
 }
 
+// TestAllInvoices: die globale Rechnungsliste zeigt jede Rechnung mit dem Namen der
+// Person und demselben abgeleiteten Status wie die Personenseite — offen, nach der
+// Zahlung bezahlt, und nach dem Storno das Original als storniert plus den
+// Gegenbeleg. X-Total-Count muss gesetzt sein, sonst erkennt die Liste keine Kürzung.
+func TestAllInvoices(t *testing.T) {
+	h := testHandler(t)
+	compliantSeller(t, h)
+	pid := createIntegrationPerson(t, h)
+	chargeFor(t, h, pid, 100)
+	iv := createInvoice(t, h, pid)
+
+	list := func() map[int64]invoice {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.AllInvoices(rec, httptest.NewRequest(http.MethodGet, "/api/invoices", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("all invoices: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec.Header().Get("X-Total-Count") == "" {
+			t.Fatal("X-Total-Count fehlt")
+		}
+		var got []invoice
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		byID := map[int64]invoice{}
+		for _, g := range got {
+			byID[g.ID] = g
+		}
+		return byID
+	}
+
+	got, ok := list()[iv.ID]
+	if !ok {
+		t.Fatalf("invoice %d missing from the global list", iv.ID)
+	}
+	if got.PersonID != pid || got.PersonName != "Pay Integration" || got.Number != iv.Number {
+		t.Errorf("identity wrong: %+v", got)
+	}
+	if got.Status != "offen" || got.OpenAmount != 100 {
+		t.Errorf("open invoice wrong: status %q open %v", got.Status, got.OpenAmount)
+	}
+
+	payInvoices(t, h, pid, map[string]any{"amount": 100, "method": "bar", "auto": true})
+	if got := list()[iv.ID]; got.Status != "bezahlt" || got.OpenAmount != 0 {
+		t.Errorf("paid invoice must read bezahlt with nothing open: status %q open %v", got.Status, got.OpenAmount)
+	}
+
+	// Storno: a second invoice is canceled; both documents appear with their own status.
+	chargeFor(t, h, pid, 40)
+	iv2 := createInvoice(t, h, pid)
+	creq := httptest.NewRequest(http.MethodPost, "/api/invoices/"+strconv.FormatInt(iv2.ID, 10)+"/cancel", nil)
+	creq.SetPathValue("id", strconv.FormatInt(iv2.ID, 10))
+	crec := httptest.NewRecorder()
+	h.CancelInvoice(crec, creq)
+	if crec.Code != http.StatusOK {
+		t.Fatalf("cancel: %d %s", crec.Code, crec.Body.String())
+	}
+	var storno invoice
+	if err := json.Unmarshal(crec.Body.Bytes(), &storno); err != nil || storno.ID == 0 {
+		t.Fatalf("decode storno: %v", err)
+	}
+	all := list()
+	if all[iv2.ID].Status != "storniert" {
+		t.Errorf("canceled original must read storniert, got %q", all[iv2.ID].Status)
+	}
+	if all[storno.ID].Status != "storno" {
+		t.Errorf("counter-document must read storno, got %q", all[storno.ID].Status)
+	}
+}
+
 // Die Kalenderansicht ruft /api/invoices/overdue MIT ?due_until= auf. Dieser Pfad
 // baute die Zählabfrage aus der Klausel der LISTE zusammen ($3) und übergab ihr
 // einen einzigen Parameter: PostgreSQL wies sie ab, totalCount verschluckt einen

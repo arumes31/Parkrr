@@ -117,6 +117,9 @@ import { createRevenueChart } from './revenue-chart.js';
         close: '<path d="M6 6l12 12M18 6 6 18"/>',
         settings: '<path d="M6 4v7M6 15v5M12 4v3M12 11v9M18 4v11M18 19v1"/><circle cx="6" cy="13" r="1.8"/><circle cx="12" cy="9" r="1.8"/><circle cx="18" cy="17" r="1.8"/>',
         users: '<circle cx="9" cy="8" r="3.4"/><path d="M3.5 20c.6-3.4 2.9-5.2 5.5-5.2s4.9 1.8 5.5 5.2"/><path d="M16 5.4a3.4 3.4 0 0 1 0 5.9M17.8 14.9c1.6.8 2.6 2.4 3 5.1"/>',
+        // Person mit Kreuz: Anonymisieren entfernt die Stammdaten. Bisher das Schild,
+        // das auch 2FA, Backup und Pufferzonen bedeutet und eher "schützen" liest.
+        userx: '<circle cx="9" cy="8" r="3.4"/><path d="M3.5 20c.6-3.4 2.9-5.2 5.5-5.2s4.9 1.8 5.5 5.2"/><path d="M16.5 8.5l4 4M20.5 8.5l-4 4"/>',
         log: '<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 8.5h6M9 12h6M9 15.5h4"/>',
         upload: '<path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/>',
         download: '<path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 19h14"/>',
@@ -342,13 +345,22 @@ import { createRevenueChart } from './revenue-chart.js';
     function toastAction(msg, actionLabel, onAction, ms = 4500, onShow = null) { enqueueToast({ text: t(msg), action: onAction, actionLabel: t(actionLabel), ms, onShow }); }
 
     // ---------- confirm ----------
-    function confirmDialog(title, message, okLabel = 'Löschen') {
+    // Rot heisst "geht verloren oder ist nicht umkehrbar". Bisher war JEDE Rueckfrage
+    // rot — auch "Rechnung erstellen?" —, und wer taeglich durch Rot klickt, klickt
+    // auch beim Loeschen durch. tone 'neutral' behaelt denselben Dialog, aber ohne
+    // Warnsymbol und mit der normalen Hauptaktion. Standard bleibt 'danger'.
+    function confirmDialog(title, message, okLabel = 'Löschen', { tone = 'danger' } = {}) {
         return new Promise((resolve) => {
             const dlg = $('#confirm');
+            const danger = tone !== 'neutral';
+            dlg.classList.toggle('modal-danger', danger);
+            dlg.querySelector('.confirm-ic').hidden = !danger;
             $('#confirm-title').textContent = title;
             $('#confirm-body').textContent = message;
             const ok = $('#confirm-ok'); const cancel = $('#confirm-cancel');
             ok.textContent = okLabel;
+            ok.classList.toggle('btn-danger', danger);
+            ok.classList.toggle('btn-primary', !danger);
             let settled = false;
             const done = (v) => {
                 ok.removeEventListener('click', onOk);
@@ -1176,8 +1188,12 @@ import { createRevenueChart } from './revenue-chart.js';
         return { name: name || 'dashboard', id: id ? Number(id) : null, query: new URLSearchParams(search) };
     }
     // garage/hall sind Unteransichten des Planers und markieren denselben Reiter.
+    // Kalender öffnet die Übersicht, Übergabevorlagen gehören zu den Gefährten.
     const TAB_FOR = { dashboard: 'dashboard', persons: 'persons', person: 'persons', vehicles: 'vehicles', vehicle: 'vehicles', tariffs: 'tariffs',
-        garages: 'garages', garage: 'garages', hall: 'garages' };
+        garages: 'garages', garage: 'garages', hall: 'garages', calendar: 'dashboard', 'handover-templates': 'vehicles' };
+    // Ziele, die nur im Menü (☰) stehen: dort markiert, und ☰ selbst zeigt an, dass
+    // die aktuelle Seite darin liegt — bisher war auf diesen Seiten nichts markiert.
+    const MENU_ROUTES = new Set(['invoices', 'billing', 'finance', 'taxyear', 'settings', 'users', 'audit', 'backup']);
     function navigate(path) {
         if (('#/' + path) === location.hash) render();
         else location.hash = '#/' + path;
@@ -1245,6 +1261,10 @@ import { createRevenueChart } from './revenue-chart.js';
             if (on) t.setAttribute('aria-current', 'page');
             else t.removeAttribute('aria-current');
         });
+        // Nur sichtbar markiert; der Name "Menü" bleibt stabil (Sprachsteuerung).
+        // Im geöffneten Menü trägt der Eintrag der Seite aria-current="page".
+        const menuBtn = $('#menu-btn');
+        if (menuBtn) menuBtn.classList.toggle('is-current', MENU_ROUTES.has(routeName));
         const host = $('#page');
         host.setAttribute('aria-busy', 'true');
         const status = $('#route-status');
@@ -1516,7 +1536,8 @@ import { createRevenueChart } from './revenue-chart.js';
         const items = [];
         (overdue || []).forEach((invoice) => items.push({
             priority: 0, tone: 'critical', title: invoice.person_name + ' · Rechnung ' + invoice.number,
-            meta: invoice.days_overdue + ' Tage überfällig · ' + eur(invoice.open_amount) + ' offen · Buchhaltung',
+            meta: (invoice.days_overdue > 0 ? invoice.days_overdue + (invoice.days_overdue === 1 ? ' Tag' : ' Tage') + ' überfällig' : 'heute fällig')
+                + ' · ' + eur(invoice.open_amount) + ' offen · Buchhaltung',
             href: '#/invoices/' + invoice.id, action: 'Rechnung öffnen',
         }));
         (portalRequests || []).filter((request) => request.status === 'offen').forEach((request) => items.push({
@@ -1640,12 +1661,16 @@ import { createRevenueChart } from './revenue-chart.js';
             umsatz.querySelector('.label').textContent = yd.label;
         }
         // "Eingegangen" = recorded payments (money-in log); surfaced next to Umsatz
-        // once any payment exists, distinct from "Bezahlt" (the paid-flag total).
+        // once any payment exists, distinct from "Als bezahlt markiert" (the paid-flag total).
         const moneyRow = el('div', { class: 'stat-grid dash-money' }, umsatz);
         if ((Number(ov.payments_this_year) || 0) > 0 || (Number(ov.payments_total) || 0) > 0) {
             moneyRow.append(stat(eur(ov.payments_this_year), 'Eingegangen ' + ov.year, { icon: 'receipt', tone: 'teal' }));
         }
-        moneyRow.append(stat(eur(ov.paid_total), 'Bezahlt', { icon: 'check', tone: 'green' }));
+        // Summe der Bezahlt-MARKIERUNGEN auf den Karten — kein Geldeingang. Neben
+        // "Eingegangen" hiess sie bisher schlicht "Bezahlt" und widersprach dem Ledger.
+        const flagged = stat(eur(ov.paid_total), 'Als bezahlt markiert', { icon: 'check', tone: 'green' });
+        flagged.append(el('div', { class: 'stat-note' }, 'Markierung auf den Karten · kein Zahlungseingang'));
+        moneyRow.append(flagged);
         page.append(moneyRow);
         // Compare-mode switch for the Umsatz delta — only when there is a prior year
         // to compare against. Choice is persisted across visits.
@@ -1717,7 +1742,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 if (bs.enabled) parts.push('verschlüsselt');
                 tile.append(el('div', { class: 'stat-note' }, parts.join(' · ')));
                 tile.setAttribute('title', targets.map(([name, th]) => name + ': Zeitplan ' + (th.cron || 'aus')
-                    + ', letzter Erfolg ' + (th.last_at ? new Date(th.last_at).toLocaleString('de-AT') : 'nie')).join(' | ')
+                    + ', letzter Erfolg ' + (th.last_at ? fmtDateTime(th.last_at) : 'nie')).join(' | ')
                     + ' — klicken für die Backup-Verwaltung');
                 slot.append(tile);
             }).catch(() => { /* Backup-Status ist Zusatzinfo, nie ein Grund die Übersicht zu stören */ });
@@ -1740,7 +1765,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 spark.append(svgEl('polyline', { points: tr.map((d, i) => px(i).toFixed(1) + ',' + py(d.placed).toFixed(1)).join(' '), fill: 'none', class: 'dash-spark-line' }));
                 spark.append(svgEl('circle', { cx: String(px(n - 1)), cy: String(py(tr[n - 1].placed)), r: '2.6', class: 'dash-spark-dot' }));
                 occCard.append(el('div', { class: 'dash-spark-wrap' },
-                    el('div', { class: 'muted', style: 'font-size:.72rem;margin:.4rem 0 .12rem' }, 'Trend · platziert (letzte ' + n + ' Aufnahmen, max ' + mx + ')'), spark));
+                    el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin:.4rem 0 .12rem' }, 'Trend · platziert (letzte ' + n + ' Aufnahmen, max ' + mx + ')'), spark));
             }
             // UX4 — per-hall occupancy as a small proportional bar chart (inline SVG-free, CSP-safe).
             const halls = (occ.halls || []).filter((hh) => hh.placed > 0);
@@ -1749,7 +1774,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 occCard.append(el('div', { class: 'status-row dash-occrow' },
                     el('div', { class: 'status-name' },
                         el('span', { class: 'occ-hallnm' }, esc(hh.name)),
-                        el('span', { class: 'muted occ-garnm', style: 'font-weight:400;font-size:.72rem;margin-left:.4rem' }, esc(hh.garage_name))),
+                        el('span', { class: 'muted occ-garnm', style: 'font-weight:400;font-size:var(--text-xs);margin-left:.4rem' }, esc(hh.garage_name))),
                     el('div', { class: 'dash-bar', title: hh.placed + ' platziert' }, el('div', { class: 'dash-bar-fill', style: 'width:' + Math.round((hh.placed || 0) / maxP * 100) + '%' })),
                     el('div', { class: 'bar-val' }, String(hh.placed))));
             });
@@ -1762,7 +1787,7 @@ import { createRevenueChart } from './revenue-chart.js';
             const oweCard = el('div', { class: 'owe-card' });
             oweCard.append(el('div', { class: 'owe-head' },
                 el('span', { class: 'sec-eyebrow' }, 'Top offene Salden'),
-                el('span', { class: 'muted', style: 'font-size:.75rem' }, eur(ov.outstanding_total) + ' gesamt')));
+                el('span', { class: 'muted', style: 'font-size:var(--text-sm)' }, eur(ov.outstanding_total) + ' gesamt')));
             ov.top_outstanding.forEach((o, i) => {
                 oweCard.append(el('button', { class: 'owe-row', onclick: () => navigate('persons/' + o.person_id),
                     'aria-label': o.name + ' öffnen · ' + eur(o.outstanding) + ' offen' },
@@ -1791,7 +1816,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const bars = el('div', { class: 'bars' });
         for (const st of ['stored', 'reserved', 'collected', 'cancelled']) {
             const n = sc[st] || 0;
-            const fill = el('div', { class: 'bar-fill', style: `background:${STATUS_COLOR[st]}` });
+            const fill = el('div', { class: 'bar-fill' + (n ? '' : ' is-zero'), style: `background:${STATUS_COLOR[st]}` });
             bars.append(el('div', { class: 'status-row' },
                 el('div', { class: 'status-name' }, el('span', { class: 'status-dot', style: `background:${STATUS_COLOR[st]}` }), STATUS_LABEL[st]),
                 el('div', { class: 'bar-track' }, fill),
@@ -1809,7 +1834,7 @@ import { createRevenueChart } from './revenue-chart.js';
 
         page.append(el('div', { class: 'chart-card' },
             el('h3', {}, 'Export (CSV)'),
-            el('div', { class: 'muted', style: 'font-size:.82rem;margin:-.35rem 0 .7rem' }, 'Für Buchhaltung/Steuerberater — öffnet direkt in Excel/LibreOffice.'),
+            el('div', { class: 'card-meta', style: 'margin:-.35rem 0 .7rem' }, 'Für Buchhaltung/Steuerberater — öffnet direkt in Excel/LibreOffice.'),
             el('div', { class: 'btn-row', style: 'flex-wrap:wrap;gap:.5rem' },
                 expLink('outstanding', 'Offene Posten'),
                 el('a', { class: 'btn btn-ghost btn-sm', href: '/api/reports/outstanding.pdf', download: '' }, icon('receipt', 15), ' Offene Posten (PDF)'),
@@ -1906,8 +1931,9 @@ import { createRevenueChart } from './revenue-chart.js';
                                 // lehnt das Wiederbefüllen ohnehin ab (AND NOT anonymized), ein
                                 // sichtbares Formular würde also nur einen stillen Fehlschlag anbieten.
                                 canManage() && !p.anonymized && el('button', { class: 'btn btn-ghost btn-sm', title: personName(p) + ' bearbeiten', 'aria-label': personName(p) + ' bearbeiten', onclick: () => personForm(p) }, icon('edit')),
-                                canManage() && !p.anonymized && el('button', { class: 'btn btn-ghost btn-sm', title: personName(p) + ' anonymisieren (DSGVO)', 'aria-label': personName(p) + ' anonymisieren', onclick: () => anonymizePerson(p) }, icon('shield')),
-                                canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: personName(p) + ' löschen', 'aria-label': personName(p) + ' löschen', onclick: (e) => delPerson(p, e.currentTarget.closest('.card')) }, icon('trash')),
+                                // Anonymisieren und Löschen stehen in der Gefahrenzone der
+                                // Personenseite: in jeder Zeile lagen sie gleichrangig neben
+                                // "Öffnen" — ein Fehlgriff auf dem Telefon war unumkehrbar.
                             ))));
             },
         });
@@ -1970,9 +1996,15 @@ import { createRevenueChart } from './revenue-chart.js';
             },
         });
     }
-    function delPerson(p, node) {
+    // leave: von der Personenseite aus aufgerufen — nach dem tatsächlichen Löschen
+    // zurück zur Liste, statt eine Seite neu aufzubauen, deren Person es nicht mehr
+    // gibt. Ein abgelehntes Löschen (Rechnungen vorhanden) bleibt auf der Seite.
+    function delPerson(p, node, { leave = false } = {}) {
+        const here = location.hash;
+        let deleted = false;
         deleteWithUndo('Person löschen?', `„${personName(p)}“ und alle zugehörigen Gefährte werden gelöscht.`,
-            () => api.del('/persons/' + p.id), () => render(), node);
+            async () => { await api.del('/persons/' + p.id); deleted = true; },
+            () => { if (leave && deleted && location.hash === here) navigate('persons'); else render(); }, node);
     }
 
     // DSGVO Art. 17, wenn Löschen nicht geht: sobald Rechnungen an einer Person
@@ -2026,7 +2058,7 @@ import { createRevenueChart } from './revenue-chart.js';
             submitLabel: 'Schließen',
             fields: [],
             onRender: (body) => {
-                body.append(el('p', { class: 'muted', style: 'margin-top:0;font-size:.85rem' },
+                body.append(el('p', { class: 'muted', style: 'margin-top:0;font-size:var(--text-base)' },
                     'CSV mit den Spalten vorname, nachname, email, telefon, adresse (optional notiz). Trennzeichen ; oder , — erste Zeile ist die Kopfzeile. Doppelte E-Mails und ungültige Zeilen werden übersprungen.'));
                 body.append(el('div', { class: 'btn-row', style: 'gap:.5rem;flex-wrap:wrap;margin-top:.3rem' },
                     el('a', { class: 'btn btn-ghost btn-sm', href: '/api/import/persons/template', download: 'parkrr-personen-vorlage.csv' }, icon('download', 14), ' Beispiel-Datei'),
@@ -2058,11 +2090,11 @@ import { createRevenueChart } from './revenue-chart.js';
                         const o = el('option', { value: String(v) }, l); if (v === 30) o.selected = true; return o;
                     }));
                 const ctl = el('div', { class: 'btn-row', style: 'gap:.6rem;flex-wrap:wrap;align-items:center' },
-                    el('label', { style: 'font-size:.85rem' }, 'Gültigkeit ', dur));
+                    el('label', { style: 'font-size:var(--text-base)' }, 'Gültigkeit ', dur));
                 let sendChk = null;
                 if (state.capabilities.mail) {
                     sendChk = el('input', { type: 'checkbox' });
-                    ctl.append(el('label', { style: 'font-size:.85rem;display:inline-flex;align-items:center;gap:.3rem' }, sendChk, 'per E-Mail'));
+                    ctl.append(el('label', { style: 'font-size:var(--text-base);display:inline-flex;align-items:center;gap:.3rem' }, sendChk, 'per E-Mail'));
                 }
                 const createBtn = el('button', { type: 'button', class: 'btn btn-primary btn-sm' }, '+ Link erzeugen');
                 ctl.append(createBtn);
@@ -2074,7 +2106,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 body.append(el('div', { class: 'sec-eyebrow', style: 'margin:.2rem 0 .3rem' }, 'Bestehende Zugänge'));
                 const listWrap = el('div');
                 body.append(listWrap,
-                    el('p', { class: 'muted', style: 'font-size:.78rem;margin-top:.5rem' },
+                    el('p', { class: 'muted', style: 'font-size:var(--text-sm);margin-top:.5rem' },
                         'Der Link ist aus Sicherheitsgründen nur einmal beim Erstellen sichtbar. Bestehende Zugänge lassen sich einsehen und widerrufen.'));
 
                 async function refresh() {
@@ -2082,7 +2114,7 @@ import { createRevenueChart } from './revenue-chart.js';
                     let links = [];
                     try { links = (await api.get('/persons/' + personId + '/portal-links')) || []; }
                     catch (e) { listWrap.append(el('p', { class: 'muted' }, 'Konnte nicht geladen werden.')); return; }
-                    if (!links.length) { listWrap.append(el('p', { class: 'muted', style: 'font-size:.85rem' }, 'Noch keine Zugänge.')); return; }
+                    if (!links.length) { listWrap.append(el('p', { class: 'muted', style: 'font-size:var(--text-base)' }, 'Noch keine Zugänge.')); return; }
                     links.forEach((l) => listWrap.append(portalLinkRow(l, refresh)));
                     if (links.filter((l) => l.status === 'aktiv').length > 1) {
                         listWrap.append(el('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'margin-top:.4rem',
@@ -2097,8 +2129,8 @@ import { createRevenueChart } from './revenue-chart.js';
                         const r = await api.post('/persons/' + personId + '/portal-link', { days: Number(dur.value), send });
                         const url = absLink(r.link);
                         fresh.innerHTML = '';
-                        const inp = el('input', { type: 'text', readonly: 'readonly', value: url, style: 'width:100%;font-size:.8rem', onclick: (e) => e.currentTarget.select() });
-                        fresh.append(el('label', { style: 'font-size:.8rem' }, 'Neuer Link (nur jetzt sichtbar)'), inp,
+                        const inp = el('input', { type: 'text', readonly: 'readonly', value: url, style: 'width:100%;font-size:var(--text-sm)', onclick: (e) => e.currentTarget.select() });
+                        fresh.append(el('label', { style: 'font-size:var(--text-sm)' }, 'Neuer Link (nur jetzt sichtbar)'), inp,
                             el('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'margin-top:.35rem',
                                 onclick: async () => { try { await navigator.clipboard.writeText(url); toast('Link kopiert', 'success'); } catch (_) { inp.select(); toast('Bitte manuell kopieren', 'error'); } } }, 'Kopieren'));
                         if (send) toast(r.emailed ? 'Link erstellt & per E-Mail gesendet' : (r.has_email ? 'Link erstellt · E-Mail nicht gesendet (Basis-URL fehlt?)' : 'Link erstellt · kein E-Mail-Kontakt'), r.emailed ? 'success' : 'error');
@@ -2220,7 +2252,7 @@ import { createRevenueChart } from './revenue-chart.js';
         page.append(el('div', { class: 'card' },
             el('div', { class: 'bal-hero-label' }, 'Offener Saldo'),
             el('div', { class: 'bal-hero-num ' + (owed ? 'is-owed' : 'is-clear') }, eur(stats.balance)),
-            el('div', { class: 'bal-hero-sub' }, 'Stand heute · Aufgelaufen − Bezahlt')));
+            el('div', { class: 'bal-hero-sub' }, 'Stand heute · Aufgelaufen − Eingegangen')));
         // Derivation lives in its own card below the hero: labelled figures that add
         // up to the hero exactly. USt (only when invoiced) and per-period Pauschale
         // payments (only when used) appear so the small ledger always reconciles.
@@ -2231,7 +2263,9 @@ import { createRevenueChart } from './revenue-chart.js';
         if ((stats.invoiced_tax || 0) > 0.005) {
             figs.push(el('div', { class: 'fig' }, el('div', { class: 'fig-l' }, 'USt (fakturiert)'), el('div', { class: 'fig-v' }, eur(stats.invoiced_tax))));
         }
-        figs.push(el('div', { class: 'fig' }, el('div', { class: 'fig-l' }, 'Bezahlt'), el('div', { class: 'fig-v is-paid' }, eur(stats.total_paid))));
+        // "Eingegangen" = erfasste Zahlungen (stats.total_paid = PaymentsTotal). "Bezahlt"
+        // heisst in Parkrr die Markierung auf den Karten — zwei Wahrheiten, zwei Wörter.
+        figs.push(el('div', { class: 'fig' }, el('div', { class: 'fig-l' }, 'Eingegangen'), el('div', { class: 'fig-v is-paid' }, eur(stats.total_paid))));
         if ((stats.period_paid || 0) > 0.005) {
             figs.push(el('div', { class: 'fig' }, el('div', { class: 'fig-l' }, 'Pauschale-Zahlung'), el('div', { class: 'fig-v is-paid' }, eur(stats.period_paid))));
         }
@@ -2301,7 +2335,8 @@ import { createRevenueChart } from './revenue-chart.js';
         }
 
         // Zahlungen (recorded money-in). A dedicated log + Kontoauszug, separate
-        // from the per-item "bezahlt" toggle above (which drives the Saldo).
+        // from the per-item "bezahlt" toggle above. The Saldo uses these payments
+        // (Balance = owed − received, stats.go), not the toggles.
         const activePayments = payments.filter((p) => !p.reversed).length; // count excludes storniert, like the money figures
         const pz = el('div', { class: 'page-head section-head' },
             el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Zahlungen'),
@@ -2383,12 +2418,26 @@ import { createRevenueChart } from './revenue-chart.js';
                 }
                 bars.append(el('div', { class: 'bar-row' },
                     el('div', {}, String(y.year)),
-                    el('div', { class: 'bar-track' }, el('div', { class: 'bar-fill', style: `width:${(y.cost / max) * 100}%` })),
+                    el('div', { class: 'bar-track' }, el('div', { class: 'bar-fill' + (y.cost > 0 ? '' : ' is-zero'), style: `width:${(y.cost / max) * 100}%` })),
                     el('div', { class: 'bar-val' }, eur(y.cost),
                         yoy ? el('span', { class: 'yoy ' + yoyCls, title: 'Veränderung gegenüber ' + (y.year - 1) }, yoy) : null)));
             }
             yc.append(bars);
             page.append(yc);
+        }
+
+        // Gefahrenzone: Anonymisieren und Löschen sind unumkehrbar und gehören zur
+        // einzelnen Person, nicht in jede Listenzeile. Muster wie Tarife/Benutzer.
+        if (canManage()) {
+            const person = state.persons.find((x) => x.id === Number(id)) || { id: Number(id), first_name: stats.person_name || '' };
+            page.append(el('div', { class: 'card person-danger' },
+                el('div', { class: 'tf-danger-label' }, icon('alert', 13), 'Gefahrenzone'),
+                el('p', { class: 'card-meta' }, person.anonymized
+                    ? 'Die Stammdaten sind anonymisiert. Löschen ist nur möglich, solange keine Rechnungen bestehen.'
+                    : 'Löschen entfernt die Person samt Gefährten. Bestehen Rechnungen, bleibt nur Anonymisieren: Stammdaten werden geleert, Belege bleiben erhalten.'),
+                el('div', { class: 'person-danger-actions' },
+                    person.anonymized ? null : el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => anonymizePerson(person) }, icon('userx', 15), ' Anonymisieren (DSGVO)'),
+                    el('button', { class: 'btn btn-danger btn-sm', type: 'button', onclick: () => delPerson(person, null, { leave: true }) }, icon('trash', 15), ' Person löschen'))));
         }
     };
 
@@ -2555,11 +2604,14 @@ import { createRevenueChart } from './revenue-chart.js';
         }
         return [...byLabel].map(([label, pers]) => label + (pers.size ? ' (' + [...pers].join(', ') + ')' : '')).join(' · ');
     }
-    function invoiceRow(iv) {
+    // person: in der globalen Rechnungsliste fehlt der Kontext der Personenseite —
+    // dort führt die Zeile den Namen und die Fälligkeit offener Rechnungen.
+    function invoiceRow(iv, { person = false } = {}) {
         const neg = iv.status === 'storno' || Number(iv.total) < 0;
         const main = el('div', { class: 'pay-main' },
             el('div', { class: 'pay-method' }, 'Rechnung ' + esc(iv.number), ' ', invStatusBadge(iv)),
-            el('div', { class: 'pay-date' }, new Date(iv.issued_on).toLocaleDateString('de-DE')
+            el('div', { class: 'pay-date' }, (person && iv.person_name ? esc(iv.person_name) + ' · ' : '')
+                + new Date(iv.issued_on).toLocaleDateString('de-DE')
                 + (iv.kleinunternehmer ? '' : ' · inkl. USt')
                 + (iv.status === 'teilbezahlt' ? ' · offen ' + eur(iv.open_amount) : '')
                 // Mahn-Gedächtnis (Hundert 15): sichtbar, wie oft und wann zuletzt —
@@ -2569,6 +2621,11 @@ import { createRevenueChart } from './revenue-chart.js';
         // card links to the invoice page for the full positions.
         if ((iv.positions || []).length) {
             main.append(el('div', { class: 'inv-bills' }, 'berechnet: ' + invSummary(iv.positions)));
+        }
+        if (person && invOpen(iv) && iv.due_on) {
+            const overdue = invOverdue(iv);
+            main.append(el('div', { class: 'pay-date' + (overdue ? ' is-overdue' : '') },
+                (overdue ? 'überfällig seit ' : 'fällig am ') + fmtDate(iv.due_on)));
         }
         return el('a', { class: 'card pay-row inv-link', href: '#/invoices/' + iv.id }, main,
             el('div', { class: 'pay-amt', style: neg ? 'color:var(--danger)' : 'color:var(--text)' }, eur(iv.total)));
@@ -2597,7 +2654,7 @@ import { createRevenueChart } from './revenue-chart.js';
         });
     }
     async function stornoInvoice(iv) {
-        if (!await confirmDialog('Rechnung stornieren?', 'Erstellt einen unveränderlichen Storno-Gegenbeleg (§ Unveränderbarkeit). Die abgerechneten Positionen werden wieder fakturierbar.', 'Stornieren')) return;
+        if (!await confirmDialog('Rechnung ' + iv.number + ' stornieren?', 'Gesamtbetrag ' + eur(iv.total) + '. Erstellt einen unveränderlichen Storno-Gegenbeleg (§ Unveränderbarkeit). Die abgerechneten Positionen werden wieder fakturierbar.', 'Stornieren')) return;
         try {
             const st = await api.post('/invoices/' + iv.id + '/cancel', {});
             toast('Storniert · Gegenbeleg ' + st.number, 'success');
@@ -2612,7 +2669,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const name = lvl === 1 ? 'Zahlungserinnerung' : lvl === 2 ? '1. Mahnung' : '2. Mahnung (letzte Mahnung)';
         if (!await confirmDialog(name + ' senden?',
             'Sendet eine E-Mail mit den offenen Rechnungsdaten an den hinterlegten Kontakt der Person.'
-            + (iv.reminder_count ? ' Bisher ' + iv.reminder_count + '× gemahnt.' : ''), 'Senden')) return;
+            + (iv.reminder_count ? ' Bisher ' + iv.reminder_count + '× gemahnt.' : ''), 'Senden', { tone: 'neutral' })) return;
         // Wohin der Benutzer gerade schaut, VOR dem Warten festhalten: der Aufruf kann
         // die vollen 20 Sekunden der SMTP-Zustellung dauern.
         const at = location.hash;
@@ -2635,7 +2692,7 @@ import { createRevenueChart } from './revenue-chart.js';
         } catch (e) { toast(e.message || 'Senden fehlgeschlagen', 'error'); }
     }
     async function createInvoiceFor(personId, btn) {
-        if (!await confirmDialog('Rechnung erstellen?', 'Erstellt eine fortlaufend nummerierte Rechnung aus allen offenen Einzelposten (Gefährte + Einmal-Zusatzkosten). Rechnungen sind unveränderlich.', 'Erstellen')) return;
+        if (!await confirmDialog('Rechnung erstellen?', 'Erstellt eine fortlaufend nummerierte Rechnung aus allen offenen Einzelposten (Gefährte + Einmal-Zusatzkosten). Rechnungen sind unveränderlich.', 'Erstellen', { tone: 'neutral' })) return;
         const o = btn.textContent; btn.disabled = true; btn.textContent = 'Erstelle …';
         try {
             const iv = await api.post('/persons/' + personId + '/invoices', {});
@@ -2712,24 +2769,72 @@ import { createRevenueChart } from './revenue-chart.js';
         if (s.footer) doc.append(el('div', { class: 'inv-footer' }, esc(s.footer)));
         return doc;
     }
+    // Offen = noch zahlbar (Storno und stornierte Belege fordern nichts mehr);
+    // überfällig = offen und der Fälligkeitstag liegt vor heute — dieselbe Grenze
+    // wie /invoices/overdue (Stichtag vor heute).
+    const invOpen = (iv) => iv.status === 'offen' || iv.status === 'teilbezahlt';
+    const invOverdue = (iv) => invOpen(iv) && !!iv.due_on && iv.due_on.slice(0, 10) < today();
+    const INV_FILTERS = [['', 'Alle'], ['open', 'Offen'], ['overdue', 'Überfällig'], ['paid', 'Bezahlt']];
+    async function invoiceList(page) {
+        const items = (await api.get('/invoices')) || [];
+        mountList(page, {
+            stateKey: 'invoices',
+            title: 'Rechnungen', emptyIcon: 'receipt', sourcePath: '/invoices', items,
+            emptyText: 'Noch keine Rechnungen. Eine Rechnung erstellst du auf der Personenseite mit „+ Rechnung“.',
+            searchText: (iv) => norm([iv.number, iv.person_name].join(' ')),
+            sorts: [
+                { label: 'Neueste zuerst', cmp: (a, b) => String(b.issued_on).localeCompare(String(a.issued_on)) || b.id - a.id },
+                { label: 'Fälligkeit', cmp: (a, b) => String(a.due_on || '9999').localeCompare(String(b.due_on || '9999')) },
+                { label: 'Offener Betrag', cmp: (a, b) => (invOpen(b) ? b.open_amount : 0) - (invOpen(a) ? a.open_amount : 0) },
+            ],
+            // Ein Tipp statt Auswahlliste: offen / überfällig / bezahlt ist DIE Frage
+            // dieser Seite. Stornierte Belege zeigt nur "Alle".
+            controls: (refresh, cs) => {
+                const seg = el('div', { class: 'segments inv-filter', role: 'group', 'aria-label': 'Rechnungen filtern' });
+                const btns = INV_FILTERS.map(([value, label]) => {
+                    const on = (cs.status || '') === value;
+                    const b = el('button', { type: 'button', class: on ? 'active' : '', 'aria-pressed': String(on), onclick: () => {
+                        cs.status = value;
+                        btns.forEach((x) => { const hit = x === b; x.classList.toggle('active', hit); x.setAttribute('aria-pressed', String(hit)); });
+                        refresh();
+                    } }, label);
+                    seg.append(b);
+                    return b;
+                });
+                return [seg];
+            },
+            extraFilter: (iv, cs) => !cs.status
+                || (cs.status === 'open' && invOpen(iv))
+                || (cs.status === 'overdue' && invOverdue(iv))
+                || (cs.status === 'paid' && iv.status === 'bezahlt'),
+            render: (iv) => invoiceRow(iv, { person: true }),
+        });
+        const head = page.querySelector(':scope > .page-head');
+        if (head) head.after(el('p', { class: 'page-context' }, 'Alle Rechnungen aller Personen. Eine neue Rechnung erstellst du auf der Personenseite.'));
+    }
     routes.invoices = async (page, id) => {
-        if (!id) { page.innerHTML = ''; page.append(emptyState('receipt', 'Keine Rechnung gewählt.')); return; }
+        if (!id) return invoiceList(page);
         const iv = await api.get('/invoices/' + id);
         page.innerHTML = '';
         page.append(el('div', { class: 'detail-head no-print' },
             el('button', { class: 'back-btn', onclick: () => history.back(), 'aria-label': 'Zurück' }, '‹'),
             el('h2', { style: 'margin:0;flex:1' }, 'Rechnung ' + esc(iv.number), ' ', invStatusBadge(iv)),
-            (canBill() && (iv.status === 'offen' || iv.status === 'teilbezahlt')) ? el('button', { class: 'btn btn-primary btn-sm', onclick: () => payInvoiceFor(iv) }, 'Bezahlen') : null,
-            (canBill() && !iv.canceled && iv.status !== 'storno') ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => stornoInvoice(iv) }, 'Storno') : null,
-            // Payment reminder by e-mail — only when the invoice is still open and
-            // SMTP is configured (capability flag), so the button never dead-ends.
-            (canBill() && (iv.status === 'offen' || iv.status === 'teilbezahlt') && state.capabilities.mail)
-                ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => remindInvoice(iv) }, icon('mail', 15), ' Erinnerung') : null,
-            // Server-rendered A4 PDF (authoritative deliverable). A plain GET anchor
-            // carries the session cookie and opens the document inline.
-            el('div', { class: 'invoice-document-actions', role: 'group', 'aria-label': 'Rechnungsdokument' },
-                el('a', { class: 'btn btn-ghost btn-sm', href: '/api/invoices/' + id + '/pdf', target: '_blank', rel: 'noopener' }, icon('receipt', 15), ' PDF'),
-                el('button', { class: 'btn btn-ghost btn-sm', onclick: () => window.print() }, 'Drucken'))));
+            // Alle Aktionen als EIN Block: umbrechen sie, dann gemeinsam und rechtsbündig —
+            // nicht "Storno" allein in einer zweiten Zeile unter dem Zurück-Knopf.
+            el('div', { class: 'invoice-actions' },
+                (canBill() && (iv.status === 'offen' || iv.status === 'teilbezahlt')) ? el('button', { class: 'btn btn-primary btn-sm', onclick: () => payInvoiceFor(iv) }, 'Bezahlen') : null,
+                // Payment reminder by e-mail — only when the invoice is still open and
+                // SMTP is configured (capability flag), so the button never dead-ends.
+                (canBill() && (iv.status === 'offen' || iv.status === 'teilbezahlt') && state.capabilities.mail)
+                    ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => remindInvoice(iv) }, icon('mail', 15), ' Erinnerung') : null,
+                // Server-rendered A4 PDF (authoritative deliverable). A plain GET anchor
+                // carries the session cookie and opens the document inline.
+                el('div', { class: 'invoice-document-actions', role: 'group', 'aria-label': 'Rechnungsdokument' },
+                    el('a', { class: 'btn btn-ghost btn-sm', href: '/api/invoices/' + id + '/pdf', target: '_blank', rel: 'noopener' }, icon('receipt', 15), ' PDF'),
+                    el('button', { class: 'btn btn-ghost btn-sm', onclick: () => window.print() }, 'Drucken')),
+                // Storno erzeugt einen unumkehrbaren Gegenbeleg: zuletzt und rot umrandet,
+                // nicht im selben Gewicht wie "Drucken" gleich neben "Bezahlen".
+                (canBill() && !iv.canceled && iv.status !== 'storno') ? el('button', { class: 'btn btn-ghost-danger btn-sm', onclick: () => stornoInvoice(iv) }, 'Storno') : null)));
         if (iv.status === 'teilbezahlt' || iv.status === 'bezahlt') {
             page.append(el('div', { class: 'card-meta no-print', style: 'margin:-.3rem 0 .4rem' }, 'Bezahlt ' + eur(iv.paid_amount) + ' von ' + eur(iv.total) + (iv.open_amount > 0.005 ? ' · offen ' + eur(iv.open_amount) : '')));
         }
@@ -2740,7 +2845,7 @@ import { createRevenueChart } from './revenue-chart.js';
             page.append(el('div', { class: 'card no-print', style: 'text-align:center' },
                 el('h3', { style: 'margin-top:0' }, 'Bezahlen (SEPA-QR)'),
                 el('img', { src: '/api/invoices/' + iv.id + '/pay-qr', alt: 'SEPA-Zahlungs-QR', width: 200, height: 200, style: 'max-width:200px;height:auto' }),
-                el('p', { class: 'muted', style: 'font-size:.82rem;margin-bottom:0' }, 'Mit der Banking-App scannen — Betrag und Zahlungsreferenz sind vorausgefüllt.')));
+                el('p', { class: 'muted', style: 'font-size:var(--text-base);margin-bottom:0' }, 'Mit der Banking-App scannen — Betrag und Zahlungsreferenz sind vorausgefüllt.')));
         }
         const documentView = page.querySelector('.invoice-doc');
         const workspace = el('div', { class: 'invoice-workspace' });
@@ -2915,7 +3020,7 @@ import { createRevenueChart } from './revenue-chart.js';
             }
             list.append(el('div', { class: 'tax-ledger-row' },
                 el('div', {}, el('b', {}, expense.description),
-                    el('small', {}, expense.paid_on + ' · ' + expense.category + (rep.properties.length > 1 ? ' · ' + expense.property : '') + (expense.payee ? ' · ' + expense.payee : ''))),
+                    el('small', {}, fmtDate(expense.paid_on) + ' · ' + expense.category + (rep.properties.length > 1 ? ' · ' + expense.property : '') + (expense.payee ? ' · ' + expense.payee : ''))),
                 el('span', { class: 'v ' + (expense.amount < 0 ? 'negative' : '') }, eur(expense.amount)), actions));
         });
         section.append(list);
@@ -3102,7 +3207,7 @@ import { createRevenueChart } from './revenue-chart.js';
             const title = rep.locked ? 'Steuerjahr entsperren?' : 'Steuerjahr abschließen?';
             const message = rep.locked ? 'Danach sind wieder Änderungen an Buchungen und Zuflussdaten möglich.'
                 : 'Buchungen, Belege, AfA und Zuflussdaten dieses Jahres werden gegen Änderungen gesperrt.';
-            if (!await confirmDialog(title, message, rep.locked ? 'Entsperren' : 'Abschließen')) return;
+            if (!await confirmDialog(title, message, rep.locked ? 'Entsperren' : 'Abschließen', { tone: 'neutral' })) return;
             try {
                 if (rep.locked) await api.del('/tax/years/' + rep.year + '/lock');
                 else await api.post('/tax/years/' + rep.year + '/lock', {});
@@ -3269,7 +3374,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const run = async (status, label) => {
             const ids = Array.from(bulkSel);
             if (!ids.length) { toast('Nichts ausgewählt', 'error'); return; }
-            if (!await confirmDialog(label + '?', ids.length + ' Gefährt(e) werden ' + (status === 'collected' ? 'als abgeholt (heute) markiert' : 'storniert') + '. Jeder Wechsel folgt denselben Regeln wie der Einzelweg.', label)) return;
+            if (!await confirmDialog(label + '?', ids.length + ' Gefährt(e) werden ' + (status === 'collected' ? 'als abgeholt (heute) markiert' : 'storniert') + '. Jeder Wechsel folgt denselben Regeln wie der Einzelweg.', label, { tone: status === 'collected' ? 'neutral' : 'danger' })) return;
             // Der Einzelweg schickt IMMER ein Datum. Ohne eines nimmt der Server den
             // Zweig `end_date = COALESCE(end_date, CURRENT_DATE)` und lässt ein bereits
             // eingetragenes — womöglich weit künftiges — Abholdatum stehen: das Gefährt
@@ -3370,7 +3475,8 @@ import { createRevenueChart } from './revenue-chart.js';
                     ...state.persons.map((p) => el('option', { value: p.id, selected: String(p.id) === cs.person }, personName(p))));
                 peSel.addEventListener('change', () => updateRouteQuery({ person: peSel.value }));
                 // Mehrfachauswahl (Hundert 54): schaltet die Checkbox-Hülle der Karten an.
-                const bulkBtn = canManage() ? el('button', { class: 'btn btn-ghost btn-sm' + (bulkMode ? ' active' : ''), 'aria-pressed': String(bulkMode) }, 'Mehrfachauswahl') : null;
+                // Gedrückt = gefüllt, wie "Nur aktiv" & Co. daneben; `.active` war ungestaltet.
+                const bulkBtn = canManage() ? el('button', { class: 'btn btn-sm ' + (bulkMode ? 'btn-primary' : 'btn-ghost'), type: 'button', 'aria-pressed': String(bulkMode) }, 'Mehrfachauswahl') : null;
                 // Nur die Liste neu zeichnen, nicht die ganze Seite — und dabei die
                 // Seitenzahl behalten (keepPage): das Umschalten der Mehrfachauswahl
                 // aendert die Darstellung, nicht die Menge, und warf den Betreiber
@@ -3378,7 +3484,8 @@ import { createRevenueChart } from './revenue-chart.js';
                 if (bulkBtn) bulkBtn.addEventListener('click', () => {
                     bulkMode = !bulkMode;
                     if (!bulkMode) bulkSel.clear();
-                    bulkBtn.classList.toggle('active', bulkMode);
+                    bulkBtn.classList.toggle('btn-primary', bulkMode);
+                    bulkBtn.classList.toggle('btn-ghost', !bulkMode);
                     bulkBtn.setAttribute('aria-pressed', String(bulkMode));
                     if (bulkBarEl) bulkBarEl._sync();
                     refresh(true);
@@ -3443,7 +3550,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const render = async () => {
             body.innerHTML = '';
             body.append(el('h3', {}, 'Planer-Icons verwalten'));
-            body.append(el('p', { class: 'muted', style: 'font-size:.8rem;margin:.1rem 0 .6rem' }, editId ? 'Bearbeiten: Name ändern und/oder neue Datei wählen — die ID (und damit alle Zuordnungen) bleibt erhalten.' : 'Eigene Draufsicht-Icons (PNG/JPEG) hochladen und benennen. Danach pro Gefährt unter „Planer-Symbol" wählbar.'));
+            body.append(el('p', { class: 'muted', style: 'font-size:var(--text-sm);margin:.1rem 0 .6rem' }, editId ? 'Bearbeiten: Name ändern und/oder neue Datei wählen — die ID (und damit alle Zuordnungen) bleibt erhalten.' : 'Eigene Draufsicht-Icons (PNG/JPEG) hochladen und benennen. Danach pro Gefährt unter „Planer-Symbol" wählbar.'));
             const nameIn = el('input', { class: 'gp-stepin', placeholder: 'Name / Tag, z. B. Pferdeanhänger', value: editId ? editName : '' });
             const fileIn = el('input', { type: 'file', accept: 'image/png,image/jpeg' });
             const submit = el('button', {
@@ -3467,7 +3574,7 @@ import { createRevenueChart } from './revenue-chart.js';
             body.append(row);
             let icons = []; try { icons = await api.get('/planner-icons'); } catch (e) { /* offline */ }
             const grid = el('div', { class: 'icongrid' });
-            if (!icons.length) grid.append(el('div', { class: 'muted', style: 'font-size:.82rem' }, 'Noch keine eigenen Icons.'));
+            if (!icons.length) grid.append(el('div', { class: 'muted', style: 'font-size:var(--text-base)' }, 'Noch keine eigenen Icons.'));
             icons.forEach((ic) => grid.append(el('div', { class: 'iconcell' + (editId === ic.id ? ' editing' : '') },
                 el('img', { src: '/api/planner-icons/' + ic.id + '?t=' + (ic.byte_size || 0), alt: ic.name }),
                 el('span', { title: ic.name }, ic.name),
@@ -3477,7 +3584,7 @@ import { createRevenueChart } from './revenue-chart.js';
             // Built-in category icons (read-only): always available per vehicle under
             // „Planer-Symbol", not stored in the DB and therefore not editable/deletable.
             body.append(el('h4', { class: 'iconh4' }, 'Eingebaute Icons'));
-            body.append(el('p', { class: 'muted', style: 'font-size:.76rem;margin:0 0 .5rem' }, 'Immer verfügbar, pro Gefährt unter „Planer-Symbol" wählbar. Nicht löschbar.'));
+            body.append(el('p', { class: 'muted', style: 'font-size:var(--text-sm);margin:0 0 .5rem' }, 'Immer verfügbar, pro Gefährt unter „Planer-Symbol" wählbar. Nicht löschbar.'));
             const bgrid = el('div', { class: 'icongrid' });
             Object.entries(CATICON).forEach(([cat, slug]) => bgrid.append(el('div', { class: 'iconcell builtin' },
                 el('img', { src: CATICON_BASE + slug + '.png', alt: cat }),
@@ -3650,7 +3757,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const pd = agreementPaid(a);
         if (pd.accrued <= 0.005) return null;
         const pct = Math.round(pd.frac * 100);
-        const fill = el('div', { class: 'bar-fill' });
+        const fill = el('div', { class: 'bar-fill' + (pd.frac > 0 ? '' : ' is-zero') });
         requestAnimationFrame(() => { fill.style.width = (pd.frac * 100) + '%'; });
         const cap = pd.done
             ? el('div', { class: 'ag-progress-cap is-done' }, '✓ vollständig bezahlt')
@@ -3729,7 +3836,7 @@ import { createRevenueChart } from './revenue-chart.js';
     function agreementPayments(a) {
         // Master "Alle Zeiträume" slider (bezahlt = all paid, offen = none).
         const master = el('div', { class: 'controls-row' },
-            el('span', { class: 'muted', style: 'font-size:.85rem' }, 'Alle Zeiträume'), agreementPaidSlider(a));
+            el('span', { class: 'muted', style: 'font-size:var(--text-base)' }, 'Alle Zeiträume'), agreementPaidSlider(a));
         const periods = agreementPeriods(a);
         // Nothing has accrued yet: only the master toggle is relevant, show it bare.
         if (!periods.length) return master;
@@ -3875,7 +3982,7 @@ import { createRevenueChart } from './revenue-chart.js';
     function recurringPayments(rc) {
         const wrap = el('div', {});
         wrap.append(el('div', { class: 'controls-row' },
-            el('span', { class: 'muted', style: 'font-size:.85rem' }, 'Alle Zeiträume'), recurringPaidSlider(rc)));
+            el('span', { class: 'muted', style: 'font-size:var(--text-base)' }, 'Alle Zeiträume'), recurringPaidSlider(rc)));
         const periods = agreementPeriods(rc);
         const curKey = rc.period === 'yearly' ? today().slice(0, 4) : today().slice(0, 7);
         if (periods.length) {
@@ -4556,7 +4663,7 @@ import { createRevenueChart } from './revenue-chart.js';
             el('div', { class: 'balance' }, el('span', {}, 'Preis'), el('span', { class: 'amt' }, eur(v.effective_rate) + (v.billing_period === 'yearly' ? ' /Jahr' : ' /Monat'))),
             el('div', { class: 'balance' }, el('span', {}, 'Zeitraum'), el('span', {}, fmtDate(v.start_date) + (v.end_date ? ' – ' + fmtDate(v.end_date) : ' – offen'))),
             el('div', { class: 'balance' }, el('span', {}, 'Standort'), el('span', {}, vehLocationChip(v))),
-            v.reserved_from ? el('div', { class: 'balance' }, el('span', {}, 'Reservierung'), el('span', {}, fmtDate(v.reserved_from) + ' – ' + fmtDate(v.reserved_until))) : null,
+            v.reserved_from ? el('div', { class: 'balance' }, el('span', {}, 'Reservierung'), el('span', {}, fmtDate(v.reserved_from) + (v.reserved_until ? ' – ' + fmtDate(v.reserved_until) : ' – offen'))) : null,
             vc.covered ? el('div', { class: 'balance' }, el('span', {}, 'Pauschale'), el('span', {}, vc.active ? 'aktiv abgedeckt' : 'beendet')) : null,
             vc.settled
                 ? el('div', { class: 'balance' }, el('strong', {}, 'Aufgelaufen'), el('strong', { class: 'amt', title: 'Abrechnung über Pauschale' }, 'über Pauschale'))
@@ -4609,10 +4716,13 @@ import { createRevenueChart } from './revenue-chart.js';
             // JPEG/PNG restriction the backend enforces (avoids HEIC/WEBP rejects).
             const camInput = el('input', { type: 'file', accept: 'image/jpeg,image/png', capture: 'environment', style: 'display:none' });
             camInput.addEventListener('change', () => uploadPhoto(id, camInput.files[0], prog));
-            ph.append(
+            // Als Gruppe: drei lose Kinder in einem space-between-Kopf schoben "+ Foto"
+            // in die Mitte zwischen Titel und Kamera-Knopf.
+            ph.append(el('div', { class: 'page-head-actions' },
+                prog,
                 el('button', { class: 'btn-sect', onclick: () => fileInput.click() }, '+ Foto'),
-                el('button', { class: 'btn-sect', title: 'Mit Kamera aufnehmen', onclick: () => camInput.click() }, icon('camera'), ' Kamera'),
-                prog, fileInput, camInput);
+                el('button', { class: 'btn-sect', title: 'Mit Kamera aufnehmen', onclick: () => camInput.click() }, icon('camera'), ' Kamera')),
+                fileInput, camInput);
         }
         photoCard.append(ph);
         if (!photos.length) photoCard.append(el('p', { class: 'muted' }, 'Keine Fotos.'));
@@ -5515,7 +5625,7 @@ import { createRevenueChart } from './revenue-chart.js';
             btn.disabled = false; btn.textContent = orig;
         }
     }
-    const fmtBytes = (n) => { n = Number(n) || 0; if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(1) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; };
+    const fmtBytes = (n) => { n = Number(n) || 0; const one = (x) => x.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); if (n < 1024) return n + ' B'; if (n < 1048576) return one(n / 1024) + ' KB'; return one(n / 1048576) + ' MB'; };
 
     // ---------- BACKUP (admin) ----------
     // ---- cron helpers (client twins of internal/backup/cron.go) ----
@@ -5750,8 +5860,8 @@ import { createRevenueChart } from './revenue-chart.js';
     function backupFileRow(f, base, onRestore) {
         const row = el('div', { class: 'card-row', style: 'border-top:1px solid var(--border);padding:.45rem 0;align-items:center;gap:.4rem' },
             el('div', { style: 'flex:1;min-width:0' },
-                el('div', { style: 'font-weight:600;font-size:.85rem;word-break:break-all' }, esc(f.name)),
-                el('div', { class: 'card-meta' }, new Date(f.modified).toLocaleString('de-DE') + ' · ' + fmtBytes(f.size))),
+                el('div', { style: 'font-weight:600;font-size:var(--text-base);word-break:break-all' }, esc(f.name)),
+                el('div', { class: 'card-meta' }, fmtDateTime(f.modified) + ' · ' + fmtBytes(f.size))),
             el('a', { class: 'btn btn-ghost btn-sm', href: base + encodeURIComponent(f.name), download: f.name }, 'Download'));
         if (onRestore) row.append(el('button', { class: 'btn btn-ghost btn-sm', onclick: onRestore }, 'Restore'));
         return row;
@@ -6202,7 +6312,7 @@ import { createRevenueChart } from './revenue-chart.js';
                         el('div', { class: 'pay-method' }, esc(m.subject), ' ',
                             m.ok ? el('span', { class: 'badge badge-stored' }, 'gesendet')
                                 : el('span', { class: 'badge badge-cancelled', title: m.error || '' }, 'fehlgeschlagen')),
-                        el('div', { class: 'pay-date' }, new Date(m.sent_at).toLocaleString('de-DE') + ' · an ' + esc(m.recipients)
+                        el('div', { class: 'pay-date' }, fmtDateTime(m.sent_at) + ' · an ' + esc(m.recipients)
                             + (m.error ? ' · ' + esc(m.error) : ''))))); 
             });
         });
@@ -6457,7 +6567,7 @@ import { createRevenueChart } from './revenue-chart.js';
             }
         }
         if (isAdmin()) colB.append(el('div', { class: 'card admin-links' }, el('h3', {}, 'Betrieb verwalten'),
-            ...[['users', 'Benutzer & Rollen'], ['billing', 'Rechnungs-Einstellungen'], ['backup', 'Sicherungen'], ['audit', 'Änderungsverlauf']]
+            ...[['users', 'Benutzer'], ['billing', 'Rechnungs-Einstellungen'], ['backup', 'Backup'], ['audit', 'Audit-Log']]
                 .map(([route, label]) => el('a', { href: '#/' + route }, label, el('span', { 'aria-hidden': 'true' }, '›')))));
     };
     function shortUA(ua) {
@@ -6597,7 +6707,7 @@ import { createRevenueChart } from './revenue-chart.js';
         catch (e) { toast(e.message, 'error'); }
     }
     async function revokeOthers() {
-        if (!await confirmDialog('Andere Sitzungen abmelden?', 'Alle anderen Geräte werden abgemeldet.', 'Abmelden')) return;
+        if (!await confirmDialog('Andere Sitzungen abmelden?', 'Alle anderen Geräte werden abgemeldet.', 'Abmelden', { tone: 'neutral' })) return;
         try { await api.post('/auth/sessions/revoke-others'); toast('Andere Sitzungen abgemeldet', 'success'); render(); }
         catch (e) { toast(e.message, 'error'); }
     }
@@ -7101,14 +7211,19 @@ import { createRevenueChart } from './revenue-chart.js';
         // never hidden behind a Fahrstraße/Wartung/Stütze block (which paint over the base SVG).
         const labelSvg = svgEl('svg', { class: 'gp-labels' });
         const planEl = el('div', { class: 'gp-plan' }, svg, layer, labelSvg);
-        const planWrap = el('div', { class: 'gp-planwrap' }, planEl);
+        // Fokussierbar, damit der scrollbare Plan auch per Tastatur (Pfeiltasten)
+        // erreichbar ist — axe: scrollable-region-focusable.
+        const planWrap = el('div', { class: 'gp-planwrap', tabindex: '0', role: 'region', 'aria-label': 'Hallenplan' }, planEl);
         const canvas = el('div', { class: 'gp-canvas card' },
             el('div', { class: 'gp-canvas-top' }, ctitle, el('span', { class: 'gp-spacer' }), toolbar), metrics, planWrap);
 
         // rail
         const rail = el('div', { class: 'gp-rail' });
         const stage = el('div', { class: 'gp-stage' }, canvas, rail);
-        const plannerGuide = el('details', { class: 'planner-guide' }, el('summary', {}, 'Bedienung & Speichern'),
+        // Die zwei Speicherwege stehen schon in der Zusammenfassung — vorher nur im
+        // zugeklappten Text, und wer den Grundriss änderte, verlor ihn beim Wechsel.
+        const plannerGuide = el('details', { class: 'planner-guide' }, el('summary', {}, 'Bedienung & Speichern',
+            el('span', { class: 'planner-guide-hint' }, 'Gültige Platzierungen speichern sofort · Grundriss mit „Speichern“')),
             el('p', {}, 'Stellplätze: Gefährt auswählen und im Plan platzieren. Gültige Platzierungen werden direkt gespeichert. Im Garagenplaner den Grundriss bearbeiten und mit „Speichern“ übernehmen.'));
         root.append(appbar, plannerGuide, stage);
 
@@ -7593,7 +7708,7 @@ import { createRevenueChart } from './revenue-chart.js';
             const body = el('div', { style: 'display:flex;flex-direction:column;gap:.45rem;padding:16px 18px' });
             body.append(el('button', { class: 'gp-tbtn', style: 'justify-content:flex-start', onclick: () => { close(); saveCurrentTemplate(); } }, '＋ Aktuelle Wände als Vorlage speichern'));
             const tpls = loadTemplates();
-            if (!tpls.length) body.append(el('div', { class: 'muted', style: 'font-size:.82rem;padding:.3rem 0' }, 'Noch keine Vorlagen. Zeichne Wände und speichere sie hier.'));
+            if (!tpls.length) body.append(el('div', { class: 'muted', style: 'font-size:var(--text-base);padding:.3rem 0' }, 'Noch keine Vorlagen. Zeichne Wände und speichere sie hier.'));
             tpls.forEach((t) => {
                 const row = el('div', { style: 'display:flex;gap:.4rem;align-items:center' });
                 row.append(el('button', { class: 'gp-tbtn', style: 'flex:1;justify-content:flex-start', onclick: () => { close(); applyTemplate(t); } }, '▤ ' + t.name + ' · ' + (t.walls && t.walls.edges ? t.walls.edges.length : 0) + ' Wände'));
@@ -8546,7 +8661,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 m(Math.round(ve) + ' m²', 'Belegt · ' + P.spots.length, 'busy'),
                 m(Math.round(zoneA + colA) + ' m²', 'Ausgenommen', 'excl'),
                 m(fw.toFixed(1).replace('.', ',') + '×' + fh.toFixed(1).replace('.', ',') + ' m', el('span', {}, 'Halle · ' + Math.round(total) + ' ', el('span', { class: 'gp-unit' }, 'm²'))),
-                m(polyPerim(P.floor).toFixed(1) + ' m', 'Umfang'));
+                m(polyPerim(P.floor).toFixed(1).replace('.', ',') + ' m', 'Umfang'));
             if (enc && enc.area > 0.3) { const nr = (enc.rooms || []).length; metrics.append(m(enc.area.toFixed(1).replace('.', ',') + ' m²', 'Parkfläche' + (nr > 1 ? ' · ' + nr + ' Räume' : ' · Wände'), 'ok')); } // 1 decimal, matching the plan label (S1-D)
         }
 
@@ -8568,8 +8683,9 @@ import { createRevenueChart } from './revenue-chart.js';
             // Snap selector: free, or snap every ¼ / ½ / 1 m (applies to floor edits
             // and block moves alike).
             const seg = el('div', { class: 'gp-seg', title: 'Raster: freie Abstände oder feste Schrittweite' });
-            seg.append(el('button', { class: !P.snap ? 'on' : '', onclick: () => { P.snap = false; renderToolbar(); } }, 'Frei'));
-            [['0,1 m', 0.1], ['¼ m', 0.25], ['½ m', 0.5], ['1 m', 1]].forEach(([lab, step]) => seg.append(el('button', { class: (P.snap && P.gridStep === step) ? 'on' : '', onclick: () => { P.snap = true; P.gridStep = step; renderToolbar(); } }, lab)));
+            // aria-pressed: die Auswahl war bisher nur an der Farbe erkennbar.
+            seg.append(el('button', { class: !P.snap ? 'on' : '', 'aria-pressed': String(!P.snap), 'aria-label': 'Raster frei', onclick: () => { P.snap = false; renderToolbar(); } }, 'Frei'));
+            [['0,1 m', 0.1, '0,1 Meter'], ['¼ m', 0.25, 'Viertelmeter'], ['½ m', 0.5, 'Halbmeter'], ['1 m', 1, '1 Meter']].forEach(([lab, step, spoken]) => { const on = P.snap && P.gridStep === step; seg.append(el('button', { class: on ? 'on' : '', 'aria-pressed': String(on), 'aria-label': 'Raster ' + spoken, onclick: () => { P.snap = true; P.gridStep = step; renderToolbar(); } }, lab)); });
             toolbar.append(seg);
             // Auto-Snap: objects fang flush against each other (in addition to the floor line).
             if (canManageNow) toolbar.append(tb(icon('magnet', 15), 'Auto-Snap: Objekte fangen aneinander', () => { P.autoSnap = !P.autoSnap; renderToolbar(); toast(P.autoSnap ? 'Auto-Snap an' : 'Auto-Snap aus'); }, P.autoSnap));
@@ -8584,12 +8700,12 @@ import { createRevenueChart } from './revenue-chart.js';
                     draw(); toast('Puffer ' + P.bufferM.toFixed(1).replace('.', ',') + ' m'); }; // draw() re-renders the toolbar; toast announces the value (a11y)
                 bseg.append(
                     el('button', { title: 'Weniger Puffer', onclick: () => setBuf(-0.5) }, '−'),
-                    el('span', { style: 'padding:0 .4rem;min-width:3rem;text-align:center;color:var(--gpink);font-size:.76rem;font-weight:600', 'aria-live': 'polite' }, P.bufferM.toFixed(1).replace('.', ',') + ' m'),
+                    el('span', { style: 'padding:0 .4rem;min-width:3rem;text-align:center;color:var(--gpink);font-size:var(--text-sm);font-weight:600', 'aria-live': 'polite' }, P.bufferM.toFixed(1).replace('.', ',') + ' m'),
                     el('button', { title: 'Mehr Puffer', onclick: () => setBuf(0.5) }, '+'));
                 toolbar.append(bseg); }
             // Vehicle display mode (client-side preference, remembered): symbol / photo / rectangle.
             if (P.mode === 'manage') { const dseg = el('div', { class: 'gp-seg', title: 'Fahrzeug-Darstellung' });
-                [['◈', 'symbol', 'Symbol'], ['▣', 'foto', 'Foto'], ['▭', 'rect', 'Rechteck']].forEach(([ic, key, t]) => dseg.append(el('button', { class: P.render === key ? 'on' : '', title: t, onclick: () => { P.render = key; try { localStorage.setItem('gp.render', key); } catch (e) { /* private mode */ } renderToolbar(); draw(); } }, ic)));
+                [['◈', 'symbol', 'Symbol'], ['▣', 'foto', 'Foto'], ['▭', 'rect', 'Rechteck']].forEach(([ic, key, t]) => dseg.append(el('button', { class: P.render === key ? 'on' : '', title: t, 'aria-label': 'Darstellung ' + t, 'aria-pressed': String(P.render === key), onclick: () => { P.render = key; try { localStorage.setItem('gp.render', key); } catch (e) { /* private mode */ } renderToolbar(); draw(); } }, ic)));
                 toolbar.append(dseg); }
             // Manage custom planner icons (upload / rename / replace / delete) — placed on
             // the toolbar so it's reachable without first selecting a vehicle.
@@ -8763,7 +8879,7 @@ import { createRevenueChart } from './revenue-chart.js';
             const c = el('div', { class: 'gp-vehc', title: 'Auf die Fläche ziehen' }); c.dataset.pid = p.id;
             const hasDims = (p.length_m != null && p.width_m != null && p.height_m != null);
             let dimNode;
-            if (hasDims) dimNode = el('div', { class: 'gp-vdm num' }, p.length_m.toFixed(1) + ' × ' + p.width_m.toFixed(1) + ' × ' + p.height_m.toFixed(1) + ' m' + (p.weight_t != null ? ' · ' + p.weight_t.toFixed(2).replace('.', ',') + ' t' : ''));
+            if (hasDims) dimNode = el('div', { class: 'gp-vdm num' }, [p.length_m, p.width_m, p.height_m].map((n) => n.toFixed(1).replace('.', ',')).join(' × ') + ' m' + (p.weight_t != null ? ' · ' + p.weight_t.toFixed(2).replace('.', ',') + ' t' : ''));
             else if (canManageNow) { dimNode = el('button', { class: 'gp-dimopen' }, 'Maße festlegen →'); dimNode.addEventListener('pointerdown', (e) => e.stopPropagation()); dimNode.addEventListener('click', (e) => { e.stopPropagation(); dimForm({ id: p.id, label: p.label, L: p.length_m, W: p.width_m, H: p.height_m, t: p.weight_t }); }); }
             else dimNode = el('div', { class: 'gp-vdm num' }, 'Maße offen');
             c.append(el('span', { class: 'gp-vic' }, icon('car', 15)),
@@ -8913,7 +9029,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 pal.innerHTML = '';
                 const q = (P.palQuery || '').toLowerCase();
                 const list = P.palette.filter((p) => !q || ((p.label || '') + ' ' + (p.type || '') + ' ' + (p.person_name || '')).toLowerCase().includes(q));
-                if (!list.length) { pal.append(el('div', { class: 'muted', style: 'font-size:.8rem;padding:.3rem' }, P.palette.length ? 'Kein Treffer.' : 'Alle Gefährte sind platziert.')); return; }
+                if (!list.length) { pal.append(el('div', { class: 'muted', style: 'font-size:var(--text-sm);padding:.3rem' }, P.palette.length ? 'Kein Treffer.' : 'Alle Gefährte sind platziert.')); return; }
                 list.forEach((p) => pal.append(vehCard(p)));
             };
             search.addEventListener('input', () => { P.palQuery = search.value; fillPal(); });
@@ -8948,7 +9064,7 @@ import { createRevenueChart } from './revenue-chart.js';
         function renderVehDetail() {
             const el0 = el('div', { class: 'gp-rcard card' });
             const b = P.spots.find((x) => x._id === P.sel);
-            if (!b) { el0.append(el('h3', {}, 'Auswahl'), el('div', { class: 'muted', style: 'font-size:.8rem' }, 'Klick auf ein Gefährt im Plan, oder ein Fahrzeug aus der Liste auf die Fläche ziehen.')); return el0; }
+            if (!b) { el0.append(el('h3', {}, 'Auswahl'), el('div', { class: 'muted', style: 'font-size:var(--text-sm)' }, 'Klick auf ein Gefährt im Plan, oder ein Fahrzeug aus der Liste auf die Fläche ziehen.')); return el0; }
             el0.append(el('h3', {}, (b.type || 'Gefährt') + ' · ' + (b.personName || '')));
             const row = (k, v) => el('div', { class: 'gp-row' }, el('span', { class: 'gp-k' }, k), el('span', { class: 'gp-v num' }, v));
             el0.append(row('Fahrzeug', b.label));
@@ -9016,7 +9132,7 @@ import { createRevenueChart } from './revenue-chart.js';
             toolsCard.append(orow);
             toolsCard.append(el('div', { class: 'gp-addrow', style: 'margin-top:.4rem' },
                 el('button', { class: 'btn btn-sm gp-toggle btn-block' + (!P.tool ? ' on' : ''), title: 'Normale Maus: auswählen, verschieben, bearbeiten', onclick: () => setTool(null) }, '↖ Auswahl / Bearbeiten')));
-            toolsCard.append(el('div', { class: 'muted', style: 'font-size:.72rem;margin-top:.4rem' },
+            toolsCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin-top:.4rem' },
                 (P.tool && isWallDraw(P.tool)) ? 'Klick setzt Punkte, jede weitere Ecke zeichnet weiter. Startpunkt klicken oder Doppelklick beendet. Auf eine bestehende Wand klicken = Anbau. Rechtsklick/Esc = Werkzeug ablegen.'
                     : (P.tool && isOpenKind(P.tool)) ? 'Auf eine Wand klicken (Start), Breite ziehen, zweiter Klick setzt die Öffnung. Rechtsklick/Esc = Werkzeug ablegen.'
                         : (P.tool && (isZoneTool(P.tool) || P.tool === 'column')) ? (P.tool === 'column' ? 'Klicken setzt eine Stütze (oder aufziehen für die Größe). Rechtsklick/Esc = ablegen.' : 'Ins Canvas klicken und die Fläche aufziehen. Rechtsklick/Esc = Werkzeug ablegen.')
@@ -9035,14 +9151,14 @@ import { createRevenueChart } from './revenue-chart.js';
             Object.entries(EXCL).filter(([, m]) => m.cat === 'zone').forEach(([k, m]) => zrow.append(el('button', { class: 'btn btn-sm gp-toggle' + (P.tool === k ? ' on' : ''), title: 'Im Plan aufziehen', onclick: () => setTool(P.tool === k ? null : k) }, m.label)));
             zrow.append(el('button', { class: 'btn btn-sm gp-toggle' + (P.tool === 'column' ? ' on' : ''), title: 'Stütze setzen (klicken oder aufziehen)', onclick: () => setTool(P.tool === 'column' ? null : 'column') }, EXCL.column.label));
             exCard.append(zrow);
-            exCard.append(el('div', { class: 'muted', style: 'font-size:.72rem;margin:.1rem 0 .3rem' }, 'Wählen und im Plan aufziehen (Stütze: klicken genügt); danach Ecken ziehen, ⟳ oben = drehen, 🗑 am Objekt löscht.'));
+            exCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin:.1rem 0 .3rem' }, 'Wählen und im Plan aufziehen (Stütze: klicken genügt); danach Ecken ziehen, ⟳ oben = drehen, 🗑 am Objekt löscht.'));
             const exList = el('div', { class: 'gp-exlist' });
-            if (!P.excl.length) exList.append(el('div', { class: 'muted', style: 'font-size:.76rem;margin-top:.4rem' }, 'Noch keine Flächen.'));
+            if (!P.excl.length) exList.append(el('div', { class: 'muted', style: 'font-size:var(--text-sm);margin-top:.4rem' }, 'Noch keine Flächen.'));
             P.excl.forEach((b) => {
                 const it = el('div', { class: 'gp-exitem' + (b.id === P.sel ? ' on' : '') });
                 const sw = el('span', { class: 'gp-sw' }); sw.dataset.kind = b.kind;
                 const meta = (isWallKind(b.kind) && b.mat && MAT[b.mat]) ? ' · ' + MAT[b.mat] : '';
-                it.append(sw, el('span', { style: 'flex:1' }, b.label, ' ', el('span', { class: 'muted num', style: 'font-size:.72rem' }, b.w + '×' + b.h + ' m' + meta)),
+                it.append(sw, el('span', { style: 'flex:1' }, b.label, ' ', el('span', { class: 'muted num', style: 'font-size:var(--text-xs)' }, b.w + '×' + b.h + ' m' + meta)),
                     el('button', { class: 'gp-rm', title: 'Entfernen', onclick: (e) => { e.stopPropagation(); removeExcl(b); } }, '×'));
                 it.addEventListener('click', () => { P.sel = b.id; draw(); });
                 exList.append(it);
@@ -9065,7 +9181,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 const sizeRow = el('div', { class: 'gp-grid2', style: 'margin-top:.5rem' },
                     el('div', { class: 'gp-field' }, el('label', {}, isWallKind(b.kind) ? 'Länge (m)' : 'Breite (m)'), el('input', { class: 'gp-stepin num', type: 'number', step: '0.1', value: b.w, onchange: (e) => setExclSize(b, 'w', e.target.value) })),
                     el('div', { class: 'gp-field' }, el('label', {}, isWallKind(b.kind) ? 'Dicke (m)' : 'Tiefe (m)'), el('input', { class: 'gp-stepin num', type: 'number', step: isWallKind(b.kind) ? '0.01' : '0.1', value: b.h, onchange: (e) => setExclSize(b, 'h', e.target.value) })));
-                exCard.append(sizeRow, el('div', { class: 'muted', style: 'font-size:.72rem;margin-top:.35rem' }, 'Ecke ziehen = Größe · Ziehen = verschieben.'));
+                exCard.append(sizeRow, el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin-top:.35rem' }, 'Ecke ziehen = Größe · Ziehen = verschieben.'));
             }
             rail.append(exCard);
             // ---- Parkfläche (automatisch aus den Wänden) ----
@@ -9074,10 +9190,10 @@ import { createRevenueChart } from './revenue-chart.js';
             if (P.autoArea) {
                 const enc0 = enclosure();
                 if (enc0 && enc0.area > 0.3) {
-                    areaCard.append(el('div', { class: 'muted', style: 'font-size:.75rem;margin:.45rem 0' }, 'Umschlossen erkannt: ' + enc0.area.toFixed(1).replace('.', ',') + ' m² (grün schraffiert).'));
+                    areaCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-sm);margin:.45rem 0' }, 'Umschlossen erkannt: ' + enc0.area.toFixed(1).replace('.', ',') + ' m² (grün schraffiert).'));
                     areaCard.append(el('button', { class: 'btn btn-sm btn-block', title: 'Den erkannten Umriss als Hallenfläche übernehmen', onclick: deriveFloorFromWalls }, '⤵ Umriss aus Wänden übernehmen'));
                 } else {
-                    areaCard.append(el('div', { class: 'muted', style: 'font-size:.75rem;margin:.45rem 0' }, 'Außenwände zu einem geschlossenen Ring zeichnen — die Parkfläche wird dann automatisch erkannt und schraffiert.'));
+                    areaCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-sm);margin:.45rem 0' }, 'Außenwände zu einem geschlossenen Ring zeichnen — die Parkfläche wird dann automatisch erkannt und schraffiert.'));
                 }
             }
             rail.append(areaCard);
@@ -9098,9 +9214,9 @@ import { createRevenueChart } from './revenue-chart.js';
                     el('div', { class: 'gp-addrow' },
                         el('button', { class: 'btn btn-sm', title: 'Auf die Hallenfläche einpassen', onclick: () => { const bb = floorBB(); P.plan.x = bb.minX; P.plan.y = bb.minY; P.plan.w = Math.max(1, bb.maxX - bb.minX); P.plan.h = Math.max(1, bb.maxY - bb.minY); markDirty(); draw(); } }, '⤢ An Halle anpassen'),
                         el('button', { class: 'btn btn-sm btn-danger', onclick: () => { P.plan = null; P.calib = false; markDirty(); draw(); renderRail(); toast('Bauplan entfernt'); } }, 'Entfernen'))));
-                planCard.append(el('div', { class: 'muted', style: 'font-size:.72rem;margin-top:.4rem' }, 'Kalibrieren: Bauplan verschieben und an den Ecken auf Maßstab ziehen. Wände/Fahrzeuge lassen sich dann exakt darüber platzieren.'));
+                planCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin-top:.4rem' }, 'Kalibrieren: Bauplan verschieben und an den Ecken auf Maßstab ziehen. Wände/Fahrzeuge lassen sich dann exakt darüber platzieren.'));
             } else {
-                planCard.append(el('div', { class: 'muted', style: 'font-size:.72rem;margin-top:.4rem' }, 'Ein Foto/Scan des Grundrisses als Unterlage laden, kalibrieren und darüber planen.'));
+                planCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin-top:.4rem' }, 'Ein Foto/Scan des Grundrisses als Unterlage laden, kalibrieren und darüber planen.'));
             }
             rail.append(planCard);
         }
@@ -9618,8 +9734,10 @@ import { createRevenueChart } from './revenue-chart.js';
         body.append(el('div', { class: 'sheet-user' },
             el('div', { class: 'name' }, esc(state.user.username)),
             el('div', { class: 'muted' }, ROLE_LABEL[state.user.role] || state.user.role)));
-        const item = (ic, label, fn, cls = '') => {
+        const current = parseHash().name;
+        const item = (ic, label, fn, cls = '', route = null) => {
             const b = el('button', { class: 'menu-item ' + cls }, el('span', { class: 'ic' }, icon(ic, 18)), el('span', {}, label));
+            if (route && route === current) b.setAttribute('aria-current', 'page');
             b.addEventListener('click', () => { dlg.close(); fn(); });
             return b;
         };
@@ -9627,14 +9745,15 @@ import { createRevenueChart } from './revenue-chart.js';
         // (Design wechseln, Abmelden). Drei Gruppen, jede mit einer Ueberschrift.
         const group = (title) => body.append(el('div', { class: 'menu-sec' }, title));
         group('Betrieb');
-        if (isAdmin()) body.append(item('receipt', 'Rechnungs-Einstellungen', () => navigate('billing')));
-        body.append(item('euro', 'Zusatzkosten', () => navigate('finance')));
-        if (isAdmin()) body.append(item('ledger', 'Steuerjahr', () => navigate('taxyear')));
+        body.append(item('receipt', 'Rechnungen', () => navigate('invoices'), '', 'invoices'));
+        body.append(item('euro', 'Zusatzkosten', () => navigate('finance'), '', 'finance'));
+        if (isAdmin()) body.append(item('ledger', 'Steuerjahr', () => navigate('taxyear'), '', 'taxyear'));
         group('Verwaltung');
-        body.append(item('settings', 'Einstellungen', () => navigate('settings')));
-        if (isAdmin()) body.append(item('users', 'Benutzer', () => navigate('users')));
-        if (isAdmin()) body.append(item('log', 'Audit-Log', () => navigate('audit')));
-        if (isAdmin()) body.append(item('archive', 'Backup', () => navigate('backup')));
+        if (isAdmin()) body.append(item('settings', 'Rechnungs-Einstellungen', () => navigate('billing'), '', 'billing'));
+        body.append(item('settings', 'Einstellungen', () => navigate('settings'), '', 'settings'));
+        if (isAdmin()) body.append(item('users', 'Benutzer', () => navigate('users'), '', 'users'));
+        if (isAdmin()) body.append(item('log', 'Audit-Log', () => navigate('audit'), '', 'audit'));
+        if (isAdmin()) body.append(item('archive', 'Backup', () => navigate('backup'), '', 'backup'));
         group('Sitzung');
         // 'Design wechseln' ist raus: der Mond-Knopf in der Kopfzeile tut dasselbe
         // und traegt bereits aria-label='Design wechseln'.
@@ -10296,6 +10415,7 @@ import { createRevenueChart } from './revenue-chart.js';
         { label: 'Personen', sub: 'Stammdaten', url: '#/persons', kw: 'kunde halter mieter adresse kontakt' },
         { label: 'Gefährte', sub: 'Fahrzeuge', url: '#/vehicles', kw: 'auto wohnwagen wohnmobil boot anhaenger kennzeichen' },
         { label: 'Zusatzkosten', sub: 'Buchungen', url: '#/finance', kw: 'kosten strom reinigung leistung' },
+        { label: 'Rechnungen', sub: 'Offen, überfällig, bezahlt', url: '#/invoices', kw: 'rechnung beleg mahnung storno offen ueberfaellig' },
         { label: 'Tarife & Dienste', sub: 'Preise', url: '#/tariffs', kw: 'preis kategorie tarif dienst miete' },
         { label: 'Stellplätze', sub: 'Garagen, Hallen & Planer', url: '#/garages', kw: 'garage halle planer plan stellplatz' },
         { label: 'Einstellungen', sub: '', url: '#/settings', kw: 'optionen konfiguration profil passwort' },
@@ -10643,8 +10763,8 @@ import { createRevenueChart } from './revenue-chart.js';
             const hcard = el('div', { class: 'portal-card' }, el('h2', {}, P9.handovers));
             sum.handovers.forEach((ho) => hcard.append(el('div', { class: 'portal-row' },
                 el('span', {}, esc(ho.vehicle_label) + ' · ' + (ho.direction === 'einlagerung' ? P9.storein : P9.storeout),
-                    ho.notes ? el('span', { class: 'muted', style: 'display:block;font-size:.78rem' }, esc(ho.notes)) : null),
-                el('span', { class: 'muted', style: 'font-size:.8rem;text-align:right' },
+                    ho.notes ? el('span', { class: 'muted', style: 'display:block;font-size:var(--text-sm)' }, esc(ho.notes)) : null),
+                el('span', { class: 'muted', style: 'font-size:var(--text-sm);text-align:right' },
                     new Date(ho.created_at).toLocaleDateString(locale),
                     ho.signer_name ? el('span', { style: 'display:block' }, P9.signed + esc(ho.signer_name)) : null))));
             wrap.append(hcard);
@@ -10662,9 +10782,12 @@ import { createRevenueChart } from './revenue-chart.js';
                         + (iv.open > 0.005 ? ' · ' + P9.open_part + eur(iv.open) : '') + ' · PDF',
                     onclick: () => portalOpenPdf(token, iv.id) },
                     el('span', {}, P9.invoice + esc(iv.number),
-                        el('span', { class: 'muted', style: 'display:block;font-size:.78rem' }, new Date(iv.issued_on).toLocaleDateString(locale) + (iv.status ? ' · ' + (P9.inv_status[iv.status] || esc(iv.status)) : ''))),
+                        el('span', { class: 'muted', style: 'display:block;font-size:var(--text-sm)' }, new Date(iv.issued_on).toLocaleDateString(locale) + (iv.status ? ' · ' + (P9.inv_status[iv.status] || esc(iv.status)) : '')),
+                        // Sichtbarer Hinweis, dass die Zeile das PDF öffnet — bisher stand
+                        // "PDF" nur im aria-label.
+                        el('span', { class: 'portal-pdf', 'aria-hidden': 'true' }, icon('receipt', 13), 'PDF')),
                     el('span', { style: 'text-align:right' }, eur(iv.total),
-                        iv.open > 0.005 ? el('span', { class: 'muted', style: 'display:block;font-size:.78rem' }, P9.open_part + eur(iv.open)) : null)));
+                        iv.open > 0.005 ? el('span', { class: 'muted', style: 'display:block;font-size:var(--text-sm)' }, P9.open_part + eur(iv.open)) : null)));
             // Scan-to-pay QR for each still-open invoice.
             if (iv.open > 0.005) {
                 const qr = el('img', { alt: P9.qr_alt, width: 150, height: 150, style: 'max-width:150px;height:auto' });
@@ -10699,7 +10822,7 @@ import { createRevenueChart } from './revenue-chart.js';
         // Briefkasten — der Kunde reicht ein, der Betreiber übernimmt.
         {
             const rcard = el('div', { class: 'portal-card portal-requests' }, el('h2', {}, P9.requests),
-                el('p', { class: 'muted', style: 'font-size:.8rem' }, P9.req_hint));
+                el('p', { class: 'muted', style: 'font-size:var(--text-sm)' }, P9.req_hint));
             const send = async (body, msgEl, btn) => {
                 if (btn.disabled) return;
                 btn.disabled = true;
