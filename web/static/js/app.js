@@ -471,12 +471,12 @@ import { createRevenueChart } from './revenue-chart.js';
     }
 
     // delete with an undo window (delayed server call)
-    // Keine Rueckfrage mehr vor dem Rueckgaengig-Fenster: beides zusammen war doppelte
-    // Reibung, und wer taeglich durch die Rueckfrage klickt, liest sie nicht mehr. Der
-    // Schutz ist das Fenster selbst. `confirm` (Text der Hauptaktion) bleibt fuer
-    // Faelle, deren Erklaerung man VOR dem Klick braucht: Zahlung stornieren.
-    async function deleteWithUndo(title, message, doDelete, onDone, node, { confirm = '' } = {}) {
-        if (confirm && !await confirmDialog(title, message, confirm)) return;
+    // Jedes Loeschen fragt vorher nach (Betreiberentscheid 15.10.2026), auch mit dem
+    // Rueckgaengig-Fenster danach: die Rueckfrage nennt, WAS mitgeht (Person samt
+    // Gefaehrten, Garage samt Hallen), das Fenster faengt den Fehlgriff danach ab.
+    // `confirm` setzt nur den Text der Hauptaktion (Zahlung: "Stornieren").
+    async function deleteWithUndo(title, message, doDelete, onDone, node, { confirm = 'Löschen' } = {}) {
+        if (!await confirmDialog(title, message, confirm)) return;
         let cancelled = false;
         // "Person löschen?" -> "Person wird gelöscht …": der Hinweis sagt, WAS gerade geht.
         const what = /^(.+) (löschen|stornieren)\?$/.exec(title);
@@ -1862,14 +1862,14 @@ import { createRevenueChart } from './revenue-chart.js';
         const flagged = stat(eur(ov.paid_total), 'Als bezahlt markiert', { icon: 'check', tone: 'green' });
         flagged.append(el('div', { class: 'stat-note' }, 'Markierung auf den Karten · kein Zahlungseingang'));
         moneyRow.append(flagged);
-        // Zehn Zahlen vor der ersten Handlung waren zu viel. Oben bleiben Heute, Offen
-        // gesamt und die Belegung; Geld- und Zaehlkacheln liegen im Block "Kennzahlen",
-        // dessen Zeile die wichtigsten Werte schon nennt. Auf/zu ueberlebt den Neustart.
+        // Geld- und Zaehlkacheln liegen im Block "Kennzahlen", dessen Zeile die
+        // wichtigsten Werte schon nennt. Beim ersten Besuch offen (Betreiberentscheid
+        // 15.10.2026); wer ihn zuklappt, findet ihn auch nach dem Neustart zu.
         const kpiFacts = ['Umsatz ' + eur(ov.accrued_this_year)];
         if ((Number(ov.payments_this_year) || 0) > 0 || (Number(ov.payments_total) || 0) > 0) kpiFacts.push('Eingegangen ' + eur(ov.payments_this_year));
         kpiFacts.push(ov.total_persons + ' Personen', ov.active_vehicles + ' aktiv');
         const kpis = persistDetails('dash-kpis', 'card dash-kpis', el('span', { class: 'fold-sum' }, foldChev(),
-            el('span', { class: 'fold-title' }, 'Kennzahlen ' + ov.year), el('span', { class: 'fold-meta' }, kpiFacts.join(' · '))), false, { remember: true });
+            el('span', { class: 'fold-title' }, 'Kennzahlen ' + ov.year), el('span', { class: 'fold-meta' }, kpiFacts.join(' · '))), true, { remember: true });
         kpis.append(moneyRow);
         page.append(kpis);
         // Compare-mode switch for the Umsatz delta — only when there is a prior year
@@ -2870,7 +2870,7 @@ import { createRevenueChart } from './revenue-chart.js';
         });
     }
     async function stornoInvoice(iv) {
-        if (!await confirmDialog('Rechnung ' + iv.number + ' stornieren?', 'Gesamtbetrag ' + eur(iv.total) + '. Erstellt einen unveränderlichen Storno-Gegenbeleg (Belege sind gesetzlich unveränderbar). Die abgerechneten Positionen werden wieder fakturierbar.', 'Stornieren')) return;
+        if (!await confirmDialog('Rechnung ' + iv.number + ' stornieren?', 'Gesamtbetrag ' + eur(iv.total) + '. Erstellt einen unveränderlichen Storno-Gegenbeleg (§ 131 BAO: Aufzeichnungen dürfen nicht so verändert werden, dass der ursprüngliche Inhalt verloren geht). Die abgerechneten Positionen werden wieder fakturierbar.', 'Stornieren')) return;
         try {
             const st = await api.post('/invoices/' + iv.id + '/cancel', {});
             toast('Storniert · Gegenbeleg ' + st.number, 'success');
@@ -3859,21 +3859,17 @@ import { createRevenueChart } from './revenue-chart.js';
     // Platzierbar = steht in der Planer-Palette (/vehicles/unassigned: ohne Platz, nicht
     // archiviert) und der Benutzer darf planen.
     const canPlace = (v) => canManage() && !v.spot_id && !v.archived;
-    // Welche Halle? Eine einzige: direkt. Mehrere: kurz fragen, die zuletzt geoeffnete
-    // vorbelegt. Keine: zu den Stellplaetzen, dort entsteht die erste.
+    // Welche Halle? Ohne Rueckfrage die zuletzt geoeffnete, sonst die erste
+    // (Betreiberentscheid 15.10.2026); gewechselt wird im Planer. Keine Halle: zu den
+    // Stellplaetzen, dort entsteht die erste.
     async function pickHall() {
         const garages = await api.get('/garages');
-        const lists = await Promise.all(garages.filter((g) => g.hall_count).map((g) => api.get('/garages/' + g.id + '/halls')
-            .then((hs) => hs.map((hl) => ({ id: hl.id, label: (garages.length > 1 ? g.name + ' · ' : '') + hl.name })))));
+        const lists = await Promise.all(garages.filter((g) => g.hall_count).map((g) => api.get('/garages/' + g.id + '/halls')));
         const halls = lists.flat();
         if (!halls.length) { toast('Noch keine Halle angelegt. Unter Stellplätze zuerst eine Halle anlegen.', 'error'); navigate('garages'); return null; }
-        if (halls.length === 1) return halls[0].id;
         let last = null;
         try { last = Number(localStorage.getItem('parkrr-last-hall')); } catch (e) { /* storage blocked */ }
-        const data = await formModal({ title: 'In welche Halle?', submitLabel: 'Planer öffnen',
-            fields: [{ name: 'hall', label: 'Halle', type: 'select', value: halls.some((hl) => hl.id === last) ? last : halls[0].id,
-                options: halls.map((hl) => ({ value: hl.id, label: hl.label })) }] });
-        return data ? Number(data.hall) : null;
+        return (halls.find((hl) => hl.id === last) || halls[0]).id;
     }
     // Oeffnet den Planer; mit v steht das Gefaehrt dort schon bereit (Fläche antippen).
     async function placeInPlan(v) {
@@ -5343,22 +5339,26 @@ import { createRevenueChart } from './revenue-chart.js';
 
     // ================= EXTRA CHARGES =================
     // Mehrfachauswahl wie bei den Gefaehrten: Saisonende hiess sonst zwanzigmal dieselbe
-    // Pille. Auswaehlbar sind nur freie, offene, nicht fakturierte Posten — genau die,
-    // deren Zahlstatus die Pille der Karte setzt. Gebundene folgen ihrem Gefaehrt,
-    // fakturierte ihrer Rechnung.
+    // Pille. Auswaehlbar sind freie, nicht fakturierte Posten — genau die, deren
+    // Zahlstatus die Pille der Karte setzt —, offen wie bezahlt. Gebundene folgen ihrem
+    // Gefaehrt, fakturierte ihrer Rechnung.
     const chargeSel = new Set();
     let chargeBulkMode = false;
-    const chargeBulkable = (c) => c.vehicle_id == null && !c.invoiced && !chargeIsPaid(c);
-    function chargeBulkBar() {
+    const chargeBulkable = (c) => c.vehicle_id == null && !c.invoiced;
+    function chargeBulkBar(charges) {
         const bar = el('div', { class: 'bulk-bar', hidden: !chargeBulkMode });
         const count = el('b', {}, '0');
-        const run = async () => {
+        const byId = new Map(charges.map((c) => [c.id, c]));
+        const run = async (paid) => {
             const ids = Array.from(chargeSel);
             if (!ids.length) { toast('Nichts ausgewählt', 'error'); return; }
+            // Nur, was sich wirklich aendert; ein schon bezahlter Posten bleibt unberuehrt.
+            const todo = ids.filter((id) => !!(byId.get(id) || {}).paid !== paid);
+            if (!todo.length) { toast(paid ? 'Die gewählten Posten sind schon als bezahlt markiert' : 'Die gewählten Posten sind schon offen'); return; }
             const done = [], failed = [];
             let firstErr = '';
-            for (const id of ids) {
-                try { await api.post('/charges/' + id + '/paid', { paid: true }); done.push(id); }
+            for (const id of todo) {
+                try { await api.post('/charges/' + id + '/paid', { paid }); done.push(id); }
                 catch (e) { failed.push(id); if (!firstErr) firstErr = e.message || ''; }
             }
             // Wie bei den Gefaehrten: nur das Erledigte verlaesst die Auswahl.
@@ -5366,18 +5366,19 @@ import { createRevenueChart } from './revenue-chart.js';
             failed.forEach((id) => chargeSel.add(id));
             chargeBulkMode = failed.length > 0;
             render();
-            const msg = done.length + ' als bezahlt markiert' + (failed.length ? ' · ' + failed.length + ' fehlgeschlagen' + (firstErr ? ' (' + firstErr + ')' : '') : '');
+            const msg = done.length + (paid ? ' als bezahlt markiert' : ' als offen markiert') + (failed.length ? ' · ' + failed.length + ' fehlgeschlagen' + (firstErr ? ' (' + firstErr + ')' : '') : '');
             if (!done.length) { toast(msg, 'error'); return; }
             // Eine Markierung, kein Geldeingang — also umkehrbar wie die Pille selbst.
             toastAction(msg, 'Rückgängig', async () => {
                 let back = 0;
-                for (const id of done) { try { await api.post('/charges/' + id + '/paid', { paid: false }); back++; } catch (e) { /* unten gezaehlt */ } }
+                for (const id of done) { try { await api.post('/charges/' + id + '/paid', { paid: !paid }); back++; } catch (e) { /* unten gezaehlt */ } }
                 toast(back === done.length ? 'Zurückgenommen' : back + ' von ' + done.length + ' zurückgenommen', back === done.length ? 'success' : 'warn');
                 render();
             });
         };
         bar.append(el('span', {}, count, ' ausgewählt'),
-            el('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: run }, 'Als bezahlt markieren'),
+            el('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => run(true) }, 'Als bezahlt markieren'),
+            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => run(false) }, 'Als offen markieren'),
             el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => { chargeSel.clear(); chargeBulkMode = false; render(); } }, 'Abbrechen'));
         bar._sync = () => { count.textContent = String(chargeSel.size); bar.hidden = !chargeBulkMode; };
         return bar;
@@ -5393,7 +5394,7 @@ import { createRevenueChart } from './revenue-chart.js';
     routes.finance = async (page) => {
         await refreshLookups();
         const charges = await api.get('/charges');
-        const bulkBarEl = canBill() && charges.some(chargeBulkable) ? chargeBulkBar() : null;
+        const bulkBarEl = canBill() && charges.some(chargeBulkable) ? chargeBulkBar(charges) : null;
         if (!bulkBarEl) { chargeBulkMode = false; chargeSel.clear(); }
         mountList(page, {
             stateKey: 'charges', // fester Schluessel, unabhaengig vom Anzeigetitel
@@ -10289,8 +10290,8 @@ import { createRevenueChart } from './revenue-chart.js';
     }
 
     // ================= HILFE =================
-    // Das Betreiber-Handbuch (docs/betreiber-handbuch.md, in die App eingebettet) als
-    // Seite. Ein kleiner Markdown-Leser fuer genau die Formen, die das Handbuch nutzt:
+    // Das Betreiber-Handbuch (Kopie von docs/betreiber-handbuch.md in internal/help,
+    // in die App eingebettet) als Seite, nur fuer Admins. Ein kleiner Markdown-Leser fuer genau die Formen, die das Handbuch nutzt:
     // Ueberschriften, Absaetze, Listen, Codeblock, Tabellen, Zitate, Trennlinien sowie
     // **fett**, `Code` und Links. Gebaut wird aus DOM-Knoten, nie ueber innerHTML.
     function helpSlug(text) { return norm(text).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
@@ -10384,6 +10385,7 @@ import { createRevenueChart } from './revenue-chart.js';
         return root;
     }
     routes.help = async (page, _id, query = new URLSearchParams()) => {
+        if (!isAdmin()) { page.innerHTML = ''; page.append(emptyState('lock', 'Nur für Administratoren.')); return; }
         const res = await api.get('/help/handbook');
         page.innerHTML = '';
         page.append(el('div', { class: 'page-head' }, el('h2', {}, 'Hilfe & Handbuch')));
@@ -10429,7 +10431,8 @@ import { createRevenueChart } from './revenue-chart.js';
         if (isAdmin()) body.append(item('users', 'Benutzer', () => navigate('users'), '', 'users'));
         if (isAdmin()) body.append(item('log', 'Audit-Log', () => navigate('audit'), '', 'audit'));
         if (isAdmin()) body.append(item('archive', 'Backup', () => navigate('backup'), '', 'backup'));
-        body.append(item('book', 'Hilfe & Handbuch', () => navigate('help'), '', 'help'));
+        // Betreiber-Handbuch: nur fuer Admins (Betreiberentscheid 15.10.2026).
+        if (isAdmin()) body.append(item('book', 'Hilfe & Handbuch', () => navigate('help'), '', 'help'));
         group('Sitzung');
         // 'Design wechseln' ist raus: der Mond-Knopf in der Kopfzeile tut dasselbe
         // und traegt bereits aria-label='Design wechseln'.

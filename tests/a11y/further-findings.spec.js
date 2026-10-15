@@ -81,20 +81,31 @@ test('the handbook is a page: menu entry, sections, deep links from backup and t
   expect(writes(requests)).toEqual([]);
 });
 
-test('dashboard keeps today, open total and occupancy up top; the key figures fold and remember', async ({ page }) => {
+test('the handbook is for admins only', async ({ page }) => {
+  const requests = await arrange(page, 1440, 'light', { role: 'editor' });
+  await open(page, 'dashboard');
+  await page.getByRole('button', { name: 'Menü', exact: true }).click();
+  await expect(page.locator('#menu').getByRole('button', { name: 'Hilfe & Handbuch' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await open(page, 'help');
+  await expect(page.getByText('Nur für Administratoren.', { exact: true })).toBeVisible();
+  expect(requests.filter(r => r.path === '/help/handbook')).toEqual([]);
+});
+
+test('dashboard: the key figures start open, fold on request and remember it', async ({ page }) => {
   await arrange(page, 1440, 'light');
   await open(page, 'dashboard');
   const kpis = page.locator('.dash-kpis');
-  await expect(kpis).not.toHaveAttribute('open', '');
+  await expect(kpis).toHaveAttribute('open', '');
   await expect(kpis.locator('summary')).toContainText('Kennzahlen 2026');
   await expect(kpis.locator('summary')).toContainText('Umsatz 12.480,00 €');
   await expect(kpis.locator('summary')).toContainText('24 Personen · 12 aktiv');
-  await expect(page.locator('.dash-money')).toBeHidden();
-  await expect(page.locator('.dash-hero')).toBeVisible();
-  await kpis.locator('summary').click();
   await expect(page.locator('.dash-money')).toBeVisible();
+  await kpis.locator('summary').click();
+  await expect(page.locator('.dash-money')).toBeHidden();
   await page.reload();
-  await expect(page.locator('.dash-kpis')).toHaveAttribute('open', '');
+  await expect(page.locator('.dash-kpis')).not.toHaveAttribute('open', '');
+  await expect(page.locator('.dash-hero')).toBeVisible();
   // Kupferner Balken mit Legende; Statusbalken wachsen per transform, nicht per width.
   await expect(page.locator('.chart-card', { hasText: 'Zusatzkosten pro Monat' }).locator('.legend'))
     .toContainText('laufender Monat · noch nicht abgeschlossen');
@@ -145,6 +156,18 @@ test('an unplaced vehicle offers “Im Plan platzieren” and arrives armed in t
   expect(writes(requests)).toEqual([]);
 });
 
+test('with several halls, “Im Plan platzieren” opens the last hall without asking', async ({ page }) => {
+  await arrange(page, 1440, 'light', { overrides: {
+    '/halls/2/plan': { hall: { ...overrides['/halls/1/plan'].hall, id: 2, name: 'Halle Süd' }, garage_name: 'Standort Nord', spots: [] },
+  } });
+  await page.addInitScript(() => { localStorage.setItem('parkrr-last-hall', '2'); });
+  await open(page, 'vehicles');
+  await page.locator('#page .card', { hasText: 'Demo Wohnmobil 2' }).first().getByRole('button', { name: 'Im Plan platzieren' }).click();
+  await expect(page).toHaveURL(origin + '/#/hall/2');
+  await expect(page.locator('#modal')).not.toHaveAttribute('open', '');
+  await expect(page.locator('.gp-vehc.is-armed')).toContainText('Demo Wohnmobil 2');
+});
+
 test('several open extra costs are marked paid at once and can be taken back', async ({ page }) => {
   const posts = [];
   const paid = (id) => async route => { posts.push([id, route.request().postDataJSON().paid]); return route.fulfill({ json: { status: 'ok' } }); };
@@ -153,14 +176,15 @@ test('several open extra costs are marked paid at once and can be taken back', a
       { id: 1, person_id: 1, person_name: 'Demo Berger 1', description: 'Innenreinigung', amount: 45, quantity: 1, total: 45, charged_on: '2026-09-02', paid: false },
       { id: 4, person_id: 2, person_name: 'Demo Gruber 2', description: 'Batterie laden', amount: 15, quantity: 1, total: 15, charged_on: '2026-09-03', paid: false },
       { id: 3, person_id: 1, person_name: 'Demo Berger 1', vehicle_id: 1, vehicle_label: 'Demo Wohnmobil 1', description: 'Batterieservice', amount: 30, quantity: 1, total: 30, charged_on: '2026-08-30', paid: false },
+      { id: 5, person_id: 2, person_name: 'Demo Gruber 2', description: 'Stromanschluss', amount: 20, quantity: 1, total: 20, charged_on: '2026-08-28', paid: true },
     ],
-    '/charges/1/paid': paid(1), '/charges/4/paid': paid(4),
+    '/charges/1/paid': paid(1), '/charges/4/paid': paid(4), '/charges/5/paid': paid(5),
   } });
   await open(page, 'finance');
   await expect(page.locator('.page-context')).toHaveText('Einmalige und wiederkehrende Zusatzkosten prüfen und begleichen.');
   await page.getByRole('button', { name: 'Mehrfachauswahl' }).click();
-  // Gebundene Posten folgen ihrem Gefährt: keine Auswahl.
-  await expect(page.locator('.bulk-cb')).toHaveCount(2);
+  // Gebundene Posten folgen ihrem Gefährt: keine Auswahl. Freie bezahlte sind wählbar.
+  await expect(page.locator('.bulk-cb')).toHaveCount(3);
   await page.getByRole('checkbox', { name: /Innenreinigung/ }).check();
   await page.getByRole('checkbox', { name: /Batterie laden/ }).check();
   await expect(page.locator('.bulk-bar')).toContainText('2 ausgewählt');
@@ -170,6 +194,22 @@ test('several open extra costs are marked paid at once and can be taken back', a
   await page.locator('#toast').getByRole('button', { name: 'Rückgängig' }).click();
   await expect.poll(() => posts.length).toBe(4);
   expect(posts.slice(2)).toEqual([[1, false], [4, false]]);
+  // Zurück auf offen: nur der bezahlte Posten ändert sich, der offene bleibt unberührt.
+  await page.getByRole('button', { name: 'Mehrfachauswahl' }).click();
+  await page.getByRole('checkbox', { name: /Stromanschluss/ }).check();
+  await page.getByRole('checkbox', { name: /Innenreinigung/ }).check();
+  await page.locator('.bulk-bar').getByRole('button', { name: 'Als offen markieren' }).click();
+  await expect(page.locator('#toast')).toContainText('1 als offen markiert');
+  expect(posts.slice(4)).toEqual([[5, false]]);
+});
+
+test('storno names its legal basis', async ({ page }) => {
+  const requests = await arrange(page, 1440, 'light');
+  await open(page, 'invoices/1');
+  await page.getByRole('button', { name: 'Storno', exact: true }).click();
+  await expect(page.locator('#confirm-body')).toContainText('§ 131 BAO');
+  await page.keyboard.press('Escape');
+  expect(writes(requests)).toEqual([]);
 });
 
 test('menu sheet closes with its own button; a list without entries shows one action', async ({ page }) => {
@@ -244,6 +284,30 @@ test('planner tools use the app icon set; no font-dependent glyphs remain', asyn
   }
   const text = await toolbar.evaluate(n => n.textContent);
   for (const glyph of ['↶', '↷', '◈', '▣', '▭', '⤢', '⭳', '▤', '⊾']) expect(text).not.toContain(glyph);
+});
+
+test('a 320 px phone shows short tab labels; the full name stays the accessible name', async ({ page }) => {
+  await arrange(page, 320, 'light');
+  await open(page, 'dashboard');
+  await expect(page.locator('.tab[data-route="garages"] .tab-short')).toBeVisible();
+  await expect(page.locator('.tab[data-route="garages"] .tab-short')).toHaveText('Stellpl.');
+  await expect(page.locator('.tab[data-route="vehicles"] .tab-label')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stellplätze', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Übersicht', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.tab[data-route="garages"] .tab-short')).toBeHidden();
+  await expect(page.locator('.tab[data-route="garages"] .tab-full')).toBeVisible();
+});
+
+test('status bars stay readable at 320 px and 200 % text: name and number on top, bar below', async ({ page }) => {
+  await arrange(page, 320, 'light');
+  await open(page, 'dashboard');
+  await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+  const row = page.locator('.bars .status-row').first();
+  await expect.poll(() => row.locator('.bar-track').evaluate(n => Math.round(n.getBoundingClientRect().width))).toBeGreaterThan(100);
+  const [name, track, val] = await Promise.all(['.status-name', '.bar-track', '.bar-val'].map(s => row.locator(s).boundingBox()));
+  expect(track.y).toBeGreaterThan(name.y + name.height - 1);
+  expect(val.x + val.width).toBeLessThanOrEqual(320);
 });
 
 test('tab labels never break mid-word; at 200 % text the bar shows icons and keeps the names', async ({ page }) => {

@@ -119,8 +119,6 @@ test('a disappeared requested year follows the canonical server year with an exp
 
 test('existing linear extrapolation is explicitly named and is separate from the chart forecast', async ({ page }) => {
   const { chart, forecastCalls } = await openDashboard(page);
-  // Der Vergleichsmodus steht im eingeklappten Block "Kennzahlen".
-  await page.locator('.dash-kpis > summary').click();
   await expect(page.getByRole('button', { name: 'Lineare Hochrechnung', exact: true })).toBeVisible();
   await expect(chart.getByLabel('Prognose anzeigen', { exact: true })).not.toBeChecked();
   expect(forecastCalls).toEqual([]);

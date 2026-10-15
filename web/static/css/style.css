@@ -829,6 +829,16 @@ div.empty .big svg { width: 30px; height: 30px; }
 .bars { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
 .bar-row { display: grid; grid-template-columns: 3.5rem 1fr auto; align-items: center; gap: 0.6rem; }
 .status-row { display: grid; grid-template-columns: 7rem 1fr auto; align-items: center; gap: 0.6rem; }
+/* Bei 320 px und 200 % Schrift fraß die 7rem-Namensspalte die ganze Zeile: der Balken
+   verschwand, die Zahl stand ausserhalb des Bildschirms. Ist die Liste schmaler als
+   Namensspalte, Zahl und ein sichtbarer Balken zusammen (~14,5em), stehen Name und Zahl
+   oben und der Balken darunter ueber die volle Breite. */
+.bars { container-type: inline-size; }
+@container (max-width: 14.5em) {
+    .status-row, .bar-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: .3rem; }
+    .status-row > .bar-track, .bar-row > .bar-track { grid-column: 1 / -1; grid-row: 2; }
+    .status-row > .status-name { white-space: normal; min-width: 0; }
+}
 .status-name { display: flex; align-items: center; gap: 0.45rem; font-size: var(--text-base); color: var(--text-muted); white-space: nowrap; }
 .status-dot { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; }
 .bar-track { background: var(--bg-elev-2); border-radius: 999px; height: 12px; overflow: hidden; }
@@ -1041,6 +1051,9 @@ div.empty .big svg { width: 30px; height: 30px; }
     background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px;
 }
 .yoy-modes { margin: .1rem 0 .8rem; }
+/* Im Kennzahlen-Block wird es bei 200 % Schrift eng: „Lineare Hochrechnung“ darf umbrechen
+   statt die Seite zu verbreitern. Bei normaler Schrift bleibt jede Wahl einzeilig. */
+.yoy-modes .yoy-mode { white-space: normal; }
 .seg-tabs { margin-bottom: .6rem; }
 .revenue-modes .btn, .yoy-mode, .seg-tab {
     border: 0; background: none; color: var(--text-muted); font: 600 var(--text-base)/1.2 var(--font);
@@ -3005,15 +3018,30 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 
 /* ---------- Weitere Funde (Kritik 14.10.) ---------- */
 
-/* Reiterleiste bei grosser Schrift (200 %): kein Umbruch mitten im Wort mehr. Wird die
-   Leiste fuer fuenf Beschriftungen zu schmal, treten alle zugleich zurueck und die
-   Reiter zeigen nur das Symbol; der Name bleibt fuer Screenreader erhalten. Nur fuer
-   die untere Leiste — die Desktop-Schiene ist schmal, aber hat Platz in der Zeile. */
+/* Reiterleiste bei grosser Schrift und auf schmalen Telefonen: kein Umbruch mitten im
+   Wort. Jede lange Beschriftung kuerzt sich genau dann, wenn sie nicht mehr in ihren
+   Reiter passt (gemessen in em der Leistenschrift: Stellplaetze 6,8 · Uebersicht 6,2 ·
+   Personen 6,0 je Reiter, mal fuenf). Erst wenn auch die Kurzformen nicht passen
+   (Gefaehrte 5,8), zeigt die Leiste nur Symbole. Der volle Name bleibt in jedem Fall
+   der zugaengliche Name. Nur fuer die untere Leiste, nicht fuer die Desktop-Schiene. */
 @media screen and (max-width: 1023.98px) {
     .tabbar { container: tabbar / inline-size; font-size: var(--text-xs); }
 }
+.tab-short { display: none; }
+@container tabbar (max-width: 34em) {
+    .shorten-34 > .tab-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .shorten-34 > .tab-short { display: inline; }
+}
 @container tabbar (max-width: 31em) {
-    .tab > span:last-child { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .shorten-31 > .tab-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .shorten-31 > .tab-short { display: inline; }
+}
+@container tabbar (max-width: 30em) {
+    .shorten-30 > .tab-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .shorten-30 > .tab-short { display: inline; }
+}
+@container tabbar (max-width: 29em) {
+    .tab > .tab-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .tab .tab-pill { width: 52px; height: 34px; }
 }
 

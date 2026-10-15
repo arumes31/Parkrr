@@ -117,10 +117,11 @@ test('person rows keep only open and edit; destructive actions live in the perso
   await expect(page.locator('#confirm')).toHaveClass(/modal-danger/);
   await expect(page.locator('#confirm-ok')).toHaveClass(/btn-danger/);
   await page.keyboard.press('Escape');
-  // Löschen fragt nicht mehr nach; Rückgängig im Hinweis nimmt es zurück, bevor
-  // irgendetwas den Server erreicht.
+  // Löschen fragt immer nach, und Rückgängig im Hinweis nimmt es danach noch zurück,
+  // bevor irgendetwas den Server erreicht.
   await zone.getByRole('button', { name: 'Person löschen' }).click();
-  await expect(page.locator('#confirm')).not.toHaveAttribute('open', '');
+  await expect(page.locator('#confirm-title')).toHaveText('Person löschen?');
+  await page.locator('#confirm-ok').click();
   await page.locator('#toast').getByRole('button', { name: 'Rückgängig' }).click();
   await expect(page.locator('#toast')).toContainText('Abgebrochen');
   await noWrites(requests);

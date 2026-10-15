@@ -120,8 +120,8 @@ func New(pool *pgxpool.Pool, authMgr *auth.Manager, wa *auth.WebAuthnService, ra
 	// /categories, /services und /invoices/{id} ohnehin abrufen kann — kein neuer Zugang
 	// zu Daten, nur ein schnellerer Weg dorthin.
 	mux.Handle("GET /api/search", authed(hf(h.Search)))
-	// Betreiber-Handbuch für "Hilfe & Handbuch" (eingebettet, keine Betriebsdaten).
-	mux.Handle("GET /api/help/handbook", authed(hf(h.Handbook)))
+	// Betreiber-Handbuch für "Hilfe & Handbuch" (eingebettet; nur für Admins).
+	mux.Handle("GET /api/help/handbook", admin(hf(h.Handbook)))
 
 	// --- Persons (read: any; write: manager/admin) ---
 	mux.Handle("GET /api/persons", authed(hf(h.ListPersons)))

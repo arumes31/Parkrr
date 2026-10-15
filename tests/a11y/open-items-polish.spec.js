@@ -170,9 +170,10 @@ test('undo toast: shown at the top on a phone, Ctrl+Z undoes the paid toggle', a
 test('a paused undo window keeps the delete from running until the toast actually expires', async ({ page }) => {
   const requests = await arrange(page, 1440, 'light');
   await open(page, 'persons/1');
-  // Keine Rückfrage mehr: das Rückgängig-Fenster ist der Schutz.
+  // Erst die Rückfrage, danach das Rückgängig-Fenster.
   await page.locator('.person-danger').getByRole('button', { name: 'Person löschen' }).click();
-  await expect(page.locator('#confirm')).not.toHaveAttribute('open', '');
+  await expect(page.locator('#confirm-title')).toHaveText('Person löschen?');
+  await page.locator('#confirm-ok').click();
   const toast = page.locator('#toast');
   await expect(toast).toContainText('Person wird gelöscht');
   await toast.hover();
@@ -189,5 +190,9 @@ test('view switches share the .segments form; the planner switches follow it in 
   expect(await modes.evaluate(n => getComputedStyle(n).borderRadius)).toBe('999px');
   expect(await modes.locator('.btn[aria-pressed="true"]').evaluate(n => getComputedStyle(n).borderRadius)).toBe('999px');
   await open(page, 'hall/1');
-  for (const sel of ['.gp-switch', '.gp-seg']) expect(await page.locator(sel).first().evaluate(n => getComputedStyle(n).borderRadius)).toBe('999px');
+  // In einem Schritt lesen: der Planer zeichnet seine Leiste bei jedem draw() neu, ein
+  // zuvor gegriffenes Element kann beim Auswerten schon ersetzt sein (dann liefert
+  // getComputedStyle eine leere Zeichenkette).
+  await page.locator('.gp-seg').first().waitFor();
+  for (const sel of ['.gp-switch', '.gp-seg']) expect(await page.evaluate(s => getComputedStyle(document.querySelector(s)).borderRadius, sel)).toBe('999px');
 });

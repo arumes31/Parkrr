@@ -57,7 +57,3 @@ Thumbs.db
 **/*.tiff
 !/web/static/icons/**
 !/web/static/img/**
-# Das Betreiber-Handbuch ist in die App eingebettet (docs/embed.go, Menü
-# "Hilfe & Handbuch"). Nur diese zwei Dateien aus /docs gehören in den Build.
-!/docs/betreiber-handbuch.md
-!/docs/embed.go
