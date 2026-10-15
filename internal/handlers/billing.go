@@ -281,6 +281,7 @@ type invoice struct {
 	// UStG: eindeutiger Bezug). Nur auf Storno-Dokumenten gesetzt (Hundert 18).
 	CancelsNumber    string         `json:"cancels_number,omitempty"`
 	PersonID         int64          `json:"person_id"`
+	PersonName       string         `json:"person_name,omitempty"` // nur in der globalen Liste (AllInvoices)
 	IssuedOn         time.Time      `json:"issued_on"`
 	DueOn            *time.Time     `json:"due_on"`
 	LeistungFrom     *time.Time     `json:"leistung_from,omitempty"` // § 11 Abs 1 Z 4: Leistungszeitraum (von)
@@ -1576,6 +1577,49 @@ func (h *Handler) ListInvoices(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range out {
 		out[i].Positions = pos[out[i].ID]
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// AllInvoices returns every invoice across all persons, newest first (no line
+// items), for the "Rechnungen" list. Bisher gab es Rechnungen nur je Person oder
+// als Überfällig-Liste — wer eine offene Rechnung suchte, musste wissen, bei wem.
+// Gefiltert (offen/überfällig/bezahlt) wird in der Oberfläche, wie bei den
+// anderen Listen; status und open_amount kommen aus derselben Ableitung wie
+// überall sonst (invoiceStatus).
+func (h *Handler) AllInvoices(w http.ResponseWriter, r *http.Request) {
+	// Global list, so paged like OverdueInvoices; X-Total-Count signals truncation.
+	limit, offset := pageParams(r, 1000, 5000)
+	h.totalCount(w, r.Context(), `SELECT count(*) FROM invoices`)
+	rows, err := h.Pool.Query(r.Context(),
+		`SELECT i.id, i.number, i.person_id, trim(p.first_name || ' ' || p.last_name),
+		        i.issued_on, i.due_on, i.subtotal, i.ust_rate, i.tax_amount, i.total,
+		        i.kleinunternehmer, i.canceled, i.cancels_id, i.paid_amount,
+		        (SELECT count(*) FROM invoice_reminders ir WHERE ir.invoice_id = i.id),
+		        (SELECT max(ir.sent_at) FROM invoice_reminders ir WHERE ir.invoice_id = i.id)
+		   FROM invoices i JOIN persons p ON p.id = i.person_id
+		  ORDER BY i.issued_on DESC, i.id DESC LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		serverError(w, r, "query failed", err)
+		return
+	}
+	defer rows.Close()
+	out := []invoice{}
+	for rows.Next() {
+		var iv invoice
+		if err := rows.Scan(&iv.ID, &iv.Number, &iv.PersonID, &iv.PersonName, &iv.IssuedOn, &iv.DueOn,
+			&iv.Subtotal, &iv.UStRate, &iv.TaxAmount, &iv.Total, &iv.Kleinunternehmer, &iv.Canceled,
+			&iv.CancelsID, &iv.PaidAmount, &iv.ReminderCount, &iv.LastRemindedAt); err != nil {
+			serverError(w, r, "query failed", err)
+			return
+		}
+		iv.OpenAmount = round2(iv.Total - iv.PaidAmount)
+		iv.Status = invoiceStatus(iv.Total, iv.PaidAmount, iv.Canceled, iv.CancelsID)
+		out = append(out, iv)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		serverError(w, r, "query failed", rerr)
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }

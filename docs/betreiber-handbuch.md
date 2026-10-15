@@ -2,7 +2,7 @@
 
 Für die Person, die Parkrr BETREIBT: installiert, sichert, aktualisiert und im
 Ernstfall wiederherstellt. Die Bedienung der Anwendung selbst erklärt sich in der
-Oberfläche; dieses Handbuch behandelt alles außenherum. (Hundert 97)
+Oberfläche; dieses Handbuch behandelt alles außenherum.
 
 Die README bleibt die Referenz für jede einzelne Umgebungsvariable — hier steht,
 **wann man was tut und warum**.

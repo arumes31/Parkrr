@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 });
 const openCharge = async page => {
   await page.goto(origin + '/#/finance');
-  await page.getByRole('button', { name: '+ Neu', exact: true }).click();
+  await page.getByRole('button', { name: '+ Position', exact: true }).click();
   await expect(page.locator('#modal')).toBeVisible();
 };
 

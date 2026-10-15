@@ -117,6 +117,9 @@ import { createRevenueChart } from './revenue-chart.js';
         close: '<path d="M6 6l12 12M18 6 6 18"/>',
         settings: '<path d="M6 4v7M6 15v5M12 4v3M12 11v9M18 4v11M18 19v1"/><circle cx="6" cy="13" r="1.8"/><circle cx="12" cy="9" r="1.8"/><circle cx="18" cy="17" r="1.8"/>',
         users: '<circle cx="9" cy="8" r="3.4"/><path d="M3.5 20c.6-3.4 2.9-5.2 5.5-5.2s4.9 1.8 5.5 5.2"/><path d="M16 5.4a3.4 3.4 0 0 1 0 5.9M17.8 14.9c1.6.8 2.6 2.4 3 5.1"/>',
+        // Person mit Kreuz: Anonymisieren entfernt die Stammdaten. Bisher das Schild,
+        // das auch 2FA, Backup und Pufferzonen bedeutet und eher "schützen" liest.
+        userx: '<circle cx="9" cy="8" r="3.4"/><path d="M3.5 20c.6-3.4 2.9-5.2 5.5-5.2s4.9 1.8 5.5 5.2"/><path d="M16.5 8.5l4 4M20.5 8.5l-4 4"/>',
         log: '<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 8.5h6M9 12h6M9 15.5h4"/>',
         upload: '<path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/>',
         download: '<path d="M12 4v11M8 11l4 4 4-4"/><path d="M5 19h14"/>',
@@ -148,6 +151,22 @@ import { createRevenueChart } from './revenue-chart.js';
         plus: '<path d="M12 5v14M5 12h14"/>',
         archive: '<rect x="3.5" y="5" width="17" height="4" rx="1"/><path d="M5 9v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/>',
         pin: '<path d="M12 21s-6-5.3-6-10a6 6 0 0 1 12 0c0 4.7-6 10-6 10Z"/><circle cx="12" cy="11" r="2.3"/>',
+        // Das Schild hiess 2FA, Backup UND Pufferzonen. Jetzt je eine eigene Glyphe:
+        // Schloss fuer den zweiten Faktor, Abstandspfeile fuer den Puffer, Beleg mit
+        // Zahnrad fuer die Rechnungs-Einstellungen (neben dem Regler "Einstellungen").
+        lock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/><path d="M12 14.5v2"/>',
+        spacing: '<path d="M4 6v12M20 6v12"/><path d="M7.5 12h9M10 9.5 7.5 12l2.5 2.5M14 9.5l2.5 2.5-2.5 2.5"/>',
+        receiptGear: '<path d="M6 3h10v8M6 3v18l2-1.3 2 1.3 2-1.3"/><path d="M9 8h5"/><circle cx="17" cy="17" r="2.2"/><path d="M17 12.8v1.4M17 19.8v1.4M12.8 17h1.4M19.8 17h1.4M14 14l1 1M19 19l1 1M14 20l1-1M19 15l1-1"/>',
+        book: '<path d="M5 4.5h9a3 3 0 0 1 3 3V20H8a3 3 0 0 1-3-3Z"/><path d="M5 17a3 3 0 0 1 3-3h9"/>',
+        copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
+        // Planer-Leiste: bisher Unicode-Zeichen (↶ ↷ ◈ ▣ ▭ ⤢ ⭳ ▤ ⊾), die von der Schrift
+        // abhingen und nicht zum uebrigen Satz passten. redoStep spiegelt undo (redo ist
+        // der Kreis fuer "Erneut einstellen").
+        redoStep: '<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0-6 6v4"/>',
+        square: '<rect x="5" y="7" width="14" height="10" rx="1.5"/>',
+        layers: '<path d="M12 4 3 9l9 5 9-5-9-5Z"/><path d="M3 14l9 5 9-5"/>',
+        rightAngle: '<path d="M5 4v15h15"/><path d="M5 12a7 7 0 0 1 7 7"/>',
+        exitPath: '<path d="M3 20V9l9-5 9 5v11"/><path d="M12 20v-8M8.5 15.5 12 12l3.5 3.5"/>',
     };
     const icon = (name, size = 16) => {
         const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -313,17 +332,53 @@ import { createRevenueChart } from './revenue-chart.js';
     // Toasts run through a small FIFO queue so several messages in quick succession are shown one
     // after another instead of the last one clobbering the rest. Rapid repeats of the same plain
     // message are deduped, and the backlog is capped so it can never flood (QW3).
-    let toastQ = [], toastCur = null;
+    let toastQ = [], toastCur = null, toastDeadline = 0, toastRemaining = 0;
     function hideToast() { $('#toast').hidden = true; toastCur = null; clearTimeout(toastTimer); setTimeout(pumpToast, 150); }
+    // Abgelaufen, ohne dass die Aktion gewählt wurde: erst JETZT darf onExpire laufen
+    // (deleteWithUndo löscht dort). So endet das Rückgängig-Fenster nie vor dem Hinweis,
+    // auch nicht, wenn er wegen Berührung oder Fokus angehalten war.
+    function expireToast() { const it = toastCur; hideToast(); if (it && it.onExpire) it.onExpire(); }
+    function armToast(ms) { clearTimeout(toastTimer); toastDeadline = Date.now() + ms; toastTimer = setTimeout(expireToast, ms); }
+    // Lesezeit statt fester Dauer: ~60 ms pro Zeichen, nie unter der vom Aufrufer
+    // verlangten Mindestdauer.
+    const toastMs = (it) => Math.max(it.ms, 1200 + 60 * String(it.text || '').length);
     function pumpToast() {
         if (toastCur || !toastQ.length) return;
-        const it = toastQ.shift(); toastCur = it; const box = $('#toast');
+        const it = toastQ.shift(); toastCur = it; toastRemaining = 0; it.shownAt = Date.now(); const box = $('#toast');
         box.innerHTML = ''; box.className = 'toast' + (it.kind ? ' ' + it.kind : ''); box.hidden = false;
         box.append(document.createTextNode(it.text + (it.action ? '  ' : '')));
-        if (it.action) { const btn = el('button', { class: 'toast-undo', type: 'button' }, it.actionLabel); btn.addEventListener('click', () => { it.action(); hideToast(); }); box.append(btn); }
-        clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, it.ms);
+        if (it.action) {
+            const btn = el('button', { class: 'toast-undo', type: 'button', title: it.undo ? it.actionLabel + ' (Strg+Z)' : null }, it.actionLabel);
+            btn.addEventListener('click', () => { it.action(); hideToast(); });
+            box.append(btn);
+        }
+        armToast(toastMs(it));
         if (it.onShow) { const f = it.onShow; it.onShow = null; f(); } // fire once, when the toast is actually visible
     }
+    // Wer den Hinweis berührt oder per Tastatur/Screenreader hineinspringt, liest ihn
+    // gerade: dann läuft die Zeit nicht weiter.
+    function pauseToast() { if (!toastCur || toastRemaining) return; clearTimeout(toastTimer); toastRemaining = Math.max(0, toastDeadline - Date.now()); }
+    function resumeToast() {
+        const box = $('#toast');
+        if (!toastCur || !toastRemaining || box.matches(':hover') || box.contains(document.activeElement)) return;
+        const left = toastRemaining; toastRemaining = 0; armToast(Math.max(left, 1500));
+    }
+    $('#toast').addEventListener('pointerenter', pauseToast);
+    $('#toast').addEventListener('pointerleave', () => setTimeout(resumeToast, 0));
+    $('#toast').addEventListener('focusin', pauseToast);
+    $('#toast').addEventListener('focusout', () => setTimeout(resumeToast, 0));
+    // Strg+Z / ⌘Z nimmt die letzte Änderung zurück, solange ihr Hinweis sichtbar ist.
+    // Nicht in Eingabefeldern (dort gehört Strg+Z dem Text) und nicht im Planer, der
+    // ein eigenes Rückgängig führt.
+    document.addEventListener('keydown', (e) => {
+        if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'z') return;
+        const it = toastCur;
+        if (!it || !it.undo || !it.action) return;
+        if (e.target && e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+        if (parseHash().name === 'hall') return;
+        e.preventDefault();
+        it.action(); hideToast();
+    });
     function enqueueToast(it) {
         const last = toastQ.length ? toastQ[toastQ.length - 1] : toastCur;
         if (!it.action && last && last.text === it.text && !last.action) return; // skip an immediate repeat
@@ -336,19 +391,36 @@ import { createRevenueChart } from './revenue-chart.js';
             let plain = toastQ.filter((t) => !t.action).length;
             for (let i = 0; i < toastQ.length && plain > 4;) { if (!toastQ[i].action) { toastQ.splice(i, 1); plain--; } else i++; }
         }
+        // Eine neue Meldung wartet nicht die ganze Lesezeit einer alten ab: ein einfacher
+        // Hinweis (ohne Aktion, nicht angehalten) weicht, sobald er 1,5 s sichtbar war.
+        if (toastCur && !toastCur.action && !toastRemaining) {
+            const minLeft = toastCur.shownAt + 1500 - Date.now();
+            if (toastDeadline - Date.now() > minLeft) armToast(Math.max(0, minLeft));
+        }
         pumpToast();
     }
     function toast(msg, kind = '') { enqueueToast({ text: t(msg), kind, ms: 3000 }); }
-    function toastAction(msg, actionLabel, onAction, ms = 4500, onShow = null) { enqueueToast({ text: t(msg), action: onAction, actionLabel: t(actionLabel), ms, onShow }); }
+    function toastAction(msg, actionLabel, onAction, ms = 4500, onShow = null, onExpire = null) {
+        enqueueToast({ text: t(msg), action: onAction, actionLabel: t(actionLabel), ms, onShow, onExpire, undo: actionLabel === 'Rückgängig' });
+    }
 
     // ---------- confirm ----------
-    function confirmDialog(title, message, okLabel = 'Löschen') {
+    // Rot heisst "geht verloren oder ist nicht umkehrbar". Bisher war JEDE Rueckfrage
+    // rot — auch "Rechnung erstellen?" —, und wer taeglich durch Rot klickt, klickt
+    // auch beim Loeschen durch. tone 'neutral' behaelt denselben Dialog, aber ohne
+    // Warnsymbol und mit der normalen Hauptaktion. Standard bleibt 'danger'.
+    function confirmDialog(title, message, okLabel = 'Löschen', { tone = 'danger' } = {}) {
         return new Promise((resolve) => {
             const dlg = $('#confirm');
+            const danger = tone !== 'neutral';
+            dlg.classList.toggle('modal-danger', danger);
+            dlg.querySelector('.confirm-ic').hidden = !danger;
             $('#confirm-title').textContent = title;
             $('#confirm-body').textContent = message;
             const ok = $('#confirm-ok'); const cancel = $('#confirm-cancel');
             ok.textContent = okLabel;
+            ok.classList.toggle('btn-danger', danger);
+            ok.classList.toggle('btn-primary', !danger);
             let settled = false;
             const done = (v) => {
                 ok.removeEventListener('click', onOk);
@@ -399,22 +471,29 @@ import { createRevenueChart } from './revenue-chart.js';
     }
 
     // delete with an undo window (delayed server call)
-    async function deleteWithUndo(title, message, doDelete, onDone, node) {
-        if (!await confirmDialog(title, message)) return;
+    // Jedes Loeschen fragt vorher nach (Betreiberentscheid 15.10.2026), auch mit dem
+    // Rueckgaengig-Fenster danach: die Rueckfrage nennt, WAS mitgeht (Person samt
+    // Gefaehrten, Garage samt Hallen), das Fenster faengt den Fehlgriff danach ab.
+    // `confirm` setzt nur den Text der Hauptaktion (Zahlung: "Stornieren").
+    async function deleteWithUndo(title, message, doDelete, onDone, node, { confirm = 'Löschen' } = {}) {
+        if (!await confirmDialog(title, message, confirm)) return;
         let cancelled = false;
+        // "Person löschen?" -> "Person wird gelöscht …": der Hinweis sagt, WAS gerade geht.
+        const what = /^(.+) (löschen|stornieren)\?$/.exec(title);
+        const verb = what && what[2] === 'stornieren' ? 'storniert' : 'gelöscht';
+        const pendingText = what ? what[1] + (/kosten$/i.test(what[1]) ? ' werden ' : ' wird ') + verb + ' …' : 'Wird gelöscht …';
         // Optimistic: the entry disappears immediately; the API call only runs
         // once the undo window has passed. Undo (or a failure) brings it back.
         if (node) node.hidden = true;
-        // Start the 4500ms commit timer only once the undo toast is actually VISIBLE (onShow), so a
-        // queued/delayed undo can never appear after the delete already fired — the undo window and
-        // the commit are always aligned.
-        let timer = null;
-        const start = () => { if (cancelled) return; timer = setTimeout(async () => {
+        // Gelöscht wird, wenn der Hinweis ABLÄUFT (onExpire) — nicht nach einem eigenen
+        // Timer. Ein angehaltener oder länger stehender Hinweis verlängert damit auch das
+        // Rückgängig-Fenster; "Rückgängig" kann nie nach dem Löschen noch sichtbar sein.
+        const commit = async () => {
             if (cancelled) return;
-            try { await doDelete(); toast('Gelöscht', 'success'); onDone && onDone(); }
+            try { await doDelete(); toast(verb === 'storniert' ? 'Storniert' : 'Gelöscht', 'success'); onDone && onDone(); }
             catch (e) { toast(e.message, 'error'); if (node) node.hidden = false; onDone && onDone(); }
-        }, 4500); };
-        toastAction('Wird gelöscht …', 'Rückgängig', () => { cancelled = true; clearTimeout(timer); if (node) node.hidden = false; toast('Abgebrochen'); }, 4500, start);
+        };
+        toastAction(pendingText, 'Rückgängig', () => { cancelled = true; if (node) node.hidden = false; toast('Abgebrochen'); }, 4500, null, commit);
     }
 
     // ---------- form modal ----------
@@ -514,7 +593,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 // The required asterisk is decorative — aria-required carries the
                 // meaning, so hide the star from screen readers.
                 field.append(el('label', { for: id }, f.label,
-                    f.required ? el('span', { 'aria-hidden': 'true' }, ' *') : null));
+                    (f.required || f.anyOf) ? el('span', { 'aria-hidden': 'true' }, ' *') : null));
                 let input;
                 if (f.type === 'select') {
                     input = el('select', { id, name: f.name });
@@ -568,6 +647,12 @@ import { createRevenueChart } from './revenue-chart.js';
                     row.append(input, shortcuts);
                 }
             }
+            // Pflichtfelder: der Stern erklaert sich nicht jedem, und "eins von mehreren"
+            // (Vor- ODER Nachname) zeigte der Dialog gar nicht — man erfuhr es erst vom
+            // Server. Ein Satz unter dem Formular; der Name traegt aria-required.
+            const anyOf = fields.find((f) => f.anyOf);
+            if (anyOf) body.append(el('p', { class: 'form-required-note' }, el('span', { 'aria-hidden': 'true' }, '* '), anyOf.anyOf));
+            else if (fields.some((f) => f.required && f.type !== 'checkbox')) body.append(el('p', { class: 'form-required-note', 'aria-hidden': 'true' }, '* Pflichtfeld'));
             const form = $('#modal-form');
             let settled = false;
             const settle = (v) => { if (!settled) { settled = true; resolve(v); } };
@@ -630,6 +715,16 @@ import { createRevenueChart } from './revenue-chart.js';
                     } else {
                         node.removeAttribute('aria-invalid');
                     }
+                }
+                // Eins von mehreren: der Server verlangt Vor- ODER Nachname.
+                const anyGroup = fields.filter((f) => f.anyOf);
+                if (anyGroup.length && anyGroup.every((f) => !String(data[f.name] ?? '').trim())) {
+                    anyGroup.forEach((f, i) => {
+                        const node = $('#f_' + f.name, body); const errNode = $('#err_' + f.name, body);
+                        if (i === 0 && errNode) { errNode.textContent = f.anyOfError || t('validation.required'); errNode.hidden = false; }
+                        node.setAttribute('aria-invalid', 'true');
+                        if (!firstInvalid) firstInvalid = node;
+                    });
                 }
                 if (firstInvalid) { revealFormField(firstInvalid); firstInvalid.focus(); return; }
                 // settle() before dlg.close() so the close-event's settle(null) is a
@@ -900,10 +995,26 @@ import { createRevenueChart } from './revenue-chart.js';
         box.addEventListener('blur', () => { tip.hide(); marks.forEach((o) => o.classList.remove('dim')); });
         return box;
     }
+    // Legende zu chartBars: der kupferne Balken (lastPositive) brauchte eine Erklaerung.
+    // "Laufender Monat" nur, wenn er es wirklich ist; sonst ist es der juengste Monat
+    // mit Werten (ein vergangenes Jahr, oder der laufende Monat ist noch leer).
+    function barLegend(values, year, seriesLabel) {
+        const hi = lastPositive(values || []);
+        const now = new Date();
+        const running = year === now.getFullYear() && hi === now.getMonth();
+        return el('div', { class: 'legend' },
+            el('span', {}, el('span', { class: 'dotc', style: 'background:var(--primary)' }), seriesLabel),
+            hi >= 0 ? el('span', {}, el('span', { class: 'dotc', style: 'background:var(--accent)' }),
+                running ? 'laufender Monat · noch nicht abgeschlossen' : 'jüngster Monat mit Werten') : null);
+    }
 
     // ---------- shared render helpers ----------
     // Empty-state illustration: a large muted stroke icon (by ICONS name) + text.
     const emptyState = (iconName, text) => el('div', { class: 'empty' }, el('span', { class: 'big' }, icon(iconName, 44)), text);
+    // Einheitlicher Chevron fuer Karten, die als Ganzes oeffnen (.card-link).
+    const cardChev = () => el('span', { class: 'card-chev', 'aria-hidden': 'true' }, icon('chevron', 18));
+    // Aufklapp-Zeichen der eingeklappten Bloecke; dreht sich beim Oeffnen (wie .tf-chev).
+    const foldChev = () => el('span', { class: 'fold-chev', 'aria-hidden': 'true' }, icon('chevron', 16));
     // Line icons for stat tiles (inline SVG; CSP blocks external assets).
     const STAT_ICONS = {
         users: '<path d="M16 19a4 4 0 0 0-8 0"/><circle cx="12" cy="8" r="3.2"/>',
@@ -914,6 +1025,9 @@ import { createRevenueChart } from './revenue-chart.js';
         check: '<circle cx="12" cy="12" r="8.2"/><path d="M8.5 12.3l2.3 2.3 4.6-4.9"/>',
         clock: '<circle cx="12" cy="12" r="8.2"/><path d="M12 7.5V12l3 2"/>',
         receipt: '<path d="M6 3h12v18l-2.2-1.3-2 1.3-2-1.3-2 1.3-2-1.3L6 21V3Z"/><path d="M9.2 8.5h5.6M9.2 12h5.6"/>',
+        // Backup-Kachel: Archiv statt Schild (das Schild war kein STAT_ICONS-Schluessel,
+        // die Kachel stand ohne Symbol da).
+        archive: '<rect x="3.5" y="5" width="17" height="4" rx="1"/><path d="M5 9v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9M10 13h4"/>',
     };
     function statIcon(key) {
         const p = STAT_ICONS[key];
@@ -978,7 +1092,7 @@ import { createRevenueChart } from './revenue-chart.js';
     const catById = (id) => state.categories.find((c) => c.id === Number(id));
     const STATUS_LABEL = { reserved: 'reserviert', stored: 'eingelagert', collected: 'abgeholt', cancelled: 'storniert' };
     const STATUS_COLOR = { stored: 'var(--success)', reserved: 'var(--warning)', collected: 'var(--text-muted)', cancelled: 'var(--danger)' };
-    const MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+    const MONTH_NAMES = ['Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
     const ROLE_LABEL = { admin: 'Administrator', editor: 'Bearbeiter', reader: 'Nur-Lesen' };
     const statusBadge = (s) => el('span', { class: 'badge badge-' + s }, STATUS_LABEL[s] || s);
 
@@ -992,9 +1106,15 @@ import { createRevenueChart } from './revenue-chart.js';
     // Per-list UI state (search text, sort, page), kept across render() rebuilds and
     // keyed by list, so a save no longer resets it (finding UX-54).
     const listState = new Map();
+    // Eintraege pro Seite. In der Saison sind 200 Gefaehrte bei 10 pro Seite 20 Seiten;
+    // Standard 25, gewaehlt wird je Liste und gemerkt (Geraetewunsch, kein Datensatz).
+    const PAGE_SIZES = [10, 25, 50, 100];
+    function readPageSize(key) {
+        try { const n = Number(localStorage.getItem(key)); if (PAGE_SIZES.includes(n)) return n; } catch (e) { /* storage blocked */ }
+        return 25;
+    }
     // ---------- generic list with search / sort / pagination ----------
     function mountList(page, opts) {
-        const pageSize = opts.pageSize || 10;
         // Der Schluessel ist BEWUSST kein Anzeigetext mehr. Faellt er auf opts.title
         // zurueck, teilen sich zwei gleich betitelte Listen Suche, Sortierung, Seite
         // UND controlState — und der controlState ist der gefaehrliche Teil: liest der
@@ -1004,6 +1124,8 @@ import { createRevenueChart } from './revenue-chart.js';
         // Ein Titel ist Text fuer Menschen und darf sich jederzeit aendern; ein
         // Zustandsschluessel darf das nicht.
         const stateKey = opts.stateKey || 'list';
+        const sizeKey = 'parkrr-pagesize-' + stateKey;
+        let pageSize = opts.pageSize || readPageSize(sizeKey);
         const saved = listState.get(stateKey) || {};
         let qRaw = saved.qRaw || '', sortIdx = (saved.sortIdx != null ? saved.sortIdx : (opts.defaultSort || 0)), pageNum = saved.pageNum || 1;
         let q = norm(qRaw);
@@ -1011,7 +1133,8 @@ import { createRevenueChart } from './revenue-chart.js';
         page.innerHTML = '';
         const head = el('div', { class: 'page-head' }, el('h2', {}, opts.title));
         if (opts.onAdd && opts.canAdd !== false) {
-            head.append(el('button', { class: 'btn btn-primary btn-sm', onclick: opts.onAdd }, '+ Neu'));
+            // Name statt "+ Neu": auf dem Telefon schwebt der Knopf ohne Seitenkopf (btn-add).
+            head.append(el('button', { class: 'btn btn-primary btn-sm btn-add', onclick: opts.onAdd }, opts.addLabel || '+ Neu'));
         }
         page.append(head);
 
@@ -1110,9 +1233,17 @@ import { createRevenueChart } from './revenue-chart.js';
             } else {
                 truncEl.hidden = true;
             }
+            // Gar keine Eintraege: EIN Leerzustand mit der einen Handlung — ohne Such- und
+            // Filterleiste, die nichts zu durchsuchen hat, und ohne die zweite Meldung
+            // "Keine Einträge" darueber.
+            const none = !opts.items.length;
+            toolbar.hidden = none; countEl.hidden = none;
             if (!slice.length) {
                 const empty = emptyState(opts.emptyIcon || 'box', q ? 'Keine passenden Einträge.'
-                    : opts.items.length ? 'Keine Einträge für die gewählten Filter.' : opts.emptyText || 'Keine Einträge.');
+                    : opts.items.length ? 'Keine Einträge für die gewählten Filter.' : opts.firstText || opts.emptyText || 'Keine Einträge.');
+                if (none && opts.onAdd && opts.canAdd !== false && opts.firstLabel) {
+                    empty.append(el('div', {}, el('button', { class: 'btn btn-primary', type: 'button', style: 'margin-top:1rem', onclick: opts.onAdd }, opts.firstLabel)));
+                }
                 if (q) empty.append(el('button', { class: 'btn btn-ghost', type: 'button', onclick: () => {
                     clearTimeout(searchTimer);
                     search.value = ''; qRaw = ''; q = ''; pageNum = 1; refresh(); search.focus();
@@ -1120,13 +1251,24 @@ import { createRevenueChart } from './revenue-chart.js';
                 listEl.append(empty);
             } else slice.forEach((it) => listEl.append(opts.render(it)));
             pagerEl.innerHTML = '';
-            if (total > pageSize) {
-                pagerEl.append(el('div', { class: 'pager' },
-                    el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Vorherige Seite', disabled: pageNum <= 1, onclick: () => changePage(-1) }, '‹'),
-                    el('span', { class: 'info' }, `${pageNum} / ${pages} · ${total}`),
-                    el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächste Seite', disabled: pageNum >= pages, onclick: () => changePage(1) }, '›'),
-                ));
+            const pager = el('div', { class: 'pager' });
+            if (total > pageSize) pager.append(
+                el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Vorherige Seite', disabled: pageNum <= 1, onclick: () => changePage(-1) }, '‹'),
+                el('span', { class: 'info' }, `${pageNum} / ${pages} · ${total}`),
+                el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächste Seite', disabled: pageNum >= pages, onclick: () => changePage(1) }, '›'));
+            // Auswahl erst, wenn es mehr Eintraege gibt als die kleinste Stufe.
+            if (!opts.pageSize && total > PAGE_SIZES[0]) {
+                const sizeSel = el('select', { class: 'pager-size', 'aria-label': 'Einträge pro Seite' },
+                    ...PAGE_SIZES.map((n) => el('option', { value: n, selected: n === pageSize }, n + ' pro Seite')));
+                sizeSel.addEventListener('change', () => {
+                    pageSize = Number(sizeSel.value); pageNum = 1;
+                    try { localStorage.setItem(sizeKey, String(pageSize)); } catch (e) { /* storage blocked */ }
+                    refresh();
+                    pagerEl.querySelector('.pager-size')?.focus();
+                });
+                pager.append(sizeSel);
             }
+            if (pager.childElementCount) pagerEl.append(pager);
         }
         function changePage(delta) {
             pageNum += delta;
@@ -1167,6 +1309,9 @@ import { createRevenueChart } from './revenue-chart.js';
     // Set before navigate('hall/<id>') to focus a spot on arrival (the hash router
     // can't carry a ?query, so we pass it out-of-band). The hall planner reads + clears it.
     let pendingSpotFocus = null;
+    // "Im Plan platzieren" (Gefaehrtkarte): dieses Gefaehrt steht im Planer bereit
+    // (Tippen statt Ziehen). Wie pendingSpotFocus einmalig verbraucht.
+    let pendingArmVehicle = null;
     function parseHash() {
         const raw = (location.hash || '#/dashboard').replace(/^#\/?/, '');
         const splitAt = raw.indexOf('?');
@@ -1176,8 +1321,12 @@ import { createRevenueChart } from './revenue-chart.js';
         return { name: name || 'dashboard', id: id ? Number(id) : null, query: new URLSearchParams(search) };
     }
     // garage/hall sind Unteransichten des Planers und markieren denselben Reiter.
+    // Kalender öffnet die Übersicht, Übergabevorlagen gehören zu den Gefährten.
     const TAB_FOR = { dashboard: 'dashboard', persons: 'persons', person: 'persons', vehicles: 'vehicles', vehicle: 'vehicles', tariffs: 'tariffs',
-        garages: 'garages', garage: 'garages', hall: 'garages' };
+        garages: 'garages', garage: 'garages', hall: 'garages', calendar: 'dashboard', 'handover-templates': 'vehicles' };
+    // Ziele, die nur im Menü (☰) stehen: dort markiert, und ☰ selbst zeigt an, dass
+    // die aktuelle Seite darin liegt — bisher war auf diesen Seiten nichts markiert.
+    const MENU_ROUTES = new Set(['invoices', 'billing', 'finance', 'taxyear', 'settings', 'users', 'audit', 'backup', 'help']);
     function navigate(path) {
         if (('#/' + path) === location.hash) render();
         else location.hash = '#/' + path;
@@ -1203,13 +1352,18 @@ import { createRevenueChart } from './revenue-chart.js';
     // rebuilds the DOM), so toggling something that triggers a refresh no longer
     // collapses an expanded dropdown. `key` must be stable for the same section.
     const detailsState = new Map();
-    function persistDetails(key, cls, summaryText, defaultOpen) {
-        const open = detailsState.has(key) ? detailsState.get(key) : !!defaultOpen;
+    // remember: der Zustand ueberlebt auch den Neustart (Geraetewunsch, kein Datensatz).
+    function persistDetails(key, cls, summaryText, defaultOpen, { remember = false } = {}) {
+        let open = detailsState.has(key) ? detailsState.get(key) : !!defaultOpen;
+        if (remember && !detailsState.has(key)) {
+            try { const v = localStorage.getItem('parkrr-open-' + key); if (v != null) open = v === '1'; } catch (e) { /* storage blocked */ }
+        }
         const det = el('details', { class: cls });
         if (open) det.open = true;
         det.append(el('summary', {}, summaryText));
         det.addEventListener('toggle', () => {
             detailsState.set(key, det.open);
+            if (remember) { try { localStorage.setItem('parkrr-open-' + key, det.open ? '1' : '0'); } catch (e) { /* storage blocked */ } }
             // Sliders mounted while the section was closed had zero width and
             // hid their thumb — measure them once the content is visible.
             if (det.open) $$('.seg-mini', det).forEach(placeThumb);
@@ -1245,6 +1399,10 @@ import { createRevenueChart } from './revenue-chart.js';
             if (on) t.setAttribute('aria-current', 'page');
             else t.removeAttribute('aria-current');
         });
+        // Nur sichtbar markiert; der Name "Menü" bleibt stabil (Sprachsteuerung).
+        // Im geöffneten Menü trägt der Eintrag der Seite aria-current="page".
+        const menuBtn = $('#menu-btn');
+        if (menuBtn) menuBtn.classList.toggle('is-current', MENU_ROUTES.has(routeName));
         const host = $('#page');
         host.setAttribute('aria-busy', 'true');
         const status = $('#route-status');
@@ -1272,21 +1430,50 @@ import { createRevenueChart } from './revenue-chart.js';
             if (err.status === 401) return;
             if (mySeq !== renderSeq) return; // der Abbruch gehört zur alten Route — nicht anzeigen
             page.innerHTML = '';
+            const { text, tech } = routeErrorText(err);
             page.append(el('div', { class: 'empty route-error', role: 'alert' },
                 el('div', { class: 'page-head' }, el('h2', {}, 'Ansicht nicht geladen')),
-                el('p', {}, err.message || 'Die Verbindung ist unterbrochen. Bitte erneut versuchen.'),
+                el('p', {}, text),
+                tech ? el('details', { class: 'route-error-tech' }, el('summary', {}, 'Technische Details'), el('code', {}, tech)) : null,
                 el('button', { class: 'btn btn-primary', type: 'button', onclick: () => render() }, 'Erneut versuchen')));
             syncPageTitle(host);
         } finally {
             if (mySeq === renderSeq) host.setAttribute('aria-busy', 'false');
         }
     }
+    // Seitenfehler in Alltagssprache: der Status sagt, was jetzt zu tun ist. Der rohe
+    // Servertext ("query failed", "HTTP 503") hilft nur beim Nachforschen und steht
+    // deshalb eingeklappt darunter. Unbekannte 4xx-Texte kommen vom Server bereits
+    // als Satz für Menschen (Validierung) und bleiben stehen.
+    function routeErrorText(err) {
+        const status = err && err.status;
+        const raw = String((err && err.message) || '').trim();
+        const tech = raw ? (status ? 'HTTP ' + status + ' · ' : '') + raw : '';
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        let text;
+        if (!status && (offline || err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(raw))) {
+            text = 'Keine Verbindung zum Server. Prüfe das Netz und versuche es erneut.';
+        } else if (status === 403) {
+            text = 'Für diese Ansicht fehlen dir die Rechte. Ein Admin kann sie freischalten.';
+        } else if (status === 404) {
+            text = 'Diesen Eintrag gibt es nicht mehr – vielleicht wurde er gelöscht.';
+        } else if (status === 429) {
+            text = 'Zu viele Anfragen in kurzer Zeit. Warte einen Moment und versuche es dann erneut.';
+        } else if (status === 503 || /database|datenbank|connection refused/i.test(raw)) {
+            text = 'Die Datenbank antwortet gerade nicht. Deine Daten sind sicher – versuche es in einer Minute erneut. Bleibt es dabei, prüfe den Datenbank-Container.';
+        } else if (status >= 500) {
+            text = 'Der Server konnte die Ansicht nicht laden. Versuche es erneut; bleibt der Fehler, steht der Grund im Server-Protokoll.';
+        } else {
+            return { text: raw || 'Die Verbindung ist unterbrochen. Bitte erneut versuchen.', tech: '' };
+        }
+        return { text, tech };
+    }
     const PAGE_CONTEXT = {
         persons: 'Kontakte finden, offene Salden prüfen und die nächste Saison vorbereiten.',
         person: 'Gefährte, Vereinbarungen und Abrechnung dieser Person an einem Ort.',
         vehicles: 'Status und Zahlung direkt ändern. Für Fotos, Standort und Verlauf das Gefährt öffnen.',
         vehicle: 'Status ändern, Standort prüfen und Fotos oder Übergabeprotokolle ergänzen.',
-        finance: 'Einmalige Zusatzkosten prüfen und begleichen. Wiederkehrende Kosten stehen bei der Person.',
+        finance: 'Einmalige und wiederkehrende Zusatzkosten prüfen und begleichen.',
         tariffs: 'Standardpreise pflegen und Leistungen für die schnelle Erfassung vorbereiten.',
         users: 'Zugänge und Berechtigungen für dein Team verwalten.',
         billing: 'Aussteller, Steuer und Zahlungsdaten für neue Rechnungen festlegen.',
@@ -1297,6 +1484,7 @@ import { createRevenueChart } from './revenue-chart.js';
         calendar: 'Abholungen, Reservierungen und fällige Rechnungen im gewählten Monat.',
         garages: 'Garage wählen, Halle öffnen und Gefährte im Plan zuordnen.',
         garage: 'Halle auswählen, um Belegung und Grundriss zu bearbeiten.',
+        help: 'Installieren, sichern, aktualisieren und im Ernstfall wiederherstellen – das Betreiber-Handbuch.',
     };
     function sectionIndex(page, headings) {
         if (headings.length < 2) return;
@@ -1314,18 +1502,33 @@ import { createRevenueChart } from './revenue-chart.js';
         const intro = page.querySelector('.page-context') || page.firstElementChild;
         intro.after(nav);
     }
+    // Nur-Lesen-Konten sehen weder Schieber noch Bearbeiten-Knöpfe – der Seitenhinweis
+    // versprach ihnen trotzdem "direkt ändern". Wo der Text eine Änderung verspricht,
+    // gibt es hier die ehrliche Fassung.
+    const PAGE_CONTEXT_READ = {
+        persons: 'Kontakte finden und offene Salden prüfen.',
+        vehicles: 'Status und Zahlung ansehen. Ändern können Bearbeiter und Admins.',
+        vehicle: 'Status, Standort, Fotos und Übergabeprotokolle ansehen.',
+        finance: 'Zusatzkosten und ihren Zahlstatus ansehen.',
+        tariffs: 'Standardpreise und Leistungen ansehen.',
+        garages: 'Garage wählen, Halle öffnen und die Belegung ansehen.',
+        garage: 'Halle auswählen, um Belegung und Grundriss anzusehen.',
+    };
     function finishRouteLayout(page, route) {
         page.classList.add('screen-' + route);
         const head = page.querySelector(':scope > .page-head, :scope > .detail-head');
         if (!head) return; // Access-denied, missing records, and the planner own their layout.
-        if (PAGE_CONTEXT[route]) head.after(el('p', { class: 'page-context' }, PAGE_CONTEXT[route]));
+        const context = (!canManage() && PAGE_CONTEXT_READ[route]) || PAGE_CONTEXT[route];
+        if (context) head.after(el('p', { class: 'page-context' }, context));
         const back = head.querySelector('.back-btn');
         if (back && !back.hasAttribute('aria-label')) back.setAttribute('aria-label', 'Zurück');
         if (route === 'person') {
             const hero = page.querySelector('.bal-hero-num')?.parentElement;
             const figures = page.querySelector('.bal-figs');
             if (hero && figures) { const overview = el('div', { class: 'person-overview' }); hero.before(overview); overview.append(hero, figures); }
-            sectionIndex(page, [...page.querySelectorAll(':scope > .section-head h3')]);
+            sectionIndex(page, [...page.querySelectorAll(':scope > .section-head h3, :scope > .person-fold > summary h3')]);
+        } else if (route === 'help') {
+            sectionIndex(page, [...page.querySelectorAll('.md h3')]);
         } else if (route === 'vehicle') {
             const cards = [...page.children].filter(n => n.classList.contains('card'));
             const controls = cards.find(n => ['Status & Zahlung', 'Archiviert'].includes(n.querySelector('h3')?.textContent));
@@ -1516,7 +1719,8 @@ import { createRevenueChart } from './revenue-chart.js';
         const items = [];
         (overdue || []).forEach((invoice) => items.push({
             priority: 0, tone: 'critical', title: invoice.person_name + ' · Rechnung ' + invoice.number,
-            meta: invoice.days_overdue + ' Tage überfällig · ' + eur(invoice.open_amount) + ' offen · Buchhaltung',
+            meta: (invoice.days_overdue > 0 ? invoice.days_overdue + (invoice.days_overdue === 1 ? ' Tag' : ' Tage') + ' überfällig' : 'heute fällig')
+                + ' · ' + eur(invoice.open_amount) + ' offen · Buchhaltung',
             href: '#/invoices/' + invoice.id, action: 'Rechnung öffnen',
         }));
         (portalRequests || []).filter((request) => request.status === 'offen').forEach((request) => items.push({
@@ -1560,6 +1764,28 @@ import { createRevenueChart } from './revenue-chart.js';
         return card;
     }
 
+    // Jahreswaehler ‹ Auswahl ›, geteilt von Uebersicht und Steuerjahr (dort stand
+    // bisher ‹ Text › — dieselbe Aufgabe in zwei Formen). Nach dem Neuzeichnen kehrt
+    // der Fokus zum benutzten Bedienelement zurueck, oder zur Auswahl, wenn es nun
+    // gesperrt ist.
+    function yearPicker({ years, year, label, cls, onChange }) {
+        const i = years.indexOf(year);
+        const go = async (next, selector) => {
+            await onChange(next);
+            const target = document.querySelector('.' + cls + '-nav ' + selector);
+            const focusTarget = target && !target.disabled ? target : document.querySelector('.' + cls + '-select');
+            focusTarget?.focus({ preventScroll: true });
+        };
+        const select = el('select', { class: 'year-picker-select ' + cls + '-select', 'aria-label': label },
+            ...years.map((y) => el('option', { value: y, selected: y === year }, String(y))));
+        select.addEventListener('change', () => go(Number(select.value), '.' + cls + '-select'));
+        return el('div', { class: 'pager year-picker ' + cls + '-nav' },
+            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'aria-label': 'Vorheriges Jahr', disabled: i <= 0,
+                onclick: () => go(years[i - 1], '[aria-label="Vorheriges Jahr"]') }, '‹'), select,
+            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', 'aria-label': 'Nächstes Jahr', disabled: i >= years.length - 1,
+                onclick: () => go(years[i + 1], '[aria-label="Nächstes Jahr"]') }, '›'));
+    }
+
     routes.dashboard = async (page) => {
         const requestedYear = dashYear;
         const missing = [];
@@ -1586,22 +1812,8 @@ import { createRevenueChart } from './revenue-chart.js';
         const nowYear = Number.isInteger(ov.current_year) ? ov.current_year : new Date().getFullYear();
         const years = [...new Set([...(Array.isArray(ov.available_years) ? ov.available_years : []), ov.year, nowYear])]
             .filter(year => Number.isInteger(year) && year <= nowYear).sort((a, b) => a - b);
-        const yearIndex = years.indexOf(ov.year);
-        const changeYear = async (year, selector) => {
-            dashYear = year;
-            await render();
-            const next = document.querySelector('.dashboard-year-nav ' + selector);
-            const focusTarget = next && !next.disabled ? next : document.querySelector('.dashboard-year-select');
-            focusTarget?.focus({ preventScroll: true });
-        };
-        const selectYear = el('select', { class: 'dashboard-year-select', 'aria-label': 'Dashboard-Jahr' },
-            ...years.map(year => el('option', { value: year, selected: year === ov.year }, String(year))));
-        selectYear.addEventListener('change', () => changeYear(Number(selectYear.value), '.dashboard-year-select'));
-        const yearSel = el('div', { class: 'pager dashboard-year-nav' },
-            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Vorheriges Jahr', disabled: yearIndex <= 0,
-                onclick: () => changeYear(years[yearIndex - 1], '[aria-label="Vorheriges Jahr"]') }, '‹'), selectYear,
-            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächstes Jahr', disabled: yearIndex >= years.length - 1,
-                onclick: () => changeYear(years[yearIndex + 1], '[aria-label="Nächstes Jahr"]') }, '›'));
+        const yearSel = yearPicker({ years, year: ov.year, label: 'Dashboard-Jahr', cls: 'dashboard-year',
+            onChange: async (year) => { dashYear = year; await render(); } });
         page.append(el('div', { class: 'page-head' }, el('h2', {}, 'Übersicht'),
             el('div', { class: 'page-head-actions' },
                 el('a', { class: 'btn btn-ghost btn-sm', href: '#/calendar', title: 'Abholungen, Reservierungen, fällige Rechnungen und Abholwünsche im Monat' }, 'Kalender'), yearSel)));
@@ -1640,13 +1852,26 @@ import { createRevenueChart } from './revenue-chart.js';
             umsatz.querySelector('.label').textContent = yd.label;
         }
         // "Eingegangen" = recorded payments (money-in log); surfaced next to Umsatz
-        // once any payment exists, distinct from "Bezahlt" (the paid-flag total).
+        // once any payment exists, distinct from "Als bezahlt markiert" (the paid-flag total).
         const moneyRow = el('div', { class: 'stat-grid dash-money' }, umsatz);
         if ((Number(ov.payments_this_year) || 0) > 0 || (Number(ov.payments_total) || 0) > 0) {
             moneyRow.append(stat(eur(ov.payments_this_year), 'Eingegangen ' + ov.year, { icon: 'receipt', tone: 'teal' }));
         }
-        moneyRow.append(stat(eur(ov.paid_total), 'Bezahlt', { icon: 'check', tone: 'green' }));
-        page.append(moneyRow);
+        // Summe der Bezahlt-MARKIERUNGEN auf den Karten — kein Geldeingang. Neben
+        // "Eingegangen" hiess sie bisher schlicht "Bezahlt" und widersprach dem Ledger.
+        const flagged = stat(eur(ov.paid_total), 'Als bezahlt markiert', { icon: 'check', tone: 'green' });
+        flagged.append(el('div', { class: 'stat-note' }, 'Markierung auf den Karten · kein Zahlungseingang'));
+        moneyRow.append(flagged);
+        // Geld- und Zaehlkacheln liegen im Block "Kennzahlen", dessen Zeile die
+        // wichtigsten Werte schon nennt. Beim ersten Besuch offen (Betreiberentscheid
+        // 15.10.2026); wer ihn zuklappt, findet ihn auch nach dem Neustart zu.
+        const kpiFacts = ['Umsatz ' + eur(ov.accrued_this_year)];
+        if ((Number(ov.payments_this_year) || 0) > 0 || (Number(ov.payments_total) || 0) > 0) kpiFacts.push('Eingegangen ' + eur(ov.payments_this_year));
+        kpiFacts.push(ov.total_persons + ' Personen', ov.active_vehicles + ' aktiv');
+        const kpis = persistDetails('dash-kpis', 'card dash-kpis', el('span', { class: 'fold-sum' }, foldChev(),
+            el('span', { class: 'fold-title' }, 'Kennzahlen ' + ov.year), el('span', { class: 'fold-meta' }, kpiFacts.join(' · '))), true, { remember: true });
+        kpis.append(moneyRow);
+        page.append(kpis);
         // Compare-mode switch for the Umsatz delta — only when there is a prior year
         // to compare against. Choice is persisted across visits.
         if (ov.previous_year_has_data === true && ((Number(ov.accrued_prev_year) || 0) > 0 || (Number(ov.accrued_prev_full) || 0) > 0)) {
@@ -1654,9 +1879,9 @@ import { createRevenueChart } from './revenue-chart.js';
                 el('button', { class: 'yoy-mode' + (yoyMode === m ? ' active' : ''), type: 'button',
                     'aria-pressed': String(yoyMode === m), title: YOY_MODE_TITLE[m],
                     onclick: () => { yoyMode = m; try { localStorage.setItem('parkrr-yoy', m); } catch (e) { /* storage blocked */ } render(); } }, lbl));
-            page.append(el('div', { class: 'yoy-modes', role: 'group', 'aria-label': 'Vergleichsmodus Umsatz' }, ...modeBtns));
+            kpis.append(el('div', { class: 'yoy-modes', role: 'group', 'aria-label': 'Vergleichsmodus Umsatz' }, ...modeBtns));
         }
-        page.append(el('div', { class: 'stat-grid dash-counts' },
+        kpis.append(el('div', { class: 'stat-grid dash-counts' },
             stat(ov.total_persons, 'Personen', { icon: 'users', onClick: () => navigate('persons') }),
             stat(ov.active_vehicles, 'aktiv eingestellt', { icon: 'warehouse', onClick: () => navigate('vehicles?active=1') }),
             stat(ov.total_vehicles, 'Gefährte gesamt', { icon: 'car', onClick: () => navigate('vehicles?archived=1') }),
@@ -1684,7 +1909,7 @@ import { createRevenueChart } from './revenue-chart.js';
                     const note = bs.enabled
                         ? 'Backup aktiviert, aber weder Verzeichnis noch S3 konfiguriert'
                         : 'kein Backup-Schlüssel gesetzt';
-                    const t0 = stat(txt, 'Backup', { icon: 'shield', tone: 'amber', onClick: () => navigate('backup') });
+                    const t0 = stat(txt, 'Backup', { icon: 'archive', tone: 'amber', onClick: () => navigate('backup') });
                     t0.append(el('div', { class: 'stat-note' }, note));
                     // Auch dieser Zweig braucht einen Titel: sonst hängt die Zusicherung
                     // im E2E daran, dass die Testumgebung zufällig ein Backup-Ziel
@@ -1704,7 +1929,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 const ages = targets.map(([, th]) => th.age_seconds).filter((a) => a != null);
                 const newest = ages.length ? Math.min(...ages) : null;
                 const tile = stat(newest == null ? 'nie' : 'vor ' + backupAge(newest), 'Backup',
-                    { icon: 'shield', tone: BACKUP_TONE[worst], onClick: () => navigate('backup') });
+                    { icon: 'archive', tone: BACKUP_TONE[worst], onClick: () => navigate('backup') });
 
                 // Begründungszeile: Zustand, dann je Ziel ein Kurzbefund, dann die
                 // Verschlüsselung — sie ist der Grund, warum die Archive überhaupt
@@ -1717,7 +1942,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 if (bs.enabled) parts.push('verschlüsselt');
                 tile.append(el('div', { class: 'stat-note' }, parts.join(' · ')));
                 tile.setAttribute('title', targets.map(([name, th]) => name + ': Zeitplan ' + (th.cron || 'aus')
-                    + ', letzter Erfolg ' + (th.last_at ? new Date(th.last_at).toLocaleString('de-AT') : 'nie')).join(' | ')
+                    + ', letzter Erfolg ' + (th.last_at ? fmtDateTime(th.last_at) : 'nie')).join(' | ')
                     + ' — klicken für die Backup-Verwaltung');
                 slot.append(tile);
             }).catch(() => { /* Backup-Status ist Zusatzinfo, nie ein Grund die Übersicht zu stören */ });
@@ -1740,7 +1965,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 spark.append(svgEl('polyline', { points: tr.map((d, i) => px(i).toFixed(1) + ',' + py(d.placed).toFixed(1)).join(' '), fill: 'none', class: 'dash-spark-line' }));
                 spark.append(svgEl('circle', { cx: String(px(n - 1)), cy: String(py(tr[n - 1].placed)), r: '2.6', class: 'dash-spark-dot' }));
                 occCard.append(el('div', { class: 'dash-spark-wrap' },
-                    el('div', { class: 'muted', style: 'font-size:.72rem;margin:.4rem 0 .12rem' }, 'Trend · platziert (letzte ' + n + ' Aufnahmen, max ' + mx + ')'), spark));
+                    el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin:.4rem 0 .12rem' }, 'Trend · platziert (letzte ' + n + ' Aufnahmen, max ' + mx + ')'), spark));
             }
             // UX4 — per-hall occupancy as a small proportional bar chart (inline SVG-free, CSP-safe).
             const halls = (occ.halls || []).filter((hh) => hh.placed > 0);
@@ -1749,7 +1974,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 occCard.append(el('div', { class: 'status-row dash-occrow' },
                     el('div', { class: 'status-name' },
                         el('span', { class: 'occ-hallnm' }, esc(hh.name)),
-                        el('span', { class: 'muted occ-garnm', style: 'font-weight:400;font-size:.72rem;margin-left:.4rem' }, esc(hh.garage_name))),
+                        el('span', { class: 'muted occ-garnm', style: 'font-weight:400;font-size:var(--text-xs);margin-left:.4rem' }, esc(hh.garage_name))),
                     el('div', { class: 'dash-bar', title: hh.placed + ' platziert' }, el('div', { class: 'dash-bar-fill', style: 'width:' + Math.round((hh.placed || 0) / maxP * 100) + '%' })),
                     el('div', { class: 'bar-val' }, String(hh.placed))));
             });
@@ -1762,7 +1987,7 @@ import { createRevenueChart } from './revenue-chart.js';
             const oweCard = el('div', { class: 'owe-card' });
             oweCard.append(el('div', { class: 'owe-head' },
                 el('span', { class: 'sec-eyebrow' }, 'Top offene Salden'),
-                el('span', { class: 'muted', style: 'font-size:.75rem' }, eur(ov.outstanding_total) + ' gesamt')));
+                el('span', { class: 'muted', style: 'font-size:var(--text-sm)' }, eur(ov.outstanding_total) + ' gesamt')));
             ov.top_outstanding.forEach((o, i) => {
                 oweCard.append(el('button', { class: 'owe-row', onclick: () => navigate('persons/' + o.person_id),
                     'aria-label': o.name + ' öffnen · ' + eur(o.outstanding) + ' offen' },
@@ -1781,7 +2006,7 @@ import { createRevenueChart } from './revenue-chart.js';
         // Extra charges per month
         const pcCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Zusatzkosten pro Monat · ' + ov.year));
         pcCard.append(chartBars(ov.charges_by_month, MONTHS, 'Zusatzkosten pro Monat'));
-        pcCard.append(el('div', { class: 'legend' }, el('span', {}, el('span', { class: 'dotc', style: 'background:var(--primary)' }), 'Zusatzkosten')));
+        pcCard.append(barLegend(ov.charges_by_month, ov.year, 'Zusatzkosten'));
         page.append(el('div', { class: 'dashboard-charts' }, revCard, pcCard));
 
         // Status distribution
@@ -1791,12 +2016,13 @@ import { createRevenueChart } from './revenue-chart.js';
         const bars = el('div', { class: 'bars' });
         for (const st of ['stored', 'reserved', 'collected', 'cancelled']) {
             const n = sc[st] || 0;
-            const fill = el('div', { class: 'bar-fill', style: `background:${STATUS_COLOR[st]}` });
+            // Breite direkt; das Wachsen uebernimmt eine scaleX-Animation im CSS (eine
+            // width-Transition loeste bei jedem Frame Layout aus).
+            const fill = el('div', { class: 'bar-fill' + (n ? '' : ' is-zero'), style: `background:${STATUS_COLOR[st]};width:${(n / maxS) * 100}%` });
             bars.append(el('div', { class: 'status-row' },
                 el('div', { class: 'status-name' }, el('span', { class: 'status-dot', style: `background:${STATUS_COLOR[st]}` }), STATUS_LABEL[st]),
                 el('div', { class: 'bar-track' }, fill),
                 el('div', { class: 'bar-val' }, String(n))));
-            requestAnimationFrame(() => { fill.style.width = ((n / maxS) * 100) + '%'; });
         }
         scCard.append(bars);
         page.append(scCard);
@@ -1809,7 +2035,7 @@ import { createRevenueChart } from './revenue-chart.js';
 
         page.append(el('div', { class: 'chart-card' },
             el('h3', {}, 'Export (CSV)'),
-            el('div', { class: 'muted', style: 'font-size:.82rem;margin:-.35rem 0 .7rem' }, 'Für Buchhaltung/Steuerberater — öffnet direkt in Excel/LibreOffice.'),
+            el('div', { class: 'card-meta', style: 'margin:-.35rem 0 .7rem' }, 'Für Buchhaltung/Steuerberater — öffnet direkt in Excel/LibreOffice.'),
             el('div', { class: 'btn-row', style: 'flex-wrap:wrap;gap:.5rem' },
                 expLink('outstanding', 'Offene Posten'),
                 el('a', { class: 'btn btn-ghost btn-sm', href: '/api/reports/outstanding.pdf', download: '' }, icon('receipt', 15), ' Offene Posten (PDF)'),
@@ -1842,7 +2068,7 @@ import { createRevenueChart } from './revenue-chart.js';
         mountList(page, {
             stateKey: 'persons', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Personen', emptyIcon: 'users', emptyText: 'Noch keine Personen.', sourcePath: '/persons',
-            onAdd: canManage() ? () => personForm() : null,
+            onAdd: canManage() ? () => personForm() : null, addLabel: '+ Person', firstLabel: '+ Erste Person',
             items: state.persons,
             searchText: (p) => norm(personName(p) + ' ' + p.email + ' ' + p.phone),
             // Filter toggle: only persons with an open balance (Mahn-/Nachfass-Sicht).
@@ -1889,7 +2115,10 @@ import { createRevenueChart } from './revenue-chart.js';
                 const bal = Number(oweMap[p.id]) || 0;
                 const owes = bal > 0.005;
                 const stateCls = known ? (owes ? ' is-owed' : ' is-clear') : '';
-                return el('div', { class: 'card pcard' + stateCls },
+                // Die ganze Karte oeffnet die Person: der Namenslink spannt sich per CSS
+                // ueber die Karte (.card-link). Der "›"-Knopf daneben war die fuenfte Form
+                // derselben Geste (Benutzer: Chevron, Tarife: Akkordeon, Garagen: Text).
+                return el('div', { class: 'card pcard card-link' + stateCls },
                     el('div', { class: 'card-row' },
                         el('div', { class: 'person-identity', style: 'flex:1' },
                             el('h3', {}, el('a', { class: 'record-link', href: '#/persons/' + p.id }, personName(p)), ' ', p.has_flat_rate ? el('span', { class: 'badge badge-active', title: 'Pauschale' }, 'Pauschale') : null),
@@ -1901,14 +2130,15 @@ import { createRevenueChart } from './revenue-chart.js';
                                     : el('span', { class: 'pcard__paid', title: 'Keine offenen Beträge' }, 'Bezahlt'),
                                 overdueByPerson[p.id] ? el('span', { class: 'badge', style: 'background:var(--danger);color:#fff;margin-top:.25rem', title: 'Überfällige Rechnung' }, overdueByPerson[p.id] + ' Tg. überfällig') : null) : null,
                             el('div', { class: 'card-actions' },
-                                el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': personName(p) + ' öffnen', onclick: () => navigate('persons/' + p.id) }, '›'),
                                 // Bearbeiten entfällt bei einer anonymisierten Person: der Server
                                 // lehnt das Wiederbefüllen ohnehin ab (AND NOT anonymized), ein
                                 // sichtbares Formular würde also nur einen stillen Fehlschlag anbieten.
                                 canManage() && !p.anonymized && el('button', { class: 'btn btn-ghost btn-sm', title: personName(p) + ' bearbeiten', 'aria-label': personName(p) + ' bearbeiten', onclick: () => personForm(p) }, icon('edit')),
-                                canManage() && !p.anonymized && el('button', { class: 'btn btn-ghost btn-sm', title: personName(p) + ' anonymisieren (DSGVO)', 'aria-label': personName(p) + ' anonymisieren', onclick: () => anonymizePerson(p) }, icon('shield')),
-                                canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: personName(p) + ' löschen', 'aria-label': personName(p) + ' löschen', onclick: (e) => delPerson(p, e.currentTarget.closest('.card')) }, icon('trash')),
-                            ))));
+                                // Anonymisieren und Löschen stehen in der Gefahrenzone der
+                                // Personenseite: in jeder Zeile lagen sie gleichrangig neben
+                                // "Öffnen" — ein Fehlgriff auf dem Telefon war unumkehrbar.
+                            )),
+                        cardChev()));
             },
         });
     };
@@ -1948,8 +2178,8 @@ import { createRevenueChart } from './revenue-chart.js';
         await formModal({
             title: existing ? 'Person bearbeiten' : 'Neue Person',
             fields: [
-                { name: 'first_name', label: 'Vorname', value: existing?.first_name },
-                { name: 'last_name', label: 'Nachname', value: existing?.last_name },
+                { name: 'first_name', label: 'Vorname', value: existing?.first_name, anyOf: 'Vor- oder Nachname: eines davon genügt.', anyOfError: 'Vor- oder Nachname angeben' },
+                { name: 'last_name', label: 'Nachname', value: existing?.last_name, anyOf: 'Vor- oder Nachname: eines davon genügt.' },
                 { name: 'email', label: 'E-Mail', type: 'email', value: existing?.email },
                 { name: 'phone', label: 'Telefon', value: existing?.phone },
                 { name: 'address', label: 'Adresse', type: 'textarea', value: existing?.address, optional: 'Adresse & Notizen' },
@@ -1970,9 +2200,15 @@ import { createRevenueChart } from './revenue-chart.js';
             },
         });
     }
-    function delPerson(p, node) {
+    // leave: von der Personenseite aus aufgerufen — nach dem tatsächlichen Löschen
+    // zurück zur Liste, statt eine Seite neu aufzubauen, deren Person es nicht mehr
+    // gibt. Ein abgelehntes Löschen (Rechnungen vorhanden) bleibt auf der Seite.
+    function delPerson(p, node, { leave = false } = {}) {
+        const here = location.hash;
+        let deleted = false;
         deleteWithUndo('Person löschen?', `„${personName(p)}“ und alle zugehörigen Gefährte werden gelöscht.`,
-            () => api.del('/persons/' + p.id), () => render(), node);
+            async () => { await api.del('/persons/' + p.id); deleted = true; },
+            () => { if (leave && deleted && location.hash === here) navigate('persons'); else render(); }, node);
     }
 
     // DSGVO Art. 17, wenn Löschen nicht geht: sobald Rechnungen an einer Person
@@ -2026,7 +2262,7 @@ import { createRevenueChart } from './revenue-chart.js';
             submitLabel: 'Schließen',
             fields: [],
             onRender: (body) => {
-                body.append(el('p', { class: 'muted', style: 'margin-top:0;font-size:.85rem' },
+                body.append(el('p', { class: 'muted', style: 'margin-top:0;font-size:var(--text-base)' },
                     'CSV mit den Spalten vorname, nachname, email, telefon, adresse (optional notiz). Trennzeichen ; oder , — erste Zeile ist die Kopfzeile. Doppelte E-Mails und ungültige Zeilen werden übersprungen.'));
                 body.append(el('div', { class: 'btn-row', style: 'gap:.5rem;flex-wrap:wrap;margin-top:.3rem' },
                     el('a', { class: 'btn btn-ghost btn-sm', href: '/api/import/persons/template', download: 'parkrr-personen-vorlage.csv' }, icon('download', 14), ' Beispiel-Datei'),
@@ -2058,11 +2294,11 @@ import { createRevenueChart } from './revenue-chart.js';
                         const o = el('option', { value: String(v) }, l); if (v === 30) o.selected = true; return o;
                     }));
                 const ctl = el('div', { class: 'btn-row', style: 'gap:.6rem;flex-wrap:wrap;align-items:center' },
-                    el('label', { style: 'font-size:.85rem' }, 'Gültigkeit ', dur));
+                    el('label', { style: 'font-size:var(--text-base)' }, 'Gültigkeit ', dur));
                 let sendChk = null;
                 if (state.capabilities.mail) {
                     sendChk = el('input', { type: 'checkbox' });
-                    ctl.append(el('label', { style: 'font-size:.85rem;display:inline-flex;align-items:center;gap:.3rem' }, sendChk, 'per E-Mail'));
+                    ctl.append(el('label', { style: 'font-size:var(--text-base);display:inline-flex;align-items:center;gap:.3rem' }, sendChk, 'per E-Mail'));
                 }
                 const createBtn = el('button', { type: 'button', class: 'btn btn-primary btn-sm' }, '+ Link erzeugen');
                 ctl.append(createBtn);
@@ -2074,7 +2310,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 body.append(el('div', { class: 'sec-eyebrow', style: 'margin:.2rem 0 .3rem' }, 'Bestehende Zugänge'));
                 const listWrap = el('div');
                 body.append(listWrap,
-                    el('p', { class: 'muted', style: 'font-size:.78rem;margin-top:.5rem' },
+                    el('p', { class: 'muted', style: 'font-size:var(--text-sm);margin-top:.5rem' },
                         'Der Link ist aus Sicherheitsgründen nur einmal beim Erstellen sichtbar. Bestehende Zugänge lassen sich einsehen und widerrufen.'));
 
                 async function refresh() {
@@ -2082,7 +2318,7 @@ import { createRevenueChart } from './revenue-chart.js';
                     let links = [];
                     try { links = (await api.get('/persons/' + personId + '/portal-links')) || []; }
                     catch (e) { listWrap.append(el('p', { class: 'muted' }, 'Konnte nicht geladen werden.')); return; }
-                    if (!links.length) { listWrap.append(el('p', { class: 'muted', style: 'font-size:.85rem' }, 'Noch keine Zugänge.')); return; }
+                    if (!links.length) { listWrap.append(el('p', { class: 'muted', style: 'font-size:var(--text-base)' }, 'Noch keine Zugänge.')); return; }
                     links.forEach((l) => listWrap.append(portalLinkRow(l, refresh)));
                     if (links.filter((l) => l.status === 'aktiv').length > 1) {
                         listWrap.append(el('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'margin-top:.4rem',
@@ -2097,8 +2333,8 @@ import { createRevenueChart } from './revenue-chart.js';
                         const r = await api.post('/persons/' + personId + '/portal-link', { days: Number(dur.value), send });
                         const url = absLink(r.link);
                         fresh.innerHTML = '';
-                        const inp = el('input', { type: 'text', readonly: 'readonly', value: url, style: 'width:100%;font-size:.8rem', onclick: (e) => e.currentTarget.select() });
-                        fresh.append(el('label', { style: 'font-size:.8rem' }, 'Neuer Link (nur jetzt sichtbar)'), inp,
+                        const inp = el('input', { type: 'text', readonly: 'readonly', value: url, style: 'width:100%;font-size:var(--text-sm)', onclick: (e) => e.currentTarget.select() });
+                        fresh.append(el('label', { style: 'font-size:var(--text-sm)' }, 'Neuer Link (nur jetzt sichtbar)'), inp,
                             el('button', { type: 'button', class: 'btn btn-ghost btn-sm', style: 'margin-top:.35rem',
                                 onclick: async () => { try { await navigator.clipboard.writeText(url); toast('Link kopiert', 'success'); } catch (_) { inp.select(); toast('Bitte manuell kopieren', 'error'); } } }, 'Kopieren'));
                         if (send) toast(r.emailed ? 'Link erstellt & per E-Mail gesendet' : (r.has_email ? 'Link erstellt · E-Mail nicht gesendet (Basis-URL fehlt?)' : 'Link erstellt · kein E-Mail-Kontakt'), r.emailed ? 'success' : 'error');
@@ -2220,7 +2456,7 @@ import { createRevenueChart } from './revenue-chart.js';
         page.append(el('div', { class: 'card' },
             el('div', { class: 'bal-hero-label' }, 'Offener Saldo'),
             el('div', { class: 'bal-hero-num ' + (owed ? 'is-owed' : 'is-clear') }, eur(stats.balance)),
-            el('div', { class: 'bal-hero-sub' }, 'Stand heute · Aufgelaufen − Bezahlt')));
+            el('div', { class: 'bal-hero-sub' }, 'Stand heute · Aufgelaufen − Eingegangen')));
         // Derivation lives in its own card below the hero: labelled figures that add
         // up to the hero exactly. USt (only when invoiced) and per-period Pauschale
         // payments (only when used) appear so the small ledger always reconciles.
@@ -2231,7 +2467,9 @@ import { createRevenueChart } from './revenue-chart.js';
         if ((stats.invoiced_tax || 0) > 0.005) {
             figs.push(el('div', { class: 'fig' }, el('div', { class: 'fig-l' }, 'USt (fakturiert)'), el('div', { class: 'fig-v' }, eur(stats.invoiced_tax))));
         }
-        figs.push(el('div', { class: 'fig' }, el('div', { class: 'fig-l' }, 'Bezahlt'), el('div', { class: 'fig-v is-paid' }, eur(stats.total_paid))));
+        // "Eingegangen" = erfasste Zahlungen (stats.total_paid = PaymentsTotal). "Bezahlt"
+        // heisst in Parkrr die Markierung auf den Karten — zwei Wahrheiten, zwei Wörter.
+        figs.push(el('div', { class: 'fig' }, el('div', { class: 'fig-l' }, 'Eingegangen'), el('div', { class: 'fig-v is-paid' }, eur(stats.total_paid))));
         if ((stats.period_paid || 0) > 0.005) {
             figs.push(el('div', { class: 'fig' }, el('div', { class: 'fig-l' }, 'Pauschale-Zahlung'), el('div', { class: 'fig-v is-paid' }, eur(stats.period_paid))));
         }
@@ -2256,7 +2494,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 el('div', { class: 'sec-group' },
                     el('h3', { class: 'sec-eyebrow' }, 'Pauschalen'),
                     activeAg.length ? el('span', { class: 'sec-count' }, activeAg.length) : null),
-                canBill() ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => agreementForm(id, vehicles) }, '+ Pauschale') : null));
+                canBill() ? el('button', { class: 'btn-sect', type: 'button', onclick: () => agreementForm(id, vehicles) }, '+ Pauschale') : null));
             if (!ags.length) frCard.append(el('div', { class: 'card-meta', style: 'margin-top:.3rem' }, 'Keine Pauschale – Abrechnung je Gefährt.'));
             else activeAg.forEach((a) => frCard.append(agreementRow(id, a, vehicles, chargeByVeh)));
             if (activeAg.length === 0 && ags.length) frCard.append(el('div', { class: 'card-meta', style: 'margin-top:.3rem' }, 'Keine laufende Pauschale.'));
@@ -2276,7 +2514,9 @@ import { createRevenueChart } from './revenue-chart.js';
         const vh = el('div', { class: 'page-head section-head' },
             el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Einzelne Gefährte'),
                 activeVeh.length ? el('span', { class: 'sec-count' }, activeVeh.length) : null));
-        if (canManage()) vh.append(el('button', { class: 'btn btn-primary btn-sm', onclick: () => vehicleForm(null, id) }, '+ Gefährt'));
+        // Ein Stil für alle Abschnitts-"Hinzufügen" (wie "+ Anhang", "+ Foto"): vorher
+        // standen fünf gefüllte Hauptknöpfe, ein Geister- und ein Textknopf auf einer Seite.
+        if (canManage()) vh.append(el('button', { class: 'btn-sect', type: 'button', onclick: () => vehicleForm(null, id) }, '+ Gefährt'));
         page.append(vh);
         if (!activeVeh.length) page.append(el('p', { class: 'muted' }, 'Keine einzeln abgerechneten Gefährte.'));
         else activeVeh.forEach((v) => page.append(vehicleCard(v, { linkable: true, chargeInfo: chargeByVeh[v.id] })));
@@ -2292,7 +2532,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const ch = el('div', { class: 'page-head section-head' },
             el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Zusatzkosten'),
                 chCount ? el('span', { class: 'sec-count' }, chCount) : null));
-        if (canBill()) ch.append(el('button', { class: 'btn btn-primary btn-sm', onclick: () => chargeForm(id) }, '+ Position'));
+        if (canBill()) ch.append(el('button', { class: 'btn-sect', type: 'button', onclick: () => chargeForm(id) }, '+ Position'));
         page.append(ch);
         if (!chCount) page.append(el('p', { class: 'muted' }, 'Keine Zusatzkosten.'));
         else {
@@ -2301,12 +2541,13 @@ import { createRevenueChart } from './revenue-chart.js';
         }
 
         // Zahlungen (recorded money-in). A dedicated log + Kontoauszug, separate
-        // from the per-item "bezahlt" toggle above (which drives the Saldo).
+        // from the per-item "bezahlt" toggle above. The Saldo uses these payments
+        // (Balance = owed − received, stats.go), not the toggles.
         const activePayments = payments.filter((p) => !p.reversed).length; // count excludes storniert, like the money figures
         const pz = el('div', { class: 'page-head section-head' },
             el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Zahlungen'),
                 activePayments ? el('span', { class: 'sec-count' }, activePayments) : null));
-        if (canBill()) pz.append(el('button', { class: 'btn btn-primary btn-sm', onclick: () => paymentForm(id, stats) }, '+ Zahlung'));
+        if (canBill()) pz.append(el('button', { class: 'btn-sect', type: 'button', onclick: () => paymentForm(id, stats) }, '+ Zahlung'));
         page.append(pz);
         const kontoCard = el('div', { class: 'card konto' },
             kontoFig('Eingegangen ' + stats.year, eur(stats.payments_year), 'in'),
@@ -2327,7 +2568,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const rz = el('div', { class: 'page-head section-head' },
             el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Rechnungen'),
                 invoices.length ? el('span', { class: 'sec-count' }, invoices.length) : null));
-        if (canBill()) rz.append(el('button', { class: 'btn btn-primary btn-sm', onclick: (e) => createInvoiceFor(id, e.currentTarget) }, '+ Rechnung'));
+        if (canBill()) rz.append(el('button', { class: 'btn-sect', type: 'button', onclick: (e) => createInvoiceFor(id, e.currentTarget) }, '+ Rechnung'));
         page.append(rz);
         if (!invoices.length) page.append(el('p', { class: 'muted' }, 'Noch keine Rechnungen. „+ Rechnung" erstellt eine aus den offenen Einzelposten.'));
         else page.append(collapsibleRows(invoices, (iv) => invoiceRow(iv)));
@@ -2338,13 +2579,18 @@ import { createRevenueChart } from './revenue-chart.js';
         // Verlauf (Hundert 56): alles, was bei dieser Person passiert ist, in EINEM
         // Strom — statt fünfmal blättern (Zahlungen, Rechnungen, Posten, Status,
         // Übergaben). Nachgeladen, damit die Seite nicht auf die Historie wartet.
+        // Verlauf und Statistik eingeklappt (Zustand gemerkt): die Seite war rund
+        // 4.800 px lang, beides kam erst nach allen Abschnitten. Die Zeile nennt die Zahl.
         {
-            const tlCard = el('div', { class: 'card' });
-            const tlHead = el('div', { class: 'page-head section-head' },
-                el('div', { class: 'sec-group' }, el('h3', { class: 'sec-eyebrow' }, 'Verlauf')));
-            page.append(tlHead, tlCard);
+            const tlCount = el('span', { class: 'fold-meta' }, 'lädt …');
+            const tlFold = persistDetails('person-history', 'card person-fold', el('span', { class: 'fold-sum' }, foldChev(),
+                el('h3', { class: 'sec-eyebrow' }, 'Verlauf'), tlCount), false, { remember: true });
+            const tlCard = el('div', { class: 'tl-list' });
+            tlFold.append(tlCard);
+            page.append(tlFold);
             const KIND_ICON = { payment: 'receipt', invoice: 'receipt', charge: 'tag', status: 'car', handover: 'key', agreement: 'check' };
             api.get('/persons/' + id + '/timeline').then((events) => {
+                tlCount.textContent = events && events.length ? events.length + (events.length === 1 ? ' Ereignis' : ' Ereignisse') : 'keine Ereignisse';
                 if (!events || !events.length) { tlCard.append(el('p', { class: 'muted' }, 'Noch keine Ereignisse.')); return; }
                 const rows = events.map((ev) => el('div', { class: 'tl-row' },
                     el('span', { class: 'tl-ic' }, icon(KIND_ICON[ev.kind] || 'log', 14)),
@@ -2358,13 +2604,18 @@ import { createRevenueChart } from './revenue-chart.js';
                     more.addEventListener('click', () => { rest.forEach((r) => tlCard.append(r)); more.remove(); });
                     tlCard.append(more);
                 }
-            }).catch(() => { tlCard.append(el('p', { class: 'muted' }, 'Verlauf konnte nicht geladen werden.')); });
+            }).catch(() => { tlCount.textContent = 'nicht geladen'; tlCard.append(el('p', { class: 'muted' }, 'Verlauf konnte nicht geladen werden.')); });
         }
 
         // statistics at the bottom, below the actionable sections
         const chartCard = el('div', { class: 'chart-card' }, el('h3', {}, 'Kosten pro Monat · ' + stats.year));
-        chartCard.append(chartBars(stats.monthly_accrued, MONTHS, 'Aufgelaufene Kosten pro Monat'));
-        page.append(chartCard);
+        chartCard.append(chartBars(stats.monthly_accrued, MONTHS, 'Aufgelaufene Kosten pro Monat'),
+            barLegend(stats.monthly_accrued, stats.year, 'Aufgelaufene Kosten'));
+        const yearSum = (stats.monthly_accrued || []).reduce((a, b) => a + (Number(b) || 0), 0);
+        const statFold = persistDetails('person-stats', 'card person-fold', el('span', { class: 'fold-sum' }, foldChev(),
+            el('h3', { class: 'sec-eyebrow' }, 'Kostenstatistik'), el('span', { class: 'fold-meta' }, eur(yearSum) + ' in ' + stats.year)), false, { remember: true });
+        statFold.append(chartCard);
+        page.append(statFold);
         if (stats.years.length) {
             const yc = el('div', { class: 'chart-card' }, el('h3', {}, 'Kosten pro Jahr'));
             const max = Math.max(...stats.years.map((y) => y.cost), 1);
@@ -2383,12 +2634,26 @@ import { createRevenueChart } from './revenue-chart.js';
                 }
                 bars.append(el('div', { class: 'bar-row' },
                     el('div', {}, String(y.year)),
-                    el('div', { class: 'bar-track' }, el('div', { class: 'bar-fill', style: `width:${(y.cost / max) * 100}%` })),
+                    el('div', { class: 'bar-track' }, el('div', { class: 'bar-fill' + (y.cost > 0 ? '' : ' is-zero'), style: `width:${(y.cost / max) * 100}%` })),
                     el('div', { class: 'bar-val' }, eur(y.cost),
                         yoy ? el('span', { class: 'yoy ' + yoyCls, title: 'Veränderung gegenüber ' + (y.year - 1) }, yoy) : null)));
             }
             yc.append(bars);
-            page.append(yc);
+            statFold.append(yc);
+        }
+
+        // Gefahrenzone: Anonymisieren und Löschen sind unumkehrbar und gehören zur
+        // einzelnen Person, nicht in jede Listenzeile. Muster wie Tarife/Benutzer.
+        if (canManage()) {
+            const person = state.persons.find((x) => x.id === Number(id)) || { id: Number(id), first_name: stats.person_name || '' };
+            page.append(el('div', { class: 'card person-danger' },
+                el('div', { class: 'tf-danger-label' }, icon('alert', 13), 'Gefahrenzone'),
+                el('p', { class: 'card-meta' }, person.anonymized
+                    ? 'Die Stammdaten sind anonymisiert. Löschen ist nur möglich, solange keine Rechnungen bestehen.'
+                    : 'Löschen entfernt die Person samt Gefährten. Bestehen Rechnungen, bleibt nur Anonymisieren: Stammdaten werden geleert, Belege bleiben erhalten.'),
+                el('div', { class: 'person-danger-actions' },
+                    person.anonymized ? null : el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => anonymizePerson(person) }, icon('userx', 15), ' Anonymisieren (DSGVO)'),
+                    el('button', { class: 'btn btn-danger btn-sm', type: 'button', onclick: () => delPerson(person, null, { leave: true }) }, icon('trash', 15), ' Person löschen'))));
         }
     };
 
@@ -2455,7 +2720,7 @@ import { createRevenueChart } from './revenue-chart.js';
         // BAO: the payment is not deleted but reversed (Storno) — the record is kept.
         deleteWithUndo('Zahlung stornieren?',
             eur(p.amount) + ' vom ' + new Date(p.paid_on).toLocaleDateString('de-DE') + ' wird als Erfassungsfehler korrigiert. Der Datensatz bleibt erhalten und zählt nicht mehr als Einnahme. Dies erfasst keine tatsächliche Rückzahlung.',
-            () => api.del('/payments/' + p.id), () => render(), node);
+            () => api.del('/payments/' + p.id), () => render(), node, { confirm: 'Stornieren' });
     }
     async function paymentForm(personId, stats) {
         const open = Math.max(0, Number(stats && stats.balance) || 0);
@@ -2555,11 +2820,14 @@ import { createRevenueChart } from './revenue-chart.js';
         }
         return [...byLabel].map(([label, pers]) => label + (pers.size ? ' (' + [...pers].join(', ') + ')' : '')).join(' · ');
     }
-    function invoiceRow(iv) {
+    // person: in der globalen Rechnungsliste fehlt der Kontext der Personenseite —
+    // dort führt die Zeile den Namen und die Fälligkeit offener Rechnungen.
+    function invoiceRow(iv, { person = false } = {}) {
         const neg = iv.status === 'storno' || Number(iv.total) < 0;
         const main = el('div', { class: 'pay-main' },
             el('div', { class: 'pay-method' }, 'Rechnung ' + esc(iv.number), ' ', invStatusBadge(iv)),
-            el('div', { class: 'pay-date' }, new Date(iv.issued_on).toLocaleDateString('de-DE')
+            el('div', { class: 'pay-date' }, (person && iv.person_name ? esc(iv.person_name) + ' · ' : '')
+                + new Date(iv.issued_on).toLocaleDateString('de-DE')
                 + (iv.kleinunternehmer ? '' : ' · inkl. USt')
                 + (iv.status === 'teilbezahlt' ? ' · offen ' + eur(iv.open_amount) : '')
                 // Mahn-Gedächtnis (Hundert 15): sichtbar, wie oft und wann zuletzt —
@@ -2569,6 +2837,11 @@ import { createRevenueChart } from './revenue-chart.js';
         // card links to the invoice page for the full positions.
         if ((iv.positions || []).length) {
             main.append(el('div', { class: 'inv-bills' }, 'berechnet: ' + invSummary(iv.positions)));
+        }
+        if (person && invOpen(iv) && iv.due_on) {
+            const overdue = invOverdue(iv);
+            main.append(el('div', { class: 'pay-date' + (overdue ? ' is-overdue' : '') },
+                (overdue ? 'überfällig seit ' : 'fällig am ') + fmtDate(iv.due_on)));
         }
         return el('a', { class: 'card pay-row inv-link', href: '#/invoices/' + iv.id }, main,
             el('div', { class: 'pay-amt', style: neg ? 'color:var(--danger)' : 'color:var(--text)' }, eur(iv.total)));
@@ -2597,7 +2870,7 @@ import { createRevenueChart } from './revenue-chart.js';
         });
     }
     async function stornoInvoice(iv) {
-        if (!await confirmDialog('Rechnung stornieren?', 'Erstellt einen unveränderlichen Storno-Gegenbeleg (§ Unveränderbarkeit). Die abgerechneten Positionen werden wieder fakturierbar.', 'Stornieren')) return;
+        if (!await confirmDialog('Rechnung ' + iv.number + ' stornieren?', 'Gesamtbetrag ' + eur(iv.total) + '. Erstellt einen unveränderlichen Storno-Gegenbeleg (§ 131 BAO: Aufzeichnungen dürfen nicht so verändert werden, dass der ursprüngliche Inhalt verloren geht). Die abgerechneten Positionen werden wieder fakturierbar.', 'Stornieren')) return;
         try {
             const st = await api.post('/invoices/' + iv.id + '/cancel', {});
             toast('Storniert · Gegenbeleg ' + st.number, 'success');
@@ -2612,7 +2885,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const name = lvl === 1 ? 'Zahlungserinnerung' : lvl === 2 ? '1. Mahnung' : '2. Mahnung (letzte Mahnung)';
         if (!await confirmDialog(name + ' senden?',
             'Sendet eine E-Mail mit den offenen Rechnungsdaten an den hinterlegten Kontakt der Person.'
-            + (iv.reminder_count ? ' Bisher ' + iv.reminder_count + '× gemahnt.' : ''), 'Senden')) return;
+            + (iv.reminder_count ? ' Bisher ' + iv.reminder_count + '× gemahnt.' : ''), 'Senden', { tone: 'neutral' })) return;
         // Wohin der Benutzer gerade schaut, VOR dem Warten festhalten: der Aufruf kann
         // die vollen 20 Sekunden der SMTP-Zustellung dauern.
         const at = location.hash;
@@ -2635,7 +2908,7 @@ import { createRevenueChart } from './revenue-chart.js';
         } catch (e) { toast(e.message || 'Senden fehlgeschlagen', 'error'); }
     }
     async function createInvoiceFor(personId, btn) {
-        if (!await confirmDialog('Rechnung erstellen?', 'Erstellt eine fortlaufend nummerierte Rechnung aus allen offenen Einzelposten (Gefährte + Einmal-Zusatzkosten). Rechnungen sind unveränderlich.', 'Erstellen')) return;
+        if (!await confirmDialog('Rechnung erstellen?', 'Erstellt eine fortlaufend nummerierte Rechnung aus allen offenen Einzelposten (Gefährte + Einmal-Zusatzkosten). Rechnungen sind unveränderlich.', 'Erstellen', { tone: 'neutral' })) return;
         const o = btn.textContent; btn.disabled = true; btn.textContent = 'Erstelle …';
         try {
             const iv = await api.post('/persons/' + personId + '/invoices', {});
@@ -2712,24 +2985,72 @@ import { createRevenueChart } from './revenue-chart.js';
         if (s.footer) doc.append(el('div', { class: 'inv-footer' }, esc(s.footer)));
         return doc;
     }
+    // Offen = noch zahlbar (Storno und stornierte Belege fordern nichts mehr);
+    // überfällig = offen und der Fälligkeitstag liegt vor heute — dieselbe Grenze
+    // wie /invoices/overdue (Stichtag vor heute).
+    const invOpen = (iv) => iv.status === 'offen' || iv.status === 'teilbezahlt';
+    const invOverdue = (iv) => invOpen(iv) && !!iv.due_on && iv.due_on.slice(0, 10) < today();
+    const INV_FILTERS = [['', 'Alle'], ['open', 'Offen'], ['overdue', 'Überfällig'], ['paid', 'Bezahlt']];
+    async function invoiceList(page) {
+        const items = (await api.get('/invoices')) || [];
+        mountList(page, {
+            stateKey: 'invoices',
+            title: 'Rechnungen', emptyIcon: 'receipt', sourcePath: '/invoices', items,
+            emptyText: 'Noch keine Rechnungen. Eine Rechnung erstellst du auf der Personenseite mit „+ Rechnung“.',
+            searchText: (iv) => norm([iv.number, iv.person_name].join(' ')),
+            sorts: [
+                { label: 'Neueste zuerst', cmp: (a, b) => String(b.issued_on).localeCompare(String(a.issued_on)) || b.id - a.id },
+                { label: 'Fälligkeit', cmp: (a, b) => String(a.due_on || '9999').localeCompare(String(b.due_on || '9999')) },
+                { label: 'Offener Betrag', cmp: (a, b) => (invOpen(b) ? b.open_amount : 0) - (invOpen(a) ? a.open_amount : 0) },
+            ],
+            // Ein Tipp statt Auswahlliste: offen / überfällig / bezahlt ist DIE Frage
+            // dieser Seite. Stornierte Belege zeigt nur "Alle".
+            controls: (refresh, cs) => {
+                const seg = el('div', { class: 'segments inv-filter', role: 'group', 'aria-label': 'Rechnungen filtern' });
+                const btns = INV_FILTERS.map(([value, label]) => {
+                    const on = (cs.status || '') === value;
+                    const b = el('button', { type: 'button', class: on ? 'active' : '', 'aria-pressed': String(on), onclick: () => {
+                        cs.status = value;
+                        btns.forEach((x) => { const hit = x === b; x.classList.toggle('active', hit); x.setAttribute('aria-pressed', String(hit)); });
+                        refresh();
+                    } }, label);
+                    seg.append(b);
+                    return b;
+                });
+                return [seg];
+            },
+            extraFilter: (iv, cs) => !cs.status
+                || (cs.status === 'open' && invOpen(iv))
+                || (cs.status === 'overdue' && invOverdue(iv))
+                || (cs.status === 'paid' && iv.status === 'bezahlt'),
+            render: (iv) => invoiceRow(iv, { person: true }),
+        });
+        const head = page.querySelector(':scope > .page-head');
+        if (head) head.after(el('p', { class: 'page-context' }, 'Alle Rechnungen aller Personen. Eine neue Rechnung erstellst du auf der Personenseite.'));
+    }
     routes.invoices = async (page, id) => {
-        if (!id) { page.innerHTML = ''; page.append(emptyState('receipt', 'Keine Rechnung gewählt.')); return; }
+        if (!id) return invoiceList(page);
         const iv = await api.get('/invoices/' + id);
         page.innerHTML = '';
         page.append(el('div', { class: 'detail-head no-print' },
             el('button', { class: 'back-btn', onclick: () => history.back(), 'aria-label': 'Zurück' }, '‹'),
             el('h2', { style: 'margin:0;flex:1' }, 'Rechnung ' + esc(iv.number), ' ', invStatusBadge(iv)),
-            (canBill() && (iv.status === 'offen' || iv.status === 'teilbezahlt')) ? el('button', { class: 'btn btn-primary btn-sm', onclick: () => payInvoiceFor(iv) }, 'Bezahlen') : null,
-            (canBill() && !iv.canceled && iv.status !== 'storno') ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => stornoInvoice(iv) }, 'Storno') : null,
-            // Payment reminder by e-mail — only when the invoice is still open and
-            // SMTP is configured (capability flag), so the button never dead-ends.
-            (canBill() && (iv.status === 'offen' || iv.status === 'teilbezahlt') && state.capabilities.mail)
-                ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => remindInvoice(iv) }, icon('mail', 15), ' Erinnerung') : null,
-            // Server-rendered A4 PDF (authoritative deliverable). A plain GET anchor
-            // carries the session cookie and opens the document inline.
-            el('div', { class: 'invoice-document-actions', role: 'group', 'aria-label': 'Rechnungsdokument' },
-                el('a', { class: 'btn btn-ghost btn-sm', href: '/api/invoices/' + id + '/pdf', target: '_blank', rel: 'noopener' }, icon('receipt', 15), ' PDF'),
-                el('button', { class: 'btn btn-ghost btn-sm', onclick: () => window.print() }, 'Drucken'))));
+            // Alle Aktionen als EIN Block: umbrechen sie, dann gemeinsam und rechtsbündig —
+            // nicht "Storno" allein in einer zweiten Zeile unter dem Zurück-Knopf.
+            el('div', { class: 'invoice-actions' },
+                (canBill() && (iv.status === 'offen' || iv.status === 'teilbezahlt')) ? el('button', { class: 'btn btn-primary btn-sm', onclick: () => payInvoiceFor(iv) }, 'Bezahlen') : null,
+                // Payment reminder by e-mail — only when the invoice is still open and
+                // SMTP is configured (capability flag), so the button never dead-ends.
+                (canBill() && (iv.status === 'offen' || iv.status === 'teilbezahlt') && state.capabilities.mail)
+                    ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => remindInvoice(iv) }, icon('mail', 15), ' Erinnerung') : null,
+                // Server-rendered A4 PDF (authoritative deliverable). A plain GET anchor
+                // carries the session cookie and opens the document inline.
+                el('div', { class: 'invoice-document-actions', role: 'group', 'aria-label': 'Rechnungsdokument' },
+                    el('a', { class: 'btn btn-ghost btn-sm', href: '/api/invoices/' + id + '/pdf', target: '_blank', rel: 'noopener' }, icon('receipt', 15), ' PDF'),
+                    el('button', { class: 'btn btn-ghost btn-sm', onclick: () => window.print() }, 'Drucken')),
+                // Storno erzeugt einen unumkehrbaren Gegenbeleg: zuletzt und rot umrandet,
+                // nicht im selben Gewicht wie "Drucken" gleich neben "Bezahlen".
+                (canBill() && !iv.canceled && iv.status !== 'storno') ? el('button', { class: 'btn btn-ghost-danger btn-sm', onclick: () => stornoInvoice(iv) }, 'Storno') : null)));
         if (iv.status === 'teilbezahlt' || iv.status === 'bezahlt') {
             page.append(el('div', { class: 'card-meta no-print', style: 'margin:-.3rem 0 .4rem' }, 'Bezahlt ' + eur(iv.paid_amount) + ' von ' + eur(iv.total) + (iv.open_amount > 0.005 ? ' · offen ' + eur(iv.open_amount) : '')));
         }
@@ -2740,7 +3061,7 @@ import { createRevenueChart } from './revenue-chart.js';
             page.append(el('div', { class: 'card no-print', style: 'text-align:center' },
                 el('h3', { style: 'margin-top:0' }, 'Bezahlen (SEPA-QR)'),
                 el('img', { src: '/api/invoices/' + iv.id + '/pay-qr', alt: 'SEPA-Zahlungs-QR', width: 200, height: 200, style: 'max-width:200px;height:auto' }),
-                el('p', { class: 'muted', style: 'font-size:.82rem;margin-bottom:0' }, 'Mit der Banking-App scannen — Betrag und Zahlungsreferenz sind vorausgefüllt.')));
+                el('p', { class: 'muted', style: 'font-size:var(--text-base);margin-bottom:0' }, 'Mit der Banking-App scannen — Betrag und Zahlungsreferenz sind vorausgefüllt.')));
         }
         const documentView = page.querySelector('.invoice-doc');
         const workspace = el('div', { class: 'invoice-workspace' });
@@ -2778,11 +3099,20 @@ import { createRevenueChart } from './revenue-chart.js';
                 ? 'Steuerdaten können manuell erfasst werden. Die Nutzung bleibt optional; eine Aktivierung ist keine steuerliche Freigabe.'
                 : 'Auswertungen, Belege und Formulare ansehen, Simulationen prüfen und Exporte herunterladen – ohne Steuerdaten zu verändern.'),
             el('p', { class: 'card-meta' }, 'Buchung anlegen, bezahlt markieren und abholen bleiben unabhängig davon nutzbar. Vorhandene Daten und Jahressperren bleiben erhalten.'),
+            // Schritt fuer Schritt statt "Variable setzen und neu starten": beide Befehle mit
+            // Kopierknopf, und der Hinweis, dass ein blosses docker restart die geaenderte
+            // Konfiguration NICHT uebernimmt (Handbuch §4).
             el('details', { class: 'tax-details' }, el('summary', {}, active ? 'Zurück zum Lesemodus' : 'Später aktivieren'),
-                el('p', {}, 'In der Serverkonfiguration ', el('code', {}, 'PARKRR_TAX_WRITES_ENABLED=' + (active ? 'false' : 'true')),
-                    ' setzen und den App-Dienst neu starten. Die laufende Instanz wird hier nicht umgestellt.'),
+                el('ol', { class: 'cmd-steps' },
+                    el('li', {}, el('span', {}, 'In der ', el('code', {}, '.env'), ' des Servers setzen:'),
+                        copyCmd('PARKRR_TAX_WRITES_ENABLED=' + (active ? 'false' : 'true'), 'tax-env')),
+                    el('li', {}, el('span', {}, 'App-Container mit der geänderten Konfiguration neu erstellen – ein bloßes ', el('code', {}, 'docker restart'), ' übernimmt sie nicht:'),
+                        copyCmd('docker compose up -d app')),
+                    el('li', {}, el('span', {}, 'Diese Seite neu laden. ' + (active ? 'Der Bereich steht danach wieder auf „Nur lesen“.' : '„Nur lesen“ verschwindet.')))),
+                el('p', { class: 'card-meta' }, 'Die laufende Instanz wird hier nicht umgestellt. Bei mehreren App-Replikaten denselben Wert auf allen setzen.'),
                 el('p', { class: 'card-meta' }, 'Diese Option startet keine automatische Rechnung, Buchung oder Datenübernahme. Zum Lesemodus zurückzukehren löscht keine Daten und entsperrt keine abgeschlossenen Jahre.'),
-                el('p', { class: 'card-meta' }, 'E1b und Jahreswechsel bleiben Prüfansichten. Ein Import extern geprüfter Jahreskorrekturen ist noch nicht vorhanden.')));
+                el('p', { class: 'card-meta' }, 'E1b und Jahreswechsel bleiben Prüfansichten. Ein Import extern geprüfter Jahreskorrekturen ist noch nicht vorhanden.'),
+                helpLink('Steuerbereich: zuerst nur lesen, später aktivieren', 'Handbuch: Steuerbereich aktivieren')));
     }
     function taxRows(groups, total) {
         const box = el('div', { class: 'tax-rows' });
@@ -2915,7 +3245,7 @@ import { createRevenueChart } from './revenue-chart.js';
             }
             list.append(el('div', { class: 'tax-ledger-row' },
                 el('div', {}, el('b', {}, expense.description),
-                    el('small', {}, expense.paid_on + ' · ' + expense.category + (rep.properties.length > 1 ? ' · ' + expense.property : '') + (expense.payee ? ' · ' + expense.payee : ''))),
+                    el('small', {}, fmtDate(expense.paid_on) + ' · ' + expense.category + (rep.properties.length > 1 ? ' · ' + expense.property : '') + (expense.payee ? ' · ' + expense.payee : ''))),
                 el('span', { class: 'v ' + (expense.amount < 0 ? 'negative' : '') }, eur(expense.amount)), actions));
         });
         section.append(list);
@@ -3078,17 +3408,17 @@ import { createRevenueChart } from './revenue-chart.js';
 
     // Full tax-book workspace.
     routes.taxyear = async (page) => {
-        if (!isAdmin()) { page.innerHTML = ''; page.append(emptyState('shield', 'Nur für Administratoren.')); return; }
+        if (!isAdmin()) { page.innerHTML = ''; page.append(emptyState('lock', 'Nur für Administratoren.')); return; }
         const nowYear = new Date().getFullYear();
         if (taxYear == null) taxYear = nowYear - 1;
         const [rep, garages] = await Promise.all([api.get('/reports/tax-year?year=' + taxYear), api.get('/garages')]);
         page.innerHTML = '';
-        const yearSel = el('div', { class: 'pager', style: 'margin:0' },
-            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Vorheriges Jahr', disabled: taxYear <= 2000,
-                onclick: () => { taxYear--; render(); } }, '‹'),
-            el('span', { class: 'info' }, String(taxYear)),
-            el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': 'Nächstes Jahr', disabled: taxYear >= nowYear,
-                onclick: () => { taxYear++; render(); } }, '›'));
+        // Dieselbe Komponente wie auf der Uebersicht. Die Liste beginnt ein Jahr vor dem
+        // gewaehlten (hoechstens zehn zurueck), damit ‹ wie bisher bis 2000 weiterfuehrt.
+        const firstTaxYear = Math.max(2000, Math.min(taxYear - 1, nowYear - 9));
+        const taxYears = []; for (let y = firstTaxYear; y <= nowYear; y++) taxYears.push(y);
+        const yearSel = yearPicker({ years: taxYears, year: taxYear, label: 'Steuerjahr', cls: 'tax-year',
+            onChange: async (year) => { taxYear = year; await render(); } });
         page.append(el('div', { class: 'page-head' }, el('h2', {}, 'Steuerjahr'), el('div', { class: 'page-head-actions' }, yearSel)));
         page.append(taxAccessNotice(rep));
 
@@ -3102,7 +3432,7 @@ import { createRevenueChart } from './revenue-chart.js';
             const title = rep.locked ? 'Steuerjahr entsperren?' : 'Steuerjahr abschließen?';
             const message = rep.locked ? 'Danach sind wieder Änderungen an Buchungen und Zuflussdaten möglich.'
                 : 'Buchungen, Belege, AfA und Zuflussdaten dieses Jahres werden gegen Änderungen gesperrt.';
-            if (!await confirmDialog(title, message, rep.locked ? 'Entsperren' : 'Abschließen')) return;
+            if (!await confirmDialog(title, message, rep.locked ? 'Entsperren' : 'Abschließen', { tone: 'neutral' })) return;
             try {
                 if (rep.locked) await api.del('/tax/years/' + rep.year + '/lock');
                 else await api.post('/tax/years/' + rep.year + '/lock', {});
@@ -3189,7 +3519,7 @@ import { createRevenueChart } from './revenue-chart.js';
     };
 
     routes.billing = async (page) => {
-        if (!isAdmin()) { page.innerHTML = ''; page.append(emptyState('shield', 'Nur für Administratoren.')); return; }
+        if (!isAdmin()) { page.innerHTML = ''; page.append(emptyState('lock', 'Nur für Administratoren.')); return; }
         const s = (await api.get('/billing/settings')) || {};
         page.innerHTML = '';
         page.append(el('div', { class: 'detail-head' },
@@ -3262,6 +3592,7 @@ import { createRevenueChart } from './revenue-chart.js';
     // Enddatum, Archivierung, Historie) und meldet das ECHTE Ergebnis (ok/fehl).
     const bulkSel = new Set();
     let bulkMode = false;
+    let vehFiltersOpen = false; // Telefon: Filtergruppe der Gefährte-Liste aufgeklappt
 
     function bulkBar() {
         const bar = el('div', { class: 'bulk-bar', hidden: !bulkMode });
@@ -3269,7 +3600,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const run = async (status, label) => {
             const ids = Array.from(bulkSel);
             if (!ids.length) { toast('Nichts ausgewählt', 'error'); return; }
-            if (!await confirmDialog(label + '?', ids.length + ' Gefährt(e) werden ' + (status === 'collected' ? 'als abgeholt (heute) markiert' : 'storniert') + '. Jeder Wechsel folgt denselben Regeln wie der Einzelweg.', label)) return;
+            if (!await confirmDialog(label + '?', ids.length + ' Gefährt(e) werden ' + (status === 'collected' ? 'als abgeholt (heute) markiert' : 'storniert') + '. Jeder Wechsel folgt denselben Regeln wie der Einzelweg.', label, { tone: status === 'collected' ? 'neutral' : 'danger' })) return;
             // Der Einzelweg schickt IMMER ein Datum. Ohne eines nimmt der Server den
             // Zweig `end_date = COALESCE(end_date, CURRENT_DATE)` und lässt ein bereits
             // eingetragenes — womöglich weit künftiges — Abholdatum stehen: das Gefährt
@@ -3337,7 +3668,8 @@ import { createRevenueChart } from './revenue-chart.js';
         mountList(page, {
             stateKey: 'vehicles', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Gefährte', emptyIcon: 'car', emptyText: 'Keine Gefährte in dieser Ansicht.', sourcePath: '/vehicles',
-            onAdd: canManage() ? () => vehicleForm() : null,
+            onAdd: canManage() ? () => vehicleForm() : null, addLabel: '+ Gefährt', firstLabel: '+ Erstes Gefährt',
+            firstText: 'Noch keine Gefährte. Ein neues Gefährt steht danach hier und im Planer unter „Nicht platziert“.',
             items: vehicles,
             searchText: (v) => norm([v.label, v.license_plate, v.category_name, v.person_name].join(' ')),
             sorts: [
@@ -3370,7 +3702,8 @@ import { createRevenueChart } from './revenue-chart.js';
                     ...state.persons.map((p) => el('option', { value: p.id, selected: String(p.id) === cs.person }, personName(p))));
                 peSel.addEventListener('change', () => updateRouteQuery({ person: peSel.value }));
                 // Mehrfachauswahl (Hundert 54): schaltet die Checkbox-Hülle der Karten an.
-                const bulkBtn = canManage() ? el('button', { class: 'btn btn-ghost btn-sm' + (bulkMode ? ' active' : ''), 'aria-pressed': String(bulkMode) }, 'Mehrfachauswahl') : null;
+                // Gedrückt = gefüllt, wie "Nur aktiv" & Co. daneben; `.active` war ungestaltet.
+                const bulkBtn = canManage() ? el('button', { class: 'btn btn-sm ' + (bulkMode ? 'btn-primary' : 'btn-ghost'), type: 'button', 'aria-pressed': String(bulkMode) }, 'Mehrfachauswahl') : null;
                 // Nur die Liste neu zeichnen, nicht die ganze Seite — und dabei die
                 // Seitenzahl behalten (keepPage): das Umschalten der Mehrfachauswahl
                 // aendert die Darstellung, nicht die Menge, und warf den Betreiber
@@ -3378,7 +3711,8 @@ import { createRevenueChart } from './revenue-chart.js';
                 if (bulkBtn) bulkBtn.addEventListener('click', () => {
                     bulkMode = !bulkMode;
                     if (!bulkMode) bulkSel.clear();
-                    bulkBtn.classList.toggle('active', bulkMode);
+                    bulkBtn.classList.toggle('btn-primary', bulkMode);
+                    bulkBtn.classList.toggle('btn-ghost', !bulkMode);
                     bulkBtn.setAttribute('aria-pressed', String(bulkMode));
                     if (bulkBarEl) bulkBarEl._sync();
                     refresh(true);
@@ -3393,7 +3727,21 @@ import { createRevenueChart } from './revenue-chart.js';
                     'aria-pressed': String(!!cs.unplacedOnly), onclick: () => updateRouteQuery({ unplaced: cs.unplacedOnly ? null : 1 }) }, 'Ohne Platz');
                 const endingBtn = el('button', { class: 'btn btn-sm ' + (cs.endingDays ? 'btn-primary' : 'btn-ghost'), type: 'button',
                     'aria-pressed': String(!!cs.endingDays), onclick: () => updateRouteQuery({ ending: cs.endingDays ? null : 30 }) }, 'Endet bald');
-                return [stSel, peSel, activeBtn, unplacedBtn, endingBtn, arLabel, bulkBtn];
+                // Telefon: neun Bedienelemente füllten über die Hälfte des ersten Bildschirms.
+                // Die Filter liegen dort hinter "Filter (n)"; am Desktop löst sich die Gruppe
+                // per display:contents auf und alles steht wie bisher in der Leiste. Der
+                // Offen-Zustand überlebt das Neuzeichnen nach jedem Filterwechsel.
+                const active = [cs.status, cs.person, cs.activeOnly, cs.unplacedOnly, cs.endingDays, cs.showArchived].filter(Boolean).length;
+                const group = el('div', { class: 'filter-group' + (vehFiltersOpen ? ' open' : ''), id: 'veh-filters', role: 'group', 'aria-label': 'Filter' },
+                    stSel, peSel, activeBtn, unplacedBtn, endingBtn, arLabel);
+                const filterBtn = el('button', { class: 'btn btn-ghost btn-sm filter-toggle', type: 'button', 'aria-expanded': String(vehFiltersOpen), 'aria-controls': 'veh-filters' },
+                    'Filter', el('span', { class: 'filter-count' + (active ? ' on' : ''), 'aria-label': active + ' aktiv' }, String(active)));
+                filterBtn.addEventListener('click', () => {
+                    vehFiltersOpen = !vehFiltersOpen;
+                    group.classList.toggle('open', vehFiltersOpen);
+                    filterBtn.setAttribute('aria-expanded', String(vehFiltersOpen));
+                });
+                return [filterBtn, group, bulkBtn];
             },
             // Hide archived (closed) vehicles unless the Archiv toggle is on.
             extraFilter: (v, cs) => (cs.showArchived || !v.archived) &&
@@ -3443,7 +3791,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const render = async () => {
             body.innerHTML = '';
             body.append(el('h3', {}, 'Planer-Icons verwalten'));
-            body.append(el('p', { class: 'muted', style: 'font-size:.8rem;margin:.1rem 0 .6rem' }, editId ? 'Bearbeiten: Name ändern und/oder neue Datei wählen — die ID (und damit alle Zuordnungen) bleibt erhalten.' : 'Eigene Draufsicht-Icons (PNG/JPEG) hochladen und benennen. Danach pro Gefährt unter „Planer-Symbol" wählbar.'));
+            body.append(el('p', { class: 'muted', style: 'font-size:var(--text-sm);margin:.1rem 0 .6rem' }, editId ? 'Bearbeiten: Name ändern und/oder neue Datei wählen — die ID (und damit alle Zuordnungen) bleibt erhalten.' : 'Eigene Draufsicht-Icons (PNG/JPEG) hochladen und benennen. Danach pro Gefährt unter „Planer-Symbol" wählbar.'));
             const nameIn = el('input', { class: 'gp-stepin', placeholder: 'Name / Tag, z. B. Pferdeanhänger', value: editId ? editName : '' });
             const fileIn = el('input', { type: 'file', accept: 'image/png,image/jpeg' });
             const submit = el('button', {
@@ -3467,17 +3815,17 @@ import { createRevenueChart } from './revenue-chart.js';
             body.append(row);
             let icons = []; try { icons = await api.get('/planner-icons'); } catch (e) { /* offline */ }
             const grid = el('div', { class: 'icongrid' });
-            if (!icons.length) grid.append(el('div', { class: 'muted', style: 'font-size:.82rem' }, 'Noch keine eigenen Icons.'));
+            if (!icons.length) grid.append(el('div', { class: 'muted', style: 'font-size:var(--text-base)' }, 'Noch keine eigenen Icons.'));
             icons.forEach((ic) => grid.append(el('div', { class: 'iconcell' + (editId === ic.id ? ' editing' : '') },
                 el('img', { src: '/api/planner-icons/' + ic.id + '?t=' + (ic.byte_size || 0), alt: ic.name }),
                 el('span', { title: ic.name }, ic.name),
-                el('button', { class: 'btn btn-ghost btn-sm iconedit', title: 'Umbenennen / Bild ersetzen', onclick: () => { editId = ic.id; editName = ic.name; render(); } }, '✎'),
+                el('button', { class: 'btn btn-ghost btn-sm iconedit', title: 'Umbenennen / Bild ersetzen', 'aria-label': ic.name + ' umbenennen oder Bild ersetzen', onclick: () => { editId = ic.id; editName = ic.name; render(); } }, icon('edit', 14)),
                 el('button', { class: 'btn btn-ghost btn-sm icondel', title: 'Löschen', onclick: (e) => deleteWithUndo('Icon löschen?', `„${ic.name}" wird entfernt. Fahrzeuge, die es nutzen, fallen aufs Kategorie-Symbol zurück.`, () => api.del('/planner-icons/' + ic.id), () => { if (editId === ic.id) editId = null; render(); }, e.currentTarget.closest('.iconcell')) }, icon('close', 14)))));
             body.append(grid);
             // Built-in category icons (read-only): always available per vehicle under
             // „Planer-Symbol", not stored in the DB and therefore not editable/deletable.
             body.append(el('h4', { class: 'iconh4' }, 'Eingebaute Icons'));
-            body.append(el('p', { class: 'muted', style: 'font-size:.76rem;margin:0 0 .5rem' }, 'Immer verfügbar, pro Gefährt unter „Planer-Symbol" wählbar. Nicht löschbar.'));
+            body.append(el('p', { class: 'muted', style: 'font-size:var(--text-sm);margin:0 0 .5rem' }, 'Immer verfügbar, pro Gefährt unter „Planer-Symbol" wählbar. Nicht löschbar.'));
             const bgrid = el('div', { class: 'icongrid' });
             Object.entries(CATICON).forEach(([cat, slug]) => bgrid.append(el('div', { class: 'iconcell builtin' },
                 el('img', { src: CATICON_BASE + slug + '.png', alt: cat }),
@@ -3503,8 +3851,39 @@ import { createRevenueChart } from './revenue-chart.js';
                 el('span', { class: 'veh-loc-go' }, 'Im Plan zeigen →'));
         }
         if (compact) return el('span', { class: 'veh-loc veh-loc-ic empty', role: 'img', title: 'Nicht platziert', 'aria-label': 'Nicht platziert' }, icon('pin', 20));
+        // Detailseite: wer planen darf, bekommt statt des Hinweises den Weg dorthin.
+        if (canPlace(v)) return el('button', { class: 'veh-loc veh-loc-place', type: 'button', onclick: (e) => { e.stopPropagation(); placeInPlan(v); } },
+            el('span', {}, '○ Nicht platziert'), el('span', { class: 'veh-loc-go' }, 'Im Plan platzieren →'));
         return el('span', { class: 'veh-loc empty' }, '○ Nicht platziert');
     }
+    // Platzierbar = steht in der Planer-Palette (/vehicles/unassigned: ohne Platz, nicht
+    // archiviert) und der Benutzer darf planen.
+    const canPlace = (v) => canManage() && !v.spot_id && !v.archived;
+    // Welche Halle? Ohne Rueckfrage die zuletzt geoeffnete, sonst die erste
+    // (Betreiberentscheid 15.10.2026); gewechselt wird im Planer. Keine Halle: zu den
+    // Stellplaetzen, dort entsteht die erste.
+    async function pickHall() {
+        const garages = await api.get('/garages');
+        const lists = await Promise.all(garages.filter((g) => g.hall_count).map((g) => api.get('/garages/' + g.id + '/halls')));
+        const halls = lists.flat();
+        if (!halls.length) { toast('Noch keine Halle angelegt. Unter Stellplätze zuerst eine Halle anlegen.', 'error'); navigate('garages'); return null; }
+        let last = null;
+        try { last = Number(localStorage.getItem('parkrr-last-hall')); } catch (e) { /* storage blocked */ }
+        return (halls.find((hl) => hl.id === last) || halls[0]).id;
+    }
+    // Oeffnet den Planer; mit v steht das Gefaehrt dort schon bereit (Fläche antippen).
+    async function placeInPlan(v) {
+        let hallId;
+        try { hallId = await pickHall(); } catch (e) { toast(e.message, 'error'); return; }
+        if (hallId == null) return;
+        pendingArmVehicle = v ? v.id : null;
+        navigate('hall/' + hallId);
+    }
+    // Kennzeichen als kleines Schild: im Hof ist es die Identität eines Fahrzeugs. Nur
+    // wenn es nicht ohnehin schon der Titel ist (vehicleTitle fällt darauf zurück).
+    const plateChip = (v) => (v.license_plate && v.label
+        ? el('span', { class: 'plate' }, el('span', { class: 'sr-only' }, 'Kennzeichen '), el('span', {}, v.license_plate))
+        : null);
     function vehicleCard(v, { linkable = true, chargeInfo = null } = {}) {
         const title = vehicleTitle(v);
         const rateUnit = v.billing_period === 'yearly' ? '/Jahr' : '/Monat';
@@ -3520,6 +3899,7 @@ import { createRevenueChart } from './revenue-chart.js';
             (c.covered ? 'Aufgelaufen (Rest): ' : 'Aufgelaufen: ') + eur(c.owed));
         const main = el('div', { style: 'flex:1;' + (linkable ? 'cursor:pointer' : ''), onclick: linkable ? () => navigate('vehicles/' + v.id) : null },
             el('h3', {}, esc(title)),
+            plateChip(v),
             el('div', { class: 'card-meta' }, el('span', { class: 'badge badge-cat' }, esc(v.category_name)), ' ', esc(v.person_name),
                 v.photo_count ? el('span', { class: 'muted' }, '  ', icon('camera', 13), ' ' + v.photo_count) : null),
             el('div', { class: 'card-meta' }, rateLine),
@@ -3530,6 +3910,10 @@ import { createRevenueChart } from './revenue-chart.js';
             main.append(el('div', { class: 'card-meta', style: 'margin-top:.2rem;color:var(--accent-text);font-weight:600' },
                 'Zusatzkosten: ' + eur(chargeInfo.sum) + (chargeInfo.count > 1 ? ' · ' + chargeInfo.count + ' Pos.' : '')));
         }
+        // "Nicht platziert" war eine Nadel ohne Funktion (role=img). Wer planen darf,
+        // bekommt den Weg: Halle oeffnen, das Gefaehrt steht dort schon bereit.
+        if (canPlace(v)) main.append(el('button', { class: 'btn-sect veh-place', type: 'button',
+            onclick: (e) => { e.stopPropagation(); placeInPlan(v); } }, icon('pin', 15), ' Im Plan platzieren'));
         const actions = el('div', { class: 'card-actions stack' },
             // Archived vehicles are read-only, so no inline edit; delete stays for
             // genuine mistakes.
@@ -3538,7 +3922,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: title + ' löschen', 'aria-label': title + ' löschen', onclick: (e) => delVehicle(v, e.currentTarget.closest('.card')) }, icon('trash'))),
             // Standort as a compact pin icon under the edit/delete buttons — keeps the card
             // no taller than necessary; the hall name is in its tooltip/aria-label.
-            vehLocationChip(v, { compact: true }));
+            canPlace(v) ? null : vehLocationChip(v, { compact: true }));
         return el('div', { class: 'card' + (v.archived ? ' is-archived' : '') },
             el('div', { class: 'card-row' }, main, actions),
             vehicleControls(v));
@@ -3650,7 +4034,7 @@ import { createRevenueChart } from './revenue-chart.js';
         const pd = agreementPaid(a);
         if (pd.accrued <= 0.005) return null;
         const pct = Math.round(pd.frac * 100);
-        const fill = el('div', { class: 'bar-fill' });
+        const fill = el('div', { class: 'bar-fill' + (pd.frac > 0 ? '' : ' is-zero') });
         requestAnimationFrame(() => { fill.style.width = (pd.frac * 100) + '%'; });
         const cap = pd.done
             ? el('div', { class: 'ag-progress-cap is-done' }, '✓ vollständig bezahlt')
@@ -3729,7 +4113,7 @@ import { createRevenueChart } from './revenue-chart.js';
     function agreementPayments(a) {
         // Master "Alle Zeiträume" slider (bezahlt = all paid, offen = none).
         const master = el('div', { class: 'controls-row' },
-            el('span', { class: 'muted', style: 'font-size:.85rem' }, 'Alle Zeiträume'), agreementPaidSlider(a));
+            el('span', { class: 'muted', style: 'font-size:var(--text-base)' }, 'Alle Zeiträume'), agreementPaidSlider(a));
         const periods = agreementPeriods(a);
         // Nothing has accrued yet: only the master toggle is relevant, show it bare.
         if (!periods.length) return master;
@@ -3875,7 +4259,7 @@ import { createRevenueChart } from './revenue-chart.js';
     function recurringPayments(rc) {
         const wrap = el('div', {});
         wrap.append(el('div', { class: 'controls-row' },
-            el('span', { class: 'muted', style: 'font-size:.85rem' }, 'Alle Zeiträume'), recurringPaidSlider(rc)));
+            el('span', { class: 'muted', style: 'font-size:var(--text-base)' }, 'Alle Zeiträume'), recurringPaidSlider(rc)));
         const periods = agreementPeriods(rc);
         const curKey = rc.period === 'yearly' ? today().slice(0, 4) : today().slice(0, 7);
         if (periods.length) {
@@ -4197,7 +4581,8 @@ import { createRevenueChart } from './revenue-chart.js';
     const STATUS_FLOW = ['reserved', 'stored', 'collected'];
     function statusSlider(v) {
         if (!canManage()) return statusBadge(v.status);
-        const seg = el('div', { class: 'seg-mini', role: 'radiogroup', 'aria-label': 'Lagerstatus' });
+        // Mit Namen: zehn Karten hiessen fuer Screenreader sonst alle "Lagerstatus".
+        const seg = el('div', { class: 'seg-mini', role: 'radiogroup', 'aria-label': 'Lagerstatus · ' + vehicleTitle(v) });
         for (const s of STATUS_FLOW) {
             const on = v.status === s;
             seg.append(el('button', {
@@ -4212,7 +4597,7 @@ import { createRevenueChart } from './revenue-chart.js';
         return segThumb(seg);
     }
     function paidSlider(v) {
-        const seg = el('div', { class: 'seg-mini pay', role: 'radiogroup', 'aria-label': 'Zahlstatus' });
+        const seg = el('div', { class: 'seg-mini pay', role: 'radiogroup', 'aria-label': 'Zahlstatus · ' + vehicleTitle(v) });
         seg.append(el('button', { class: (!v.paid ? 'active open' : ''), type: 'button', role: 'radio', 'aria-checked': String(!v.paid), 'aria-label': 'Zahlung offen',
             onclick: (e) => { markActive(e.currentTarget); markPaid(v, false); } }, 'offen'));
         seg.append(el('button', { class: (v.paid ? 'active done' : ''), type: 'button', role: 'radio', 'aria-checked': String(v.paid), 'aria-label': 'Bezahlt',
@@ -4475,8 +4860,10 @@ import { createRevenueChart } from './revenue-chart.js';
             fields: [
                 { name: 'person_id', label: 'Person', type: 'select', required: true, value: existing?.person_id ?? presetPerson ?? state.persons[0].id, options: state.persons.map((p) => ({ value: p.id, label: personName(p) })) },
                 { name: 'category_id', label: 'Tarif / Typ', type: 'select', required: true, value: initCat, options: state.categories.filter((c) => !c.archived || c.id === initCat).map((c) => ({ value: c.id, label: `${c.name} (${eur(c.default_monthly_cost)}/M, ${eur(c.default_yearly_cost)}/J)` + (c.archived ? ' · archiviert' : '') })) },
+                // Kennzeichen sichtbar ohne Aufklappen: beim Einstellen im Hof ist es das,
+                // was man vom Fahrzeug abliest. Die Bezeichnung bleibt optional.
+                { name: 'license_plate', label: 'Kennzeichen', value: existing?.license_plate, placeholder: 'z. B. W 12345 K' },
                 { name: 'label', label: 'Bezeichnung', value: existing?.label, placeholder: 'z. B. Wohnwagen Hobby', optional: 'Fahrzeugdetails' },
-                { name: 'license_plate', label: 'Kennzeichen', value: existing?.license_plate, optional: 'Fahrzeugdetails' },
                 { name: 'start_date', label: 'Einstelldatum', type: 'date', required: true, value: existing?.start_date ? existing.start_date.slice(0, 10) : today() },
                 { name: 'end_date', label: 'Abholdatum (optional)', type: 'date', value: existing?.end_date ? existing.end_date.slice(0, 10) : '', help: 'Leer lassen für laufende Miete.' },
                 { name: 'billing_period', label: 'Abrechnung', type: 'select', value: initPeriod, options: [{ value: 'monthly', label: 'monatlich' }, { value: 'yearly', label: 'jährlich' }] },
@@ -4556,7 +4943,7 @@ import { createRevenueChart } from './revenue-chart.js';
             el('div', { class: 'balance' }, el('span', {}, 'Preis'), el('span', { class: 'amt' }, eur(v.effective_rate) + (v.billing_period === 'yearly' ? ' /Jahr' : ' /Monat'))),
             el('div', { class: 'balance' }, el('span', {}, 'Zeitraum'), el('span', {}, fmtDate(v.start_date) + (v.end_date ? ' – ' + fmtDate(v.end_date) : ' – offen'))),
             el('div', { class: 'balance' }, el('span', {}, 'Standort'), el('span', {}, vehLocationChip(v))),
-            v.reserved_from ? el('div', { class: 'balance' }, el('span', {}, 'Reservierung'), el('span', {}, fmtDate(v.reserved_from) + ' – ' + fmtDate(v.reserved_until))) : null,
+            v.reserved_from ? el('div', { class: 'balance' }, el('span', {}, 'Reservierung'), el('span', {}, fmtDate(v.reserved_from) + (v.reserved_until ? ' – ' + fmtDate(v.reserved_until) : ' – offen'))) : null,
             vc.covered ? el('div', { class: 'balance' }, el('span', {}, 'Pauschale'), el('span', {}, vc.active ? 'aktiv abgedeckt' : 'beendet')) : null,
             vc.settled
                 ? el('div', { class: 'balance' }, el('strong', {}, 'Aufgelaufen'), el('strong', { class: 'amt', title: 'Abrechnung über Pauschale' }, 'über Pauschale'))
@@ -4609,10 +4996,13 @@ import { createRevenueChart } from './revenue-chart.js';
             // JPEG/PNG restriction the backend enforces (avoids HEIC/WEBP rejects).
             const camInput = el('input', { type: 'file', accept: 'image/jpeg,image/png', capture: 'environment', style: 'display:none' });
             camInput.addEventListener('change', () => uploadPhoto(id, camInput.files[0], prog));
-            ph.append(
+            // Als Gruppe: drei lose Kinder in einem space-between-Kopf schoben "+ Foto"
+            // in die Mitte zwischen Titel und Kamera-Knopf.
+            ph.append(el('div', { class: 'page-head-actions' },
+                prog,
                 el('button', { class: 'btn-sect', onclick: () => fileInput.click() }, '+ Foto'),
-                el('button', { class: 'btn-sect', title: 'Mit Kamera aufnehmen', onclick: () => camInput.click() }, icon('camera'), ' Kamera'),
-                prog, fileInput, camInput);
+                el('button', { class: 'btn-sect', title: 'Mit Kamera aufnehmen', onclick: () => camInput.click() }, icon('camera'), ' Kamera')),
+                fileInput, camInput);
         }
         photoCard.append(ph);
         if (!photos.length) photoCard.append(el('p', { class: 'muted' }, 'Keine Fotos.'));
@@ -4890,10 +5280,12 @@ import { createRevenueChart } from './revenue-chart.js';
         page.append(el('div', { class: 'page-head' },
             el('div', {}, el('button', { class: 'back-btn', type: 'button', onclick: () => navigate('settings'), 'aria-label': 'Zurück zu Einstellungen' }, '‹'),
                 el('h2', { style: 'display:inline;margin-left:.65rem' }, 'Übergabevorlagen')),
-            canManage() ? el('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => handoverTemplateForm() }, '+ Neu') : null));
+            canManage() ? el('button', { class: 'btn btn-primary btn-sm btn-add', type: 'button', onclick: () => handoverTemplateForm() }, '+ Vorlage') : null));
         page.append(el('p', { class: 'route-intro' }, 'Textbausteine und Checklisten für Ein- und Auslagerungen. Eingefügter Text bleibt im Protokoll vollständig bearbeitbar.'));
         if (!templates.length) {
-            page.append(emptyState('receipt', 'Noch keine Übergabevorlagen.'));
+            const empty = emptyState('receipt', 'Noch keine Übergabevorlagen. Eine Vorlage füllt die Checkliste einer Ein- oder Auslagerung vor.');
+            if (canManage()) empty.append(el('div', {}, el('button', { class: 'btn btn-primary', type: 'button', style: 'margin-top:1rem', onclick: () => handoverTemplateForm() }, '+ Erste Vorlage')));
+            page.append(empty);
             return;
         }
         const list = el('div', { class: 'template-list' });
@@ -4946,13 +5338,68 @@ import { createRevenueChart } from './revenue-chart.js';
     }
 
     // ================= EXTRA CHARGES =================
+    // Mehrfachauswahl wie bei den Gefaehrten: Saisonende hiess sonst zwanzigmal dieselbe
+    // Pille. Auswaehlbar sind freie, nicht fakturierte Posten — genau die, deren
+    // Zahlstatus die Pille der Karte setzt —, offen wie bezahlt. Gebundene folgen ihrem
+    // Gefaehrt, fakturierte ihrer Rechnung.
+    const chargeSel = new Set();
+    let chargeBulkMode = false;
+    const chargeBulkable = (c) => c.vehicle_id == null && !c.invoiced;
+    function chargeBulkBar(charges) {
+        const bar = el('div', { class: 'bulk-bar', hidden: !chargeBulkMode });
+        const count = el('b', {}, '0');
+        const byId = new Map(charges.map((c) => [c.id, c]));
+        const run = async (paid) => {
+            const ids = Array.from(chargeSel);
+            if (!ids.length) { toast('Nichts ausgewählt', 'error'); return; }
+            // Nur, was sich wirklich aendert; ein schon bezahlter Posten bleibt unberuehrt.
+            const todo = ids.filter((id) => !!(byId.get(id) || {}).paid !== paid);
+            if (!todo.length) { toast(paid ? 'Die gewählten Posten sind schon als bezahlt markiert' : 'Die gewählten Posten sind schon offen'); return; }
+            const done = [], failed = [];
+            let firstErr = '';
+            for (const id of todo) {
+                try { await api.post('/charges/' + id + '/paid', { paid }); done.push(id); }
+                catch (e) { failed.push(id); if (!firstErr) firstErr = e.message || ''; }
+            }
+            // Wie bei den Gefaehrten: nur das Erledigte verlaesst die Auswahl.
+            chargeSel.clear();
+            failed.forEach((id) => chargeSel.add(id));
+            chargeBulkMode = failed.length > 0;
+            render();
+            const msg = done.length + (paid ? ' als bezahlt markiert' : ' als offen markiert') + (failed.length ? ' · ' + failed.length + ' fehlgeschlagen' + (firstErr ? ' (' + firstErr + ')' : '') : '');
+            if (!done.length) { toast(msg, 'error'); return; }
+            // Eine Markierung, kein Geldeingang — also umkehrbar wie die Pille selbst.
+            toastAction(msg, 'Rückgängig', async () => {
+                let back = 0;
+                for (const id of done) { try { await api.post('/charges/' + id + '/paid', { paid: !paid }); back++; } catch (e) { /* unten gezaehlt */ } }
+                toast(back === done.length ? 'Zurückgenommen' : back + ' von ' + done.length + ' zurückgenommen', back === done.length ? 'success' : 'warn');
+                render();
+            });
+        };
+        bar.append(el('span', {}, count, ' ausgewählt'),
+            el('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => run(true) }, 'Als bezahlt markieren'),
+            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => run(false) }, 'Als offen markieren'),
+            el('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: () => { chargeSel.clear(); chargeBulkMode = false; render(); } }, 'Abbrechen'));
+        bar._sync = () => { count.textContent = String(chargeSel.size); bar.hidden = !chargeBulkMode; };
+        return bar;
+    }
+    function chargeBulkWrap(c, bar) {
+        // Nicht auswaehlbare Zeilen behalten die Einrueckung, damit die Spalte ruhig bleibt.
+        if (!chargeBulkable(c)) return el('div', { class: 'bulk-wrap' }, el('span', { class: 'bulk-cb-gap', 'aria-hidden': 'true' }), financeRow(c));
+        const cb = el('input', { type: 'checkbox', class: 'bulk-cb', 'aria-label': (c.description || 'Zusatzkosten') + ' · ' + (c.person_name || '') + ' auswählen' });
+        cb.checked = chargeSel.has(c.id);
+        cb.addEventListener('change', () => { if (cb.checked) chargeSel.add(c.id); else chargeSel.delete(c.id); if (bar) bar._sync(); });
+        return el('div', { class: 'bulk-wrap' }, cb, financeRow(c));
+    }
     routes.finance = async (page) => {
         await refreshLookups();
         const charges = await api.get('/charges');
+        const bulkBarEl = canBill() && charges.some(chargeBulkable) ? chargeBulkBar(charges) : null;
+        if (!bulkBarEl) { chargeBulkMode = false; chargeSel.clear(); }
         mountList(page, {
             stateKey: 'charges', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Zusatzkosten', emptyIcon: 'receipt', emptyText: 'Keine Zusatzkosten erfasst.', sourcePath: '/charges',
-            onAdd: canBill() ? () => chargeForm() : null,
+            onAdd: canBill() ? () => chargeForm() : null, addLabel: '+ Position', firstLabel: '+ Erste Position',
             items: charges,
             searchText: (c) => norm([c.person_name, c.description].join(' ')),
             sorts: [{ label: 'Neueste zuerst', cmp: (a, b) => new Date(b.charged_on) - new Date(a.charged_on) }, { label: 'Betrag', cmp: (a, b) => b.total - a.total }],
@@ -4964,12 +5411,31 @@ import { createRevenueChart } from './revenue-chart.js';
                 const status = el('select', { 'aria-label': 'Zahlstatus filtern' },
                     ...[['', 'Alle Zahlstatus'], ['open', 'Offen'], ['paid', 'Bezahlt']].map(([value, label]) => el('option', { value, selected: value === cs.status }, label)));
                 status.addEventListener('change', () => { cs.status = status.value; refresh(); });
-                return [person, status];
+                const bulkBtn = bulkBarEl ? el('button', { class: 'btn btn-sm ' + (chargeBulkMode ? 'btn-primary' : 'btn-ghost'), type: 'button', 'aria-pressed': String(chargeBulkMode) }, 'Mehrfachauswahl') : null;
+                if (bulkBtn) bulkBtn.addEventListener('click', () => {
+                    chargeBulkMode = !chargeBulkMode;
+                    if (!chargeBulkMode) chargeSel.clear();
+                    bulkBtn.classList.toggle('btn-primary', chargeBulkMode);
+                    bulkBtn.classList.toggle('btn-ghost', !chargeBulkMode);
+                    bulkBtn.setAttribute('aria-pressed', String(chargeBulkMode));
+                    bulkBarEl._sync();
+                    refresh(true);
+                });
+                return [person, status, bulkBtn];
             },
             extraFilter: (c, cs) => (!cs.person || String(c.person_id) === cs.person) &&
                 (!cs.status || chargeIsPaid(c) === (cs.status === 'paid')),
-            render: (c) => financeRow(c),
+            // Was der Filter ausblendet, faellt aus der Auswahl (wie bei den Gefaehrten).
+            onFiltered: (items) => {
+                if (!chargeSel.size) return;
+                const visible = new Set(items.map((c) => c.id));
+                let dropped = false;
+                chargeSel.forEach((id) => { if (!visible.has(id)) { chargeSel.delete(id); dropped = true; } });
+                if (dropped && bulkBarEl) bulkBarEl._sync();
+            },
+            render: (c) => (chargeBulkMode && bulkBarEl ? chargeBulkWrap(c, bulkBarEl) : financeRow(c)),
         });
+        if (bulkBarEl) { page.append(bulkBarEl); bulkBarEl._sync(); }
     };
 
     function financeList(items) {
@@ -5026,7 +5492,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 side));
     }
     function chargePaidSlider(it) {
-        const seg = el('div', { class: 'seg-mini pay', role: 'radiogroup', 'aria-label': 'Zahlstatus' });
+        const seg = el('div', { class: 'seg-mini pay', role: 'radiogroup', 'aria-label': 'Zahlstatus · ' + (it.description || 'Zusatzkosten') });
         seg.append(el('button', { class: (!it.paid ? 'active open' : ''), type: 'button', role: 'radio', 'aria-checked': String(!it.paid), 'aria-label': 'Zahlung offen',
             onclick: (e) => { markActive(e.currentTarget); setChargePaid(it, false); } }, 'offen'));
         seg.append(el('button', { class: (it.paid ? 'active done' : ''), type: 'button', role: 'radio', 'aria-checked': String(it.paid), 'aria-label': 'Bezahlt',
@@ -5264,9 +5730,9 @@ import { createRevenueChart } from './revenue-chart.js';
                 : 'Katalog für Zusatzleistungen (Strom, Reinigung …).'));
 
         const list = el('div', {});
-        // "+ Neu" opens a blank, already-expanded inline card at the top.
+        // "Neuer Tarif/Dienst" opens a blank, already-expanded inline card at the top.
         if (manage) {
-            const addBtn = el('button', { class: 'btn btn-primary btn-sm' },
+            const addBtn = el('button', { class: 'btn btn-primary btn-sm btn-add' },
                 icon('plus', 15), isCat ? ' Neuer Tarif' : ' Neuer Dienst');
             addBtn.addEventListener('click', () => {
                 // Keep at most one unsaved blank card, and clear the empty-state so
@@ -5473,7 +5939,7 @@ import { createRevenueChart } from './revenue-chart.js';
         mountList(page, {
             stateKey: 'users', // fester Schluessel, unabhaengig vom Anzeigetitel
             title: 'Benutzer', emptyIcon: 'users', emptyText: 'Keine Benutzer.',
-            onAdd: () => userForm(), items: users,
+            onAdd: () => userForm(), addLabel: '+ Benutzer', items: users,
             controls: (refresh, cs) => {
                 const roles = el('select', { 'aria-label': 'Rolle filtern' }, el('option', { value: '' }, 'Alle Rollen'),
                     ...Object.entries(ROLE_LABEL).map(([value, label]) => el('option', { value, selected: value === cs.role }, label)));
@@ -5515,7 +5981,7 @@ import { createRevenueChart } from './revenue-chart.js';
             btn.disabled = false; btn.textContent = orig;
         }
     }
-    const fmtBytes = (n) => { n = Number(n) || 0; if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(1) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; };
+    const fmtBytes = (n) => { n = Number(n) || 0; const one = (x) => x.toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); if (n < 1024) return n + ' B'; if (n < 1048576) return one(n / 1024) + ' KB'; return one(n / 1048576) + ' MB'; };
 
     // ---------- BACKUP (admin) ----------
     // ---- cron helpers (client twins of internal/backup/cron.go) ----
@@ -5750,14 +6216,14 @@ import { createRevenueChart } from './revenue-chart.js';
     function backupFileRow(f, base, onRestore) {
         const row = el('div', { class: 'card-row', style: 'border-top:1px solid var(--border);padding:.45rem 0;align-items:center;gap:.4rem' },
             el('div', { style: 'flex:1;min-width:0' },
-                el('div', { style: 'font-weight:600;font-size:.85rem;word-break:break-all' }, esc(f.name)),
-                el('div', { class: 'card-meta' }, new Date(f.modified).toLocaleString('de-DE') + ' · ' + fmtBytes(f.size))),
+                el('div', { style: 'font-weight:600;font-size:var(--text-base);word-break:break-all' }, esc(f.name)),
+                el('div', { class: 'card-meta' }, fmtDateTime(f.modified) + ' · ' + fmtBytes(f.size))),
             el('a', { class: 'btn btn-ghost btn-sm', href: base + encodeURIComponent(f.name), download: f.name }, 'Download'));
         if (onRestore) row.append(el('button', { class: 'btn btn-ghost btn-sm', onclick: onRestore }, 'Restore'));
         return row;
     }
     routes.backup = async (page) => {
-        if (!isAdmin()) { page.innerHTML = ''; page.append(emptyState('shield', 'Nur für Administratoren.')); return; }
+        if (!isAdmin()) { page.innerHTML = ''; page.append(emptyState('lock', 'Nur für Administratoren.')); return; }
         page.innerHTML = '';
         page.append(el('div', { class: 'detail-head' },
             el('button', { class: 'back-btn', onclick: () => navigate('dashboard') }, '‹'),
@@ -5827,15 +6293,27 @@ import { createRevenueChart } from './revenue-chart.js';
                 el('li', {}, 'Restore per Kommandozeile: ', el('code', {}, 'parkrr restore <datei.dump.enc>'), '. Alte und neue Archivformate bleiben lesbar.'))));
     };
     function offlineRestoreCard() {
+        // Gefuehrte Checkliste statt "stoppen und parkrr restore ausfuehren": jeder Befehl
+        // mit Kopierknopf, dazu der Handbuch-Abschnitt. Die Haekchen sind nur eine
+        // Merkhilfe auf dieser Seite — gespeichert wird nichts.
+        const steps = [
+            [['Sicherung bereitlegen: Volume-Archive liegen schon unter ', el('code', {}, '/backups'), '; eine S3-Sicherung oben herunterladen und dorthin kopieren.']],
+            [['Alle Parkrr-App-Instanzen stoppen. Der Restore verweigert, solange eine noch läuft:'], 'docker compose stop app'],
+            [['Wiederherstellen und mit ', el('code', {}, 'RESTORE'), ' bestätigen (Dateiname anpassen):'], 'docker compose run --rm app restore /backups/<datei.dump.enc>'],
+            [['Parkrr wieder starten. Alle Benutzer melden sich danach neu an:'], 'docker compose start app'],
+        ];
+        const list = el('ol', { class: 'restore-steps' });
+        steps.forEach(([text, cmd], i) => {
+            const id = 'restore-step-' + (i + 1);
+            list.append(el('li', {}, el('input', { type: 'checkbox', id, class: 'restore-check' }),
+                el('div', { class: 'restore-step' }, el('label', { for: id }, ...text), cmd ? copyCmd(cmd) : null)));
+        });
         return el('div', { class: 'card restore-section', style: 'margin-top:1rem' },
             el('h3', {}, 'Wiederherstellen · offline'),
             el('div', { class: 'card-meta', style: 'margin:.3rem 0 .7rem;color:var(--accent-text);font-weight:600' },
                 'Eine laufende Anwendung darf nicht gegen ein Schema arbeiten, das gerade ersetzt wird. Online-Restore ist deshalb gesperrt.'),
-            el('ol', { class: 'card-meta', style: 'margin:.4rem 0;padding-left:1.2rem;line-height:1.65' },
-                el('li', {}, 'Gewünschte Volume- oder S3-Sicherung herunterladen.'),
-                el('li', {}, 'Alle Parkrr-App-Instanzen stoppen.'),
-                el('li', {}, el('code', {}, 'parkrr restore <datei.dump.enc>'), ' ausführen und RESTORE bestätigen.'),
-                el('li', {}, 'Parkrr wieder starten; alle Benutzer melden sich neu an.')));
+            list,
+            helpLink('2. Backups: einrichten, prüfen, wiederherstellen', 'Handbuch: Wiederherstellen Schritt für Schritt'));
     }
     function backupRestoreCard() {
         const fileIn = el('input', { type: 'file', accept: '.enc', style: 'display:none' });
@@ -6064,7 +6542,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 // phrasing content, so a heading here would be invalid HTML.
                 el('span', { class: 'u-name' }, esc(u.username), ' ',
                     el('span', { class: 'badge badge-role' }, ROLE_LABEL[u.role] || u.role),
-                    u.totp_enabled ? el('span', { class: 'badge badge-stored badge-ic', title: '2FA aktiv', 'aria-label': '2FA aktiv' }, icon('shield', 12), '2FA') : null,
+                    u.totp_enabled ? el('span', { class: 'badge badge-stored badge-ic', title: '2FA aktiv', 'aria-label': '2FA aktiv' }, icon('lock', 12), '2FA') : null,
                     // Gesperrte Konten müssen in der Liste sofort erkennbar sein — sonst
                     // sucht man den fehlenden Zugang beim Passwort statt beim Schalter.
                     u.disabled ? el('span', { class: 'badge badge-cancelled badge-ic', title: 'Zugang gesperrt', 'aria-label': 'Zugang gesperrt' }, icon('power', 12), 'Gesperrt') : null),
@@ -6202,7 +6680,7 @@ import { createRevenueChart } from './revenue-chart.js';
                         el('div', { class: 'pay-method' }, esc(m.subject), ' ',
                             m.ok ? el('span', { class: 'badge badge-stored' }, 'gesendet')
                                 : el('span', { class: 'badge badge-cancelled', title: m.error || '' }, 'fehlgeschlagen')),
-                        el('div', { class: 'pay-date' }, new Date(m.sent_at).toLocaleString('de-DE') + ' · an ' + esc(m.recipients)
+                        el('div', { class: 'pay-date' }, fmtDateTime(m.sent_at) + ' · an ' + esc(m.recipients)
                             + (m.error ? ' · ' + esc(m.error) : ''))))); 
             });
         });
@@ -6211,7 +6689,7 @@ import { createRevenueChart } from './revenue-chart.js';
     routes.audit = async (page) => {
         if (!isAdmin()) { page.innerHTML = ''; page.append(emptyState('settings', 'Nur für Administratoren.')); return; }
         page.innerHTML = '';
-        page.append(el('div', { class: 'detail-head' }, el('button', { class: 'back-btn', onclick: () => navigate('dashboard') }, '‹'), el('h2', { style: 'margin:0' }, 'Audit-Log'),
+        page.append(el('div', { class: 'detail-head' }, el('button', { class: 'back-btn', onclick: () => navigate('dashboard') }, '‹'), el('h2', { style: 'margin:0;flex:1' }, 'Audit-Log'),
             // Revisionssicherer Export (Hundert 43): JSONL mit SHA-256-Hashkette —
             // jede Zeile versiegelt alle vorigen, prüfbar ohne Parkrr.
             el('a', { class: 'btn btn-ghost btn-sm', href: '/api/audit/export', download: '', title: 'Vollständiger Export mit SHA-256-Hashkette (JSONL)' }, icon('download', 15), ' Revisionsexport'),
@@ -6268,8 +6746,8 @@ import { createRevenueChart } from './revenue-chart.js';
         // 2025 und 2026 derselbe Schlüssel — Einträge verschiedener Jahre
         // verschmölzen unter einer Überschrift. „Gestern" über setDate statt
         // now − 86400s, sonst kippt das Label an den beiden DST-Tagen.
-        const DAY_FMT = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: 'numeric', month: 'long' });
-        const DAY_FMT_Y = new Intl.DateTimeFormat('de-DE', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
+        const DAY_FMT = new Intl.DateTimeFormat('de-AT', { weekday: 'short', day: 'numeric', month: 'long' });
+        const DAY_FMT_Y = new Intl.DateTimeFormat('de-AT', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' });
         const dayKey = (d) => d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate();
         let lastDay = null;
         // Läuft eine ältere Antwort nach einem Filterwechsel ein, würde sie unter
@@ -6350,7 +6828,7 @@ import { createRevenueChart } from './revenue-chart.js';
         // 2FA — header (icon + title + status badge), then body per state.
         const twoFA = el('div', { class: 'card tf' });
         const tfHead = (badge) => el('div', { class: 'tf-head' },
-            el('span', { class: 'tf-head-ic' }, icon('shield', 22)),
+            el('span', { class: 'tf-head-ic' }, icon('lock', 22)),
             el('h3', {}, 'Zwei-Faktor'), badge);
         if (state.user.totp_enabled) {
             let remaining = null;
@@ -6457,7 +6935,7 @@ import { createRevenueChart } from './revenue-chart.js';
             }
         }
         if (isAdmin()) colB.append(el('div', { class: 'card admin-links' }, el('h3', {}, 'Betrieb verwalten'),
-            ...[['users', 'Benutzer & Rollen'], ['billing', 'Rechnungs-Einstellungen'], ['backup', 'Sicherungen'], ['audit', 'Änderungsverlauf']]
+            ...[['users', 'Benutzer'], ['billing', 'Rechnungs-Einstellungen'], ['backup', 'Backup'], ['audit', 'Audit-Log']]
                 .map(([route, label]) => el('a', { href: '#/' + route }, label, el('span', { 'aria-hidden': 'true' }, '›')))));
     };
     function shortUA(ua) {
@@ -6563,6 +7041,16 @@ import { createRevenueChart } from './revenue-chart.js';
             .then(() => toast(okMsg, 'success'))
             .catch(() => toast('Kopieren fehlgeschlagen', 'error'));
     }
+    // Terminal-Schritt mit Kopierknopf: Befehle sollen nicht abgetippt werden muessen.
+    function copyCmd(text, cls = '') {
+        return el('span', { class: 'copy-cmd' }, el('code', { class: cls }, text),
+            el('button', { class: 'btn btn-ghost btn-sm copy-btn', type: 'button', title: 'Kopieren', 'aria-label': 'Kopieren: ' + text,
+                onclick: () => copyToClipboard(text, 'Kopiert') }, icon('copy', 14)));
+    }
+    // Kontextlink in den passenden Handbuch-Abschnitt (#/help?s=…).
+    function helpLink(heading, label) {
+        return el('a', { class: 'help-link', href: '#/help?s=' + encodeURIComponent(helpSlug(heading)) }, icon('book', 14), el('span', {}, label + ' ›'));
+    }
     async function disable2FA() {
         await formModal({
             title: '2FA deaktivieren', submitLabel: 'Deaktivieren',
@@ -6597,7 +7085,7 @@ import { createRevenueChart } from './revenue-chart.js';
         catch (e) { toast(e.message, 'error'); }
     }
     async function revokeOthers() {
-        if (!await confirmDialog('Andere Sitzungen abmelden?', 'Alle anderen Geräte werden abgemeldet.', 'Abmelden')) return;
+        if (!await confirmDialog('Andere Sitzungen abmelden?', 'Alle anderen Geräte werden abgemeldet.', 'Abmelden', { tone: 'neutral' })) return;
         try { await api.post('/auth/sessions/revoke-others'); toast('Andere Sitzungen abgemeldet', 'success'); render(); }
         catch (e) { toast(e.message, 'error'); }
     }
@@ -6836,7 +7324,8 @@ import { createRevenueChart } from './revenue-chart.js';
         const now = new Date();
         const [y, m] = calMonth ? calMonth.split('-').map(Number) : [now.getFullYear(), now.getMonth() + 1];
         const first = new Date(y, m - 1, 1);
-        const label = first.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+        // Monatsnamen oesterreichisch (Jänner); Zahlen und Betraege bleiben de-DE.
+        const label = first.toLocaleDateString('de-AT', { month: 'long', year: 'numeric' });
 
         page.innerHTML = '';
         const nav = (d) => { const t = new Date(y, m - 1 + d, 1); calMonth = t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0'); render(); };
@@ -6868,20 +7357,23 @@ import { createRevenueChart } from './revenue-chart.js';
         // Ereignisse je Tag einsammeln (nur dieser Monat).
         const inMonth = (iso) => iso && iso.slice(0, 7) === (y + '-' + String(m).padStart(2, '0'));
         const byDay = {};
-        const add = (iso, kind, text, href) => {
+        // prefix + name: das Raster zeigt den Namen (die Art tragen Farbe und Symbol),
+        // Tooltip, Screenreader und Terminliste lesen beides.
+        const CAL_ICON = { pickup: 'key', reserve: 'pin', due: 'euro', wish: 'mail' };
+        const add = (iso, kind, prefix, name, href) => {
             if (!inMonth(iso)) return;
             const d = Number(iso.slice(8, 10));
-            (byDay[d] = byDay[d] || []).push({ kind, text, href });
+            (byDay[d] = byDay[d] || []).push({ kind, prefix, name, text: prefix + name, href });
         };
         vehicles.forEach((v) => {
             const who = v.label || v.category_name || 'Gefährt';
-            if (v.status !== 'cancelled') add(v.end_date, 'pickup', 'Abholung: ' + who, '#/vehicles/' + v.id);
-            add(v.reserved_from, 'reserve', 'Reservierung: ' + who, '#/vehicles/' + v.id);
+            if (v.status !== 'cancelled') add(v.end_date, 'pickup', 'Abholung: ', who, '#/vehicles/' + v.id);
+            add(v.reserved_from, 'reserve', 'Reservierung: ', who, '#/vehicles/' + v.id);
         });
-        (overdue || []).forEach((iv) => add(iv.due_on, 'due', 'Fällig: Rechnung ' + iv.number, '#/invoices/' + iv.id));
+        (overdue || []).forEach((iv) => add(iv.due_on, 'due', 'Fällig: ', 'Rechnung ' + iv.number, '#/invoices/' + iv.id));
         (requests || []).filter((r) => r.status === 'offen' && r.kind === 'pickup').forEach((r) => {
             const pl = asObj(r.payload);
-            add(pl.date, 'wish', 'Abholwunsch: ' + r.person_name, '#/person/' + r.person_id);
+            add(pl.date, 'wish', 'Abholwunsch: ', r.person_name, '#/person/' + r.person_id);
         });
 
         // Monatsraster: Mo-So, fuehrende Leerzellen aus dem Wochentag des Ersten.
@@ -6894,14 +7386,16 @@ import { createRevenueChart } from './revenue-chart.js';
         for (let d = 1; d <= days; d++) {
             const cell = el('div', { class: 'cal-cell' + (d === today ? ' today' : ''), role: 'group', 'aria-label': d + '. ' + label },
                 el('span', { class: 'cal-day' }, String(d)));
+            // Name zuerst: "Abholung: Demo …" schnitt genau das Nuetzliche ab.
             (byDay[d] || []).forEach((ev) => cell.append(
-                el('a', { class: 'cal-ev cal-' + ev.kind, href: ev.href, title: ev.text }, ev.text)));
+                el('a', { class: 'cal-ev cal-' + ev.kind, href: ev.href, title: ev.text },
+                    icon(CAL_ICON[ev.kind], 12), el('span', { class: 'sr-only' }, ev.prefix), ev.name)));
             grid.append(cell);
         }
         const agenda = el('div', { class: 'cal-agenda' });
         const eventDays = Object.keys(byDay).map(Number).sort((a, b) => a - b);
         eventDays.forEach(day => {
-            const date = new Date(y, m - 1, day).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+            const date = new Date(y, m - 1, day).toLocaleDateString('de-AT', { weekday: 'long', day: 'numeric', month: 'long' });
             const items = el('ul', {});
             byDay[day].forEach(ev => items.append(el('li', {}, el('a', { class: 'cal-agenda-link cal-' + ev.kind, href: ev.href }, ev.text))));
             agenda.append(el('section', { class: 'cal-agenda-day' }, el('h3', {}, date), items));
@@ -6918,31 +7412,78 @@ import { createRevenueChart } from './revenue-chart.js';
         calendarHead.append(views);
         page.append(grid, agenda);
         page.append(el('div', { class: 'cal-legend muted' },
-            el('span', { class: 'cal-ev cal-pickup' }, 'Abholung'), ' ',
-            el('span', { class: 'cal-ev cal-reserve' }, 'Reservierung'), ' ',
-            el('span', { class: 'cal-ev cal-due' }, 'Fällige Rechnung'), ' ',
-            el('span', { class: 'cal-ev cal-wish' }, 'Abholwunsch (Portal)')));
+            el('span', { class: 'cal-ev cal-pickup' }, icon(CAL_ICON.pickup, 12), 'Abholung'), ' ',
+            el('span', { class: 'cal-ev cal-reserve' }, icon(CAL_ICON.reserve, 12), 'Reservierung'), ' ',
+            el('span', { class: 'cal-ev cal-due' }, icon(CAL_ICON.due, 12), 'Fällige Rechnung'), ' ',
+            el('span', { class: 'cal-ev cal-wish' }, icon(CAL_ICON.wish, 12), 'Abholwunsch (Portal)')));
     };
 
     routes.garages = async (page) => {
-        const garages = await api.get('/garages');
+        const [garages, unplaced] = await Promise.all([api.get('/garages'),
+            canManage() ? api.get('/vehicles/unassigned').catch(() => []) : Promise.resolve([])]);
+        // Hallen je Garage fuer die Belegungs-Miniaturen. Der Start des Planer-Reiters
+        // war eine Namensliste mit "Hallen öffnen": keine Belegung, kein Grundriss.
+        const hallsOf = await Promise.all(garages.map((g) => (g.hall_count ? api.get('/garages/' + g.id + '/halls').catch(() => []) : Promise.resolve([]))));
         page.innerHTML = '';
         const head = el('div', { class: 'page-head' }, el('h2', {}, 'Stellplätze'));
-        if (canManage()) head.append(el('button', { class: 'btn btn-primary btn-sm', onclick: () => garageForm() }, '+ Garage'));
+        if (canManage()) head.append(el('button', { class: 'btn btn-primary btn-sm btn-add', onclick: () => garageForm() }, '+ Garage'));
         page.append(head);
         if (!garages.length) { page.append(emptyState('box', 'Noch keine Garage. Lege zuerst eine Garage an und füge anschließend ihre Hallen hinzu.')); return; }
+        // Direkter Einstieg fuer den haeufigsten Auftrag: Gefaehrte ohne Platz einplanen.
+        if (unplaced.length && hallsOf.some((hs) => hs.length)) {
+            const n = unplaced.length;
+            page.append(el('div', { class: 'card unplaced-cta' },
+                el('span', {}, el('b', {}, n + (n === 1 ? ' Gefährt' : ' Gefährte')), n === 1 ? ' ist noch nicht platziert.' : ' sind noch nicht platziert.'),
+                el('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => placeInPlan(null) }, icon('pin', 15), ' Im Plan platzieren')));
+        }
         const list = el('div', { class: 'storage-list' });
-        garages.forEach((g) => list.append(el('div', { class: 'card' },
-            el('div', { class: 'card-row' },
-                el('div', { style: 'flex:1' },
-                    el('h3', {}, el('a', { class: 'record-link', href: '#/garage/' + g.id }, g.name)),
-                    el('div', { class: 'card-meta' }, (g.hall_count || 0) + (g.hall_count === 1 ? ' Halle' : ' Hallen'))),
-                el('div', { class: 'card-actions' },
-                    el('a', { class: 'btn btn-ghost btn-sm', href: '#/garage/' + g.id, 'aria-label': g.name + ' öffnen' }, 'Hallen öffnen'),
-                    canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Umbenennen', onclick: () => garageForm(g) }, icon('edit')),
-                    canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Löschen', onclick: (e) => delGarage(g, e.currentTarget.closest('.card')) }, icon('trash')))))));
+        garages.forEach((g, gi) => {
+            const halls = hallsOf[gi] || [];
+            const card = el('div', { class: 'card card-link' },
+                el('div', { class: 'card-row' },
+                    el('div', { style: 'flex:1' },
+                        el('h3', {}, el('a', { class: 'record-link', href: '#/garage/' + g.id }, g.name)),
+                        el('div', { class: 'card-meta' }, (g.hall_count || 0) + (g.hall_count === 1 ? ' Halle' : ' Hallen'))),
+                    el('div', { class: 'card-actions' },
+                        canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Umbenennen', 'aria-label': g.name + ' umbenennen', onclick: () => garageForm(g) }, icon('edit')),
+                        canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Löschen', 'aria-label': g.name + ' löschen', onclick: (e) => delGarage(g, e.currentTarget.closest('.card')) }, icon('trash'))),
+                    cardChev()));
+            if (halls.length) {
+                const minis = el('div', { class: 'hall-minis' });
+                halls.forEach((hl) => minis.append(hallMini(hl)));
+                card.append(minis);
+            } else card.append(el('p', { class: 'card-meta hall-minis-empty' }, 'Noch keine Halle angelegt.'));
+            list.append(card);
+        });
         page.append(list);
     };
+    // Kleine Belegungsansicht einer Halle: Grundriss und platzierte Gefaehrte, ein
+    // direkter Link in den Planer. Die Plaene kommen nach (je Halle ein Aufruf), damit
+    // die Seite nicht auf alle wartet; ohne Plan bleibt der Grundriss stehen.
+    function hallMini(hl) {
+        const n = hl.spot_count || 0;
+        const svg = svgEl('svg', { class: 'hall-mini-plan', viewBox: '0 0 120 72', role: 'img',
+            'aria-label': 'Grundriss ' + hl.name + ': ' + n + (n === 1 ? ' Gefährt' : ' Gefährte') + ' platziert' });
+        const link = el('a', { class: 'hall-mini', href: '#/hall/' + hl.id },
+            svg, el('span', { class: 'hall-mini-txt' }, el('b', {}, hl.name), el('span', {}, n + (n === 1 ? ' Gefährt' : ' Gefährte'))));
+        const geo = asObj(hl.geometry);
+        const Wm = num(geo.Wm, 14), Hm = num(geo.Hm, 9);
+        const floor = Array.isArray(geo.floor) && geo.floor.length >= 3 ? geo.floor.map((p) => [num(p[0], 0), num(p[1], 0)]) : gpShape(geo.shape || 'rect', Wm, Hm);
+        const xs = floor.map((p) => p[0]), ys = floor.map((p) => p[1]);
+        const x0 = Math.min(...xs), y0 = Math.min(...ys);
+        const w = (Math.max(...xs) - x0) || 1, h = (Math.max(...ys) - y0) || 1;
+        const k = Math.min(112 / w, 64 / h), ox = (120 - w * k) / 2, oy = (72 - h * k) / 2;
+        const pt = ([x, y]) => (ox + (x - x0) * k).toFixed(1) + ',' + (oy + (y - y0) * k).toFixed(1);
+        svg.append(svgEl('polygon', { class: 'hall-mini-floor', points: floor.map(pt).join(' ') }));
+        if (n) api.get('/halls/' + hl.id + '/plan').then((plan) => {
+            for (const s of (plan && plan.spots) || []) {
+                const g = asObj(s.geometry);
+                const b = { x: num(g.x, 1), y: num(g.y, 1), w: num(g.w, s.length_m || catFoot(s.vehicle_type)[0]), h: num(g.h, s.width_m || catFoot(s.vehicle_type)[1]), rot: num(g.rot, 0) };
+                svg.append(svgEl('polygon', { class: 'hall-mini-veh', points: quad(b).map(pt).join(' ') }));
+            }
+        }).catch(() => { /* Miniatur ist Zusatz */ });
+        return link;
+    }
     async function garageForm(g) {
         await formModal({ title: g ? 'Garage umbenennen' : 'Neue Garage', submitLabel: 'Speichern',
             fields: [{ name: 'name', label: 'Name', required: true, value: g ? g.name : '' }],
@@ -6971,15 +7512,15 @@ import { createRevenueChart } from './revenue-chart.js';
         const list = el('div', { class: 'storage-list hall-list' });
         halls.forEach((hl) => {
             const geo = asObj(hl.geometry); const area = (geo.floor && geo.floor.length >= 3) ? polyArea(geo.floor) : 0;
-            list.append(el('div', { class: 'card' },
+            list.append(el('div', { class: 'card card-link' },
                 el('div', { class: 'card-row' },
                     el('div', { style: 'flex:1' },
                         el('h3', {}, el('a', { class: 'record-link', href: '#/hall/' + hl.id }, hl.name)),
                         el('div', { class: 'card-meta' }, (hl.spot_count || 0) + (hl.spot_count === 1 ? ' Gefährt' : ' Gefährte') + (area ? ' · ' + Math.round(area).toLocaleString('de-DE') + ' m²' : ''))),
                     el('div', { class: 'card-actions' },
-                        el('button', { class: 'btn btn-ghost btn-sm', onclick: () => navigate('hall/' + hl.id) }, 'Planer ›'),
-                        canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Umbenennen', onclick: () => hallForm(id, hl) }, icon('edit')),
-                        canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Löschen', onclick: (e) => delHall(hl, e.currentTarget.closest('.card')) }, icon('trash'))))));
+                        canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Umbenennen', 'aria-label': hl.name + ' umbenennen', onclick: () => hallForm(id, hl) }, icon('edit')),
+                        canManage() && el('button', { class: 'btn btn-ghost btn-sm', title: 'Löschen', 'aria-label': hl.name + ' löschen', onclick: (e) => delHall(hl, e.currentTarget.closest('.card')) }, icon('trash'))),
+                    cardChev())));
         });
         page.append(list);
     };
@@ -7000,6 +7541,8 @@ import { createRevenueChart } from './revenue-chart.js';
     // ---- the planner ----
     routes.hall = async (page, id) => {
         const data = await api.get('/halls/' + id + '/plan');
+        // Zuletzt geoeffnete Halle: Vorbelegung, wenn "Im Plan platzieren" fragen muss.
+        try { localStorage.setItem('parkrr-last-hall', String(id)); } catch (e) { /* storage blocked */ }
         const [palette, halls, plannerIcons] = await Promise.all([api.get('/vehicles/unassigned'), api.get('/garages/' + data.hall.garage_id + '/halls'), api.get('/planner-icons').catch(() => [])]);
         const geo = asObj(data.hall.geometry);
         const Wm = num(geo.Wm, 14), Hm = num(geo.Hm, 9);
@@ -7101,19 +7644,30 @@ import { createRevenueChart } from './revenue-chart.js';
         // never hidden behind a Fahrstraße/Wartung/Stütze block (which paint over the base SVG).
         const labelSvg = svgEl('svg', { class: 'gp-labels' });
         const planEl = el('div', { class: 'gp-plan' }, svg, layer, labelSvg);
-        const planWrap = el('div', { class: 'gp-planwrap' }, planEl);
+        // Fokussierbar, damit der scrollbare Plan auch per Tastatur (Pfeiltasten)
+        // erreichbar ist — axe: scrollable-region-focusable.
+        const planWrap = el('div', { class: 'gp-planwrap', tabindex: '0', role: 'region', 'aria-label': 'Hallenplan' }, planEl);
+        // Tippen statt Ziehen: Hinweiszeile über dem Plan, solange ein Gefährt "bereit" ist.
+        const armBar = el('div', { class: 'gp-armbar', role: 'status', hidden: true });
         const canvas = el('div', { class: 'gp-canvas card' },
-            el('div', { class: 'gp-canvas-top' }, ctitle, el('span', { class: 'gp-spacer' }), toolbar), metrics, planWrap);
+            el('div', { class: 'gp-canvas-top' }, ctitle, el('span', { class: 'gp-spacer' }), toolbar), metrics, armBar, planWrap);
 
         // rail
         const rail = el('div', { class: 'gp-rail' });
         const stage = el('div', { class: 'gp-stage' }, canvas, rail);
-        const plannerGuide = el('details', { class: 'planner-guide' }, el('summary', {}, 'Bedienung & Speichern'),
-            el('p', {}, 'Stellplätze: Gefährt auswählen und im Plan platzieren. Gültige Platzierungen werden direkt gespeichert. Im Garagenplaner den Grundriss bearbeiten und mit „Speichern“ übernehmen.'));
+        // Die zwei Speicherwege stehen schon in der Zusammenfassung — vorher nur im
+        // zugeklappten Text, und wer den Grundriss änderte, verlor ihn beim Wechsel.
+        const plannerGuide = el('details', { class: 'planner-guide' }, el('summary', {}, 'Bedienung & Speichern',
+            el('span', { class: 'planner-guide-hint' }, 'Gültige Platzierungen speichern sofort · Grundriss mit „Speichern“')),
+            el('p', {}, 'Stellplätze: Gefährt in „Nicht platziert“ antippen (oder Enter) und dann die Fläche antippen – oder es auf die Fläche ziehen. Gültige Platzierungen werden direkt gespeichert. Im Garagenplaner den Grundriss bearbeiten und mit „Speichern“ übernehmen.'));
         root.append(appbar, plannerGuide, stage);
 
         // Transparent capture layer for interactive wall drawing / node editing (plan mode).
         const drawOverlay = el('div', { class: 'gp-drawoverlay' }); drawOverlay.style.display = 'none'; planEl.append(drawOverlay);
+        // Vorschau des "bereit" gewählten Gefährts; liegt in planEl, weil draw() die Blockebene leert.
+        const armPrev = el('div', { class: 'gp-preview gp-armprev', hidden: true, 'aria-hidden': 'true' }, el('span', { class: 'gp-pl' }));
+        planEl.append(armPrev);
+        let armed = null; // { p, x, y, w, h } — Gefährt aus "Nicht platziert", wartet auf den Ablageort
         let nodeDrag = null, opDrag = null, zoneDrag = null, zoneDraw = null;
         // FE4 — multi-select of the CURRENT subsystem's objects only: zones in the Garagenmanager
         // (plan), vehicles in the Stellplatzsystem (manage) — mirroring interactive(b). selSet holds
@@ -7375,6 +7929,17 @@ import { createRevenueChart } from './revenue-chart.js';
         const keyHandler = (e) => {
             if (!root.isConnected) { window.removeEventListener('keydown', keyHandler); return; }
             const m = e.ctrlKey || e.metaKey, tag = (e.target.tagName || '').toLowerCase(), typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
+            // Bereit gewähltes Gefährt: Pfeile verschieben die Vorschau (⇧ = 0,1 m), Enter legt ab, Esc bricht ab.
+            if (armed && !typing && !m && !e.altKey) {
+                const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+                if (dir) {
+                    e.preventDefault();
+                    const st = e.shiftKey ? 0.1 : ((P.snap && P.gridStep) ? P.gridStep : 0.5);
+                    armed.x = round2(armed.x + dir[0] * st); armed.y = round2(armed.y + dir[1] * st); updateArm(); return;
+                }
+                if (e.key === 'Enter') { e.preventDefault(); commitArmed(); return; }
+                if (e.key === 'Escape') { e.preventDefault(); disarm(); return; }
+            }
             if (m && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); }
             else if (m && e.key.toLowerCase() === 'y') { e.preventDefault(); doRedo(); }
             else if (m && !typing && e.key.toLowerCase() === 'c' && P.mode === 'plan' && canManageNow && (selSet.length || P.sel != null)) { e.preventDefault(); copySel(); } // Strg+C = Auswahl kopieren
@@ -7526,7 +8091,7 @@ import { createRevenueChart } from './revenue-chart.js';
             const modal = el('div', { class: 'gp-help-backdrop', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Exportieren' });
             const card = el('div', { class: 'gp-help-card', style: 'max-width:320px' });
             const list = el('div', { style: 'display:flex;flex-direction:column;gap:.4rem;padding:16px 18px' });
-            card.append(el('div', { class: 'gp-help-head' }, el('h3', {}, '⭳ Exportieren'), el('button', { class: 'gp-help-x', 'aria-label': 'Schließen', onclick: () => close() }, icon('close', 16))));
+            card.append(el('div', { class: 'gp-help-head' }, el('h3', { class: 'gp-help-title' }, icon('download', 16), ' Exportieren'), el('button', { class: 'gp-help-x', 'aria-label': 'Schließen', onclick: () => close() }, icon('close', 16))));
             opts.forEach(([lab, fn]) => list.append(el('button', { class: 'gp-tbtn', style: 'justify-content:flex-start', onclick: () => { close(); fn(); } }, lab)));
             card.append(list); modal.append(card); (root || document.body).append(modal);
             const close = wireDialog(modal, card);
@@ -7589,14 +8154,14 @@ import { createRevenueChart } from './revenue-chart.js';
             await fetchTemplates();
             const modal = el('div', { class: 'gp-help-backdrop', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Wand-Vorlagen' });
             const card = el('div', { class: 'gp-help-card', style: 'max-width:380px' });
-            card.append(el('div', { class: 'gp-help-head' }, el('h3', {}, '▤ Wand-Vorlagen'), el('button', { class: 'gp-help-x', 'aria-label': 'Schließen', onclick: () => close() }, icon('close', 16))));
+            card.append(el('div', { class: 'gp-help-head' }, el('h3', { class: 'gp-help-title' }, icon('layers', 16), ' Wand-Vorlagen'), el('button', { class: 'gp-help-x', 'aria-label': 'Schließen', onclick: () => close() }, icon('close', 16))));
             const body = el('div', { style: 'display:flex;flex-direction:column;gap:.45rem;padding:16px 18px' });
             body.append(el('button', { class: 'gp-tbtn', style: 'justify-content:flex-start', onclick: () => { close(); saveCurrentTemplate(); } }, '＋ Aktuelle Wände als Vorlage speichern'));
             const tpls = loadTemplates();
-            if (!tpls.length) body.append(el('div', { class: 'muted', style: 'font-size:.82rem;padding:.3rem 0' }, 'Noch keine Vorlagen. Zeichne Wände und speichere sie hier.'));
+            if (!tpls.length) body.append(el('div', { class: 'muted', style: 'font-size:var(--text-base);padding:.3rem 0' }, 'Noch keine Vorlagen. Zeichne Wände und speichere sie hier.'));
             tpls.forEach((t) => {
                 const row = el('div', { style: 'display:flex;gap:.4rem;align-items:center' });
-                row.append(el('button', { class: 'gp-tbtn', style: 'flex:1;justify-content:flex-start', onclick: () => { close(); applyTemplate(t); } }, '▤ ' + t.name + ' · ' + (t.walls && t.walls.edges ? t.walls.edges.length : 0) + ' Wände'));
+                row.append(el('button', { class: 'gp-tbtn', style: 'flex:1;justify-content:flex-start', onclick: () => { close(); applyTemplate(t); } }, icon('layers', 14), ' ' + t.name + ' · ' + (t.walls && t.walls.edges ? t.walls.edges.length : 0) + ' Wände'));
                 row.append(el('button', { class: 'gp-help-x', title: 'Löschen', 'aria-label': 'Vorlage löschen', onclick: async () => { await deleteTemplate(t); close(); openTemplateMenu(); } }, icon('trash', 15)));
                 body.append(row);
             });
@@ -7693,6 +8258,7 @@ import { createRevenueChart } from './revenue-chart.js';
             occN.textContent = used + (used === 1 ? ' Gefährt' : ' Gefährte');
             const tot = polyArea(P.floor); let ve = 0; P.spots.forEach((b) => { ve += b.w * b.h; });
             occBar.style.width = Math.round(Math.min(100, ve / Math.max(1, tot) * 100)) + '%';
+            updateArm();
         }
         function drawFloor() {
             svg.innerHTML = '';
@@ -8546,7 +9112,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 m(Math.round(ve) + ' m²', 'Belegt · ' + P.spots.length, 'busy'),
                 m(Math.round(zoneA + colA) + ' m²', 'Ausgenommen', 'excl'),
                 m(fw.toFixed(1).replace('.', ',') + '×' + fh.toFixed(1).replace('.', ',') + ' m', el('span', {}, 'Halle · ' + Math.round(total) + ' ', el('span', { class: 'gp-unit' }, 'm²'))),
-                m(polyPerim(P.floor).toFixed(1) + ' m', 'Umfang'));
+                m(polyPerim(P.floor).toFixed(1).replace('.', ',') + ' m', 'Umfang'));
             if (enc && enc.area > 0.3) { const nr = (enc.rooms || []).length; metrics.append(m(enc.area.toFixed(1).replace('.', ',') + ' m²', 'Parkfläche' + (nr > 1 ? ' · ' + nr + ' Räume' : ' · Wände'), 'ok')); } // 1 decimal, matching the plan label (S1-D)
         }
 
@@ -8561,51 +9127,60 @@ import { createRevenueChart } from './revenue-chart.js';
                 if (on !== undefined) attrs['aria-pressed'] = String(!!on);
                 return el('button', attrs, label);
             };
-            const undoB = tb('↶', 'Rückgängig (Strg+Z)', doUndo); undoB.disabled = P.hpos <= 0;
-            const redoB = tb('↷', 'Wiederholen (Strg+Umschalt+Z)', doRedo); redoB.disabled = P.hpos >= P.hist.length - 1;
+            // Symbole aus dem App-Satz statt Unicode-Zeichen (↶ ↷ ◈ ▣ ▭ ⤢ ⭳ ▤ ⊾): dieselbe
+            // Strichstaerke wie ueberall, unabhaengig von der Schrift des Geraets.
+            const tbLabel = (ic, text) => el('span', { class: 'gp-tlabel' }, icon(ic, 15), text ? ' ' + text : null);
+            const undoB = tb(icon('undo', 15), 'Rückgängig (Strg+Z)', doUndo); undoB.disabled = P.hpos <= 0;
+            const redoB = tb(icon('redoStep', 15), 'Wiederholen (Strg+Umschalt+Z)', doRedo); redoB.disabled = P.hpos >= P.hist.length - 1;
             toolbar.append(undoB, redoB);
-            if (canManageNow && P.mode === 'plan') toolbar.append(tb('⊾ 90°', 'Rechtwinklig einrasten', () => { P.ortho = !P.ortho; renderToolbar(); toast(P.ortho ? 'Rechtwinklig an' : 'Rechtwinklig aus'); }, P.ortho));
+            if (canManageNow && P.mode === 'plan') toolbar.append(tb(tbLabel('rightAngle', '90°'), 'Rechtwinklig einrasten', () => { P.ortho = !P.ortho; renderToolbar(); toast(P.ortho ? 'Rechtwinklig an' : 'Rechtwinklig aus'); }, P.ortho));
             // Snap selector: free, or snap every ¼ / ½ / 1 m (applies to floor edits
             // and block moves alike).
             const seg = el('div', { class: 'gp-seg', title: 'Raster: freie Abstände oder feste Schrittweite' });
-            seg.append(el('button', { class: !P.snap ? 'on' : '', onclick: () => { P.snap = false; renderToolbar(); } }, 'Frei'));
-            [['0,1 m', 0.1], ['¼ m', 0.25], ['½ m', 0.5], ['1 m', 1]].forEach(([lab, step]) => seg.append(el('button', { class: (P.snap && P.gridStep === step) ? 'on' : '', onclick: () => { P.snap = true; P.gridStep = step; renderToolbar(); } }, lab)));
+            // aria-pressed: die Auswahl war bisher nur an der Farbe erkennbar.
+            seg.append(el('button', { class: !P.snap ? 'on' : '', 'aria-pressed': String(!P.snap), 'aria-label': 'Raster frei', onclick: () => { P.snap = false; renderToolbar(); } }, 'Frei'));
+            [['0,1 m', 0.1, '0,1 Meter'], ['¼ m', 0.25, 'Viertelmeter'], ['½ m', 0.5, 'Halbmeter'], ['1 m', 1, '1 Meter']].forEach(([lab, step, spoken]) => { const on = P.snap && P.gridStep === step; seg.append(el('button', { class: on ? 'on' : '', 'aria-pressed': String(on), 'aria-label': 'Raster ' + spoken, onclick: () => { P.snap = true; P.gridStep = step; renderToolbar(); } }, lab)); });
             toolbar.append(seg);
             // Auto-Snap: objects fang flush against each other (in addition to the floor line).
-            if (canManageNow) toolbar.append(tb(icon('magnet', 15), 'Auto-Snap: Objekte fangen aneinander', () => { P.autoSnap = !P.autoSnap; renderToolbar(); toast(P.autoSnap ? 'Auto-Snap an' : 'Auto-Snap aus'); }, P.autoSnap));
-            if (canManageNow) toolbar.append(tb(icon('shield', 15), 'Pufferzonen zwischen Fahrzeugen (Taste P)', () => { P.buffer = !P.buffer; renderToolbar(); draw(); toast(P.buffer ? 'Pufferzonen an · ' + P.bufferM.toFixed(1).replace('.', ',') + ' m' : 'Pufferzonen aus'); }, P.buffer));
-            if (canManageNow) toolbar.append(tb(icon('car', 15), P.allowBlocking ? 'Zuparken erlaubt: Auto-Anordnen nutzt jeden m² (kein Auspark-Pfad-Check)' : 'Auspark-Pfad garantiert: kein Gefährt wird zugeparkt (Fahrstraße/Tor nötig)', () => { P.allowBlocking = !P.allowBlocking; renderToolbar(); toast(P.allowBlocking ? 'Zuparken erlaubt (max. Auslastung)' : 'Auspark-Pfad garantiert'); }, P.allowBlocking));
+            if (canManageNow) toolbar.append(tb(icon('magnet', 15), 'Auto-Snap: Objekte fangen aneinander', () => { P.autoSnap = !P.autoSnap; renderToolbar(); toast(P.autoSnap ? 'Auto-Snap an' : 'Auto-Snap aus'); }, P.autoSnap, 'gp-rare'));
+            if (canManageNow) toolbar.append(tb(icon('spacing', 15), 'Pufferzonen zwischen Fahrzeugen (Taste P)', () => { P.buffer = !P.buffer; renderToolbar(); draw(); toast(P.buffer ? 'Pufferzonen an · ' + P.bufferM.toFixed(1).replace('.', ',') + ' m' : 'Pufferzonen aus'); }, P.buffer, 'gp-rare'));
+            if (canManageNow) toolbar.append(tb(icon('exitPath', 15), P.allowBlocking ? 'Zuparken erlaubt: Auto-Anordnen nutzt jeden m² (kein Auspark-Pfad-Check)' : 'Auspark-Pfad garantiert: kein Gefährt wird zugeparkt (Fahrstraße/Tor nötig)', () => { P.allowBlocking = !P.allowBlocking; renderToolbar(); toast(P.allowBlocking ? 'Zuparken erlaubt (max. Auslastung)' : 'Auspark-Pfad garantiert'); }, P.allowBlocking, 'gp-rare'));
             if (canManageNow && P.mode === 'plan') toolbar.append(tb(icon('ruler', 15), 'Messen: Punkt A klicken, Punkt B klicken (Distanz + Winkel). Fängt an Wand-Ecken und -Kanten (Rand); ⇧ oder achsennah = waagrecht/senkrecht. Nochmal klicken = neu.', () => setTool(P.tool === 'measure' ? null : 'measure'), P.tool === 'measure'));
             // Adjustable buffer distance (vehicle↔vehicle), shown only while buffers are on. 0.5 m steps,
             // 0–5 m. draw() re-runs the bands + collision uses P.bufferM live. Session-only, like the toggle.
-            if (canManageNow && P.buffer) { const bseg = el('div', { class: 'gp-seg', title: 'Pufferdistanz zwischen Fahrzeugen' });
+            if (canManageNow && P.buffer) { const bseg = el('div', { class: 'gp-seg gp-rare', title: 'Pufferdistanz zwischen Fahrzeugen' });
                 const setBuf = (d) => { P.bufferM = Math.max(0, Math.min(5, +(P.bufferM + d).toFixed(1)));
                     P.spots.forEach((s) => { s._invalid = !validVeh(s, s._id); }); // re-flag vehicles now too close under the new clearance
                     draw(); toast('Puffer ' + P.bufferM.toFixed(1).replace('.', ',') + ' m'); }; // draw() re-renders the toolbar; toast announces the value (a11y)
                 bseg.append(
                     el('button', { title: 'Weniger Puffer', onclick: () => setBuf(-0.5) }, '−'),
-                    el('span', { style: 'padding:0 .4rem;min-width:3rem;text-align:center;color:var(--gpink);font-size:.76rem;font-weight:600', 'aria-live': 'polite' }, P.bufferM.toFixed(1).replace('.', ',') + ' m'),
+                    el('span', { style: 'padding:0 .4rem;min-width:3rem;text-align:center;color:var(--gpink);font-size:var(--text-sm);font-weight:600', 'aria-live': 'polite' }, P.bufferM.toFixed(1).replace('.', ',') + ' m'),
                     el('button', { title: 'Mehr Puffer', onclick: () => setBuf(0.5) }, '+'));
                 toolbar.append(bseg); }
             // Vehicle display mode (client-side preference, remembered): symbol / photo / rectangle.
             if (P.mode === 'manage') { const dseg = el('div', { class: 'gp-seg', title: 'Fahrzeug-Darstellung' });
-                [['◈', 'symbol', 'Symbol'], ['▣', 'foto', 'Foto'], ['▭', 'rect', 'Rechteck']].forEach(([ic, key, t]) => dseg.append(el('button', { class: P.render === key ? 'on' : '', title: t, onclick: () => { P.render = key; try { localStorage.setItem('gp.render', key); } catch (e) { /* private mode */ } renderToolbar(); draw(); } }, ic)));
+                [['car', 'symbol', 'Symbol'], ['image', 'foto', 'Foto'], ['square', 'rect', 'Rechteck']].forEach(([ic, key, t]) => dseg.append(el('button', { class: P.render === key ? 'on' : '', title: t, 'aria-label': 'Darstellung ' + t, 'aria-pressed': String(P.render === key), onclick: () => { P.render = key; try { localStorage.setItem('gp.render', key); } catch (e) { /* private mode */ } renderToolbar(); draw(); } }, icon(ic, 15))));
                 toolbar.append(dseg); }
             // Manage custom planner icons (upload / rename / replace / delete) — placed on
             // the toolbar so it's reachable without first selecting a vehicle.
-            if (canManageNow && P.mode === 'manage') toolbar.append(tb(el('span', {}, icon('image', 15), ' Icons'), 'Eigene Planer-Icons verwalten', async () => { await plannerIconsDialog(); try { P.plannerIcons = await api.get('/planner-icons'); } catch (e) { /* keep old */ } draw(); if (P.sel) renderRail(); }));
+            if (canManageNow && P.mode === 'manage') toolbar.append(tb(el('span', {}, icon('image', 15), ' Icons'), 'Eigene Planer-Icons verwalten', async () => { await plannerIconsDialog(); try { P.plannerIcons = await api.get('/planner-icons'); } catch (e) { /* keep old */ } draw(); if (P.sel) renderRail(); }, undefined, 'gp-rare'));
             if (canManageNow && P.mode === 'manage') { const rb = tb(el('span', {}, icon('rotate', 15), ' Drehen'), 'Auswahl drehen', rotateSel); rb.disabled = !(P.sel && P.spots.find((s) => s._id === P.sel)); toolbar.append(rb); }
-            toolbar.append(tb('−', 'Verkleinern', () => { P.zoom = Math.max(0.5, +(P.zoom - 0.15).toFixed(2)); layout(); }));
-            toolbar.append(el('span', { class: 'gp-zoomlbl' }, Math.round((P.zoom || 1) * 100) + '%'));
-            toolbar.append(tb('+', 'Vergrößern', () => { P.zoom = Math.min(8, +(P.zoom + 0.15).toFixed(2)); layout(); }));
-            toolbar.append(tb('⤢ Passen', 'Einpassen & Raster an die Wände anpassen', () => { fitView(); }));
-            toolbar.append(tb('⭳ Export', 'Als PNG / PDF / SVG / DXF exportieren', () => openExportMenu()));
-            if (canManageNow) toolbar.append(tb('▤ Vorlagen', 'Wand-Layouts speichern & wiederverwenden', () => openTemplateMenu()));
-            toolbar.append(tb('?', 'Tastaturkürzel (Taste ?)', () => toggleShortcutHelp()));
+            toolbar.append(tb('−', 'Verkleinern', () => { P.zoom = Math.max(0.5, +(P.zoom - 0.15).toFixed(2)); layout(); }, undefined, 'gp-rare'));
+            toolbar.append(el('span', { class: 'gp-zoomlbl gp-rare' }, Math.round((P.zoom || 1) * 100) + '%'));
+            toolbar.append(tb('+', 'Vergrößern', () => { P.zoom = Math.min(8, +(P.zoom + 0.15).toFixed(2)); layout(); }, undefined, 'gp-rare'));
+            toolbar.append(tb(tbLabel('maximize', 'Passen'), 'Einpassen & Raster an die Wände anpassen', () => { fitView(); }));
+            toolbar.append(tb(tbLabel('download', 'Export'), 'Als PNG / PDF / SVG / DXF exportieren', () => openExportMenu(), undefined, 'gp-rare'));
+            if (canManageNow) toolbar.append(tb(tbLabel('layers', 'Vorlagen'), 'Wand-Layouts speichern & wiederverwenden', () => openTemplateMenu(), undefined, 'gp-rare'));
+            toolbar.append(tb('?', 'Tastaturkürzel (Taste ?)', () => toggleShortcutHelp(), undefined, 'gp-rare'));
             // Always render the save control (fixed width, centred) so it never appears/disappears
             // and reflows the wrapping toolbar mid-edit — that shift caused mis-clicks. Dirty → an
             // active "● Speichern"; clean → a disabled "✓ Gespeichert" status in the same slot.
             if (canManageNow) { const sv = tb(P.dirty ? '● Speichern' : '✓ Gespeichert', P.dirty ? 'Jetzt speichern (Auto-Save aktiv)' : 'Alle Änderungen gespeichert', () => { if (P.dirty) doSaveGeom(); }, false, P.dirty ? 'btn-primary' : ''); sv.disabled = !P.dirty; sv.style.minWidth = '7.5rem'; sv.style.textAlign = 'center'; toolbar.append(sv); }
+            // Telefon (≤ 900 px): seltene Werkzeuge (gp-rare) liegen hinter „Mehr“, damit der Plan
+            // im ersten Bildschirm beginnt. Am Desktop blendet CSS den Knopf aus und zeigt alles.
+            toolbar.append(tb(P.moreTools ? '× Weniger' : '⋯ Mehr', P.moreTools ? 'Seltene Werkzeuge ausblenden' : 'Weitere Werkzeuge',
+                () => { P.moreTools = !P.moreTools; renderToolbar(); }, !!P.moreTools, 'gp-more'));
+            toolbar.classList.toggle('show-rare', !!P.moreTools);
         }
         function rotateSel() {
             const b = P.spots.find((s) => s._id === P.sel); if (!b) return;
@@ -8760,16 +9335,27 @@ import { createRevenueChart } from './revenue-chart.js';
             return card;
         }
         function vehCard(p) {
-            const c = el('div', { class: 'gp-vehc', title: 'Auf die Fläche ziehen' }); c.dataset.pid = p.id;
+            const isArmed = !!(armed && armed.p.id === p.id);
+            const c = el('div', { class: 'gp-vehc' + (isArmed ? ' is-armed' : ''), title: canManageNow ? 'Antippen oder auf die Fläche ziehen' : '' }); c.dataset.pid = p.id;
+            // Echter Knopf über der ganzen Karte (kein Wrapper: ✎ und „Maße festlegen“ sind
+            // eigene Knöpfe). Maus und Finger laufen über den Zieh-Pfad am Rail (kurzer Tipp
+            // = auswählen); dieser Klick bedient nur die Tastatur (detail === 0).
+            if (canManageNow) {
+                const pick = el('button', { class: 'gp-vpick', type: 'button', 'aria-pressed': String(isArmed),
+                    'aria-label': p.label + (isArmed ? ' ist bereit – Fläche antippen oder Enter' : ' zum Platzieren auswählen') });
+                pick.addEventListener('click', (e) => { if (e.detail !== 0) return; if (isArmed) disarm(); else arm(p, true); });
+                c.append(pick);
+            }
             const hasDims = (p.length_m != null && p.width_m != null && p.height_m != null);
             let dimNode;
-            if (hasDims) dimNode = el('div', { class: 'gp-vdm num' }, p.length_m.toFixed(1) + ' × ' + p.width_m.toFixed(1) + ' × ' + p.height_m.toFixed(1) + ' m' + (p.weight_t != null ? ' · ' + p.weight_t.toFixed(2).replace('.', ',') + ' t' : ''));
+            if (hasDims) dimNode = el('div', { class: 'gp-vdm num' }, [p.length_m, p.width_m, p.height_m].map((n) => n.toFixed(1).replace('.', ',')).join(' × ') + ' m' + (p.weight_t != null ? ' · ' + p.weight_t.toFixed(2).replace('.', ',') + ' t' : ''));
             else if (canManageNow) { dimNode = el('button', { class: 'gp-dimopen' }, 'Maße festlegen →'); dimNode.addEventListener('pointerdown', (e) => e.stopPropagation()); dimNode.addEventListener('click', (e) => { e.stopPropagation(); dimForm({ id: p.id, label: p.label, L: p.length_m, W: p.width_m, H: p.height_m, t: p.weight_t }); }); }
             else dimNode = el('div', { class: 'gp-vdm num' }, 'Maße offen');
             c.append(el('span', { class: 'gp-vic' }, icon('car', 15)),
                 el('div', { style: 'min-width:0' }, el('div', { class: 'gp-vnm' }, p.label, p.type ? el('span', { class: 'gp-chip' }, p.type) : null), dimNode));
+            if (isArmed) c.append(el('span', { class: 'gp-armpill', 'aria-hidden': 'true' }, 'bereit'));
             if (canManageNow) {
-                const ed = el('button', { class: 'gp-vedit', title: 'Maße bearbeiten' }, '✎');
+                const ed = el('button', { class: 'gp-vedit', type: 'button', title: 'Maße bearbeiten', 'aria-label': 'Maße bearbeiten · ' + p.label }, icon('edit', 14));
                 ed.addEventListener('pointerdown', (e) => e.stopPropagation());
                 ed.addEventListener('click', (e) => { e.stopPropagation(); dimForm({ id: p.id, label: p.label, L: p.length_m, W: p.width_m, H: p.height_m, t: p.weight_t }); });
                 c.append(ed);
@@ -8906,14 +9492,14 @@ import { createRevenueChart } from './revenue-chart.js';
         }
         function renderManageRail() {
             rail.append(hallSwitchCard(false));
-            const palCard = el('div', { class: 'gp-rcard card' }, el('h3', {}, 'Nicht platziert', el('span', { class: 'eyebrow' }, P.palette.length + ' · ziehen →')));
+            const palCard = el('div', { class: 'gp-rcard card gp-unplaced' }, el('h3', {}, 'Nicht platziert', el('span', { class: 'eyebrow' }, P.palette.length + (canManageNow ? ' · antippen oder ziehen' : ''))));
             const search = el('input', { class: 'gp-palsearch', type: 'search', placeholder: 'Gefährt suchen…', value: P.palQuery || '' });
             const pal = el('div', { class: 'gp-pal' });
             const fillPal = () => {
                 pal.innerHTML = '';
                 const q = (P.palQuery || '').toLowerCase();
                 const list = P.palette.filter((p) => !q || ((p.label || '') + ' ' + (p.type || '') + ' ' + (p.person_name || '')).toLowerCase().includes(q));
-                if (!list.length) { pal.append(el('div', { class: 'muted', style: 'font-size:.8rem;padding:.3rem' }, P.palette.length ? 'Kein Treffer.' : 'Alle Gefährte sind platziert.')); return; }
+                if (!list.length) { pal.append(el('div', { class: 'muted', style: 'font-size:var(--text-sm);padding:.3rem' }, P.palette.length ? 'Kein Treffer.' : 'Alle Gefährte sind platziert.')); return; }
                 list.forEach((p) => pal.append(vehCard(p)));
             };
             search.addEventListener('input', () => { P.palQuery = search.value; fillPal(); });
@@ -8948,7 +9534,7 @@ import { createRevenueChart } from './revenue-chart.js';
         function renderVehDetail() {
             const el0 = el('div', { class: 'gp-rcard card' });
             const b = P.spots.find((x) => x._id === P.sel);
-            if (!b) { el0.append(el('h3', {}, 'Auswahl'), el('div', { class: 'muted', style: 'font-size:.8rem' }, 'Klick auf ein Gefährt im Plan, oder ein Fahrzeug aus der Liste auf die Fläche ziehen.')); return el0; }
+            if (!b) { el0.append(el('h3', {}, 'Auswahl'), el('div', { class: 'muted', style: 'font-size:var(--text-sm)' }, 'Klick auf ein Gefährt im Plan, oder ein Fahrzeug aus der Liste auf die Fläche ziehen.')); return el0; }
             el0.append(el('h3', {}, (b.type || 'Gefährt') + ' · ' + (b.personName || '')));
             const row = (k, v) => el('div', { class: 'gp-row' }, el('span', { class: 'gp-k' }, k), el('span', { class: 'gp-v num' }, v));
             el0.append(row('Fahrzeug', b.label));
@@ -8985,8 +9571,8 @@ import { createRevenueChart } from './revenue-chart.js';
                     el0.append(pcard);
                 }
                 el0.append(el('div', { class: 'btn-row', style: 'margin-top:.6rem' },
-                    b.vehId ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => dimForm({ id: b.vehId, label: b.label, L: b.L, W: b.W, H: b.H, t: b.t }) }, '✎ Maße') : null,
-                    el('button', { class: 'btn btn-ghost btn-sm', onclick: rotateSel }, '⟳ Drehen'),
+                    b.vehId ? el('button', { class: 'btn btn-ghost btn-sm', onclick: () => dimForm({ id: b.vehId, label: b.label, L: b.L, W: b.W, H: b.H, t: b.t }) }, icon('edit', 14), ' Maße') : null,
+                    el('button', { class: 'btn btn-ghost btn-sm', onclick: rotateSel }, icon('rotate', 14), ' Drehen'),
                     el('button', { class: 'btn btn-ghost btn-sm btn-danger', onclick: () => removeSpot(b) }, 'Entfernen')));
             }
             return el0;
@@ -9016,7 +9602,7 @@ import { createRevenueChart } from './revenue-chart.js';
             toolsCard.append(orow);
             toolsCard.append(el('div', { class: 'gp-addrow', style: 'margin-top:.4rem' },
                 el('button', { class: 'btn btn-sm gp-toggle btn-block' + (!P.tool ? ' on' : ''), title: 'Normale Maus: auswählen, verschieben, bearbeiten', onclick: () => setTool(null) }, '↖ Auswahl / Bearbeiten')));
-            toolsCard.append(el('div', { class: 'muted', style: 'font-size:.72rem;margin-top:.4rem' },
+            toolsCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin-top:.4rem' },
                 (P.tool && isWallDraw(P.tool)) ? 'Klick setzt Punkte, jede weitere Ecke zeichnet weiter. Startpunkt klicken oder Doppelklick beendet. Auf eine bestehende Wand klicken = Anbau. Rechtsklick/Esc = Werkzeug ablegen.'
                     : (P.tool && isOpenKind(P.tool)) ? 'Auf eine Wand klicken (Start), Breite ziehen, zweiter Klick setzt die Öffnung. Rechtsklick/Esc = Werkzeug ablegen.'
                         : (P.tool && (isZoneTool(P.tool) || P.tool === 'column')) ? (P.tool === 'column' ? 'Klicken setzt eine Stütze (oder aufziehen für die Größe). Rechtsklick/Esc = ablegen.' : 'Ins Canvas klicken und die Fläche aufziehen. Rechtsklick/Esc = Werkzeug ablegen.')
@@ -9035,14 +9621,14 @@ import { createRevenueChart } from './revenue-chart.js';
             Object.entries(EXCL).filter(([, m]) => m.cat === 'zone').forEach(([k, m]) => zrow.append(el('button', { class: 'btn btn-sm gp-toggle' + (P.tool === k ? ' on' : ''), title: 'Im Plan aufziehen', onclick: () => setTool(P.tool === k ? null : k) }, m.label)));
             zrow.append(el('button', { class: 'btn btn-sm gp-toggle' + (P.tool === 'column' ? ' on' : ''), title: 'Stütze setzen (klicken oder aufziehen)', onclick: () => setTool(P.tool === 'column' ? null : 'column') }, EXCL.column.label));
             exCard.append(zrow);
-            exCard.append(el('div', { class: 'muted', style: 'font-size:.72rem;margin:.1rem 0 .3rem' }, 'Wählen und im Plan aufziehen (Stütze: klicken genügt); danach Ecken ziehen, ⟳ oben = drehen, 🗑 am Objekt löscht.'));
+            exCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin:.1rem 0 .3rem' }, 'Wählen und im Plan aufziehen (Stütze: klicken genügt); danach Ecken ziehen, ⟳ oben = drehen, 🗑 am Objekt löscht.'));
             const exList = el('div', { class: 'gp-exlist' });
-            if (!P.excl.length) exList.append(el('div', { class: 'muted', style: 'font-size:.76rem;margin-top:.4rem' }, 'Noch keine Flächen.'));
+            if (!P.excl.length) exList.append(el('div', { class: 'muted', style: 'font-size:var(--text-sm);margin-top:.4rem' }, 'Noch keine Flächen.'));
             P.excl.forEach((b) => {
                 const it = el('div', { class: 'gp-exitem' + (b.id === P.sel ? ' on' : '') });
                 const sw = el('span', { class: 'gp-sw' }); sw.dataset.kind = b.kind;
                 const meta = (isWallKind(b.kind) && b.mat && MAT[b.mat]) ? ' · ' + MAT[b.mat] : '';
-                it.append(sw, el('span', { style: 'flex:1' }, b.label, ' ', el('span', { class: 'muted num', style: 'font-size:.72rem' }, b.w + '×' + b.h + ' m' + meta)),
+                it.append(sw, el('span', { style: 'flex:1' }, b.label, ' ', el('span', { class: 'muted num', style: 'font-size:var(--text-xs)' }, b.w + '×' + b.h + ' m' + meta)),
                     el('button', { class: 'gp-rm', title: 'Entfernen', onclick: (e) => { e.stopPropagation(); removeExcl(b); } }, '×'));
                 it.addEventListener('click', () => { P.sel = b.id; draw(); });
                 exList.append(it);
@@ -9065,7 +9651,7 @@ import { createRevenueChart } from './revenue-chart.js';
                 const sizeRow = el('div', { class: 'gp-grid2', style: 'margin-top:.5rem' },
                     el('div', { class: 'gp-field' }, el('label', {}, isWallKind(b.kind) ? 'Länge (m)' : 'Breite (m)'), el('input', { class: 'gp-stepin num', type: 'number', step: '0.1', value: b.w, onchange: (e) => setExclSize(b, 'w', e.target.value) })),
                     el('div', { class: 'gp-field' }, el('label', {}, isWallKind(b.kind) ? 'Dicke (m)' : 'Tiefe (m)'), el('input', { class: 'gp-stepin num', type: 'number', step: isWallKind(b.kind) ? '0.01' : '0.1', value: b.h, onchange: (e) => setExclSize(b, 'h', e.target.value) })));
-                exCard.append(sizeRow, el('div', { class: 'muted', style: 'font-size:.72rem;margin-top:.35rem' }, 'Ecke ziehen = Größe · Ziehen = verschieben.'));
+                exCard.append(sizeRow, el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin-top:.35rem' }, 'Ecke ziehen = Größe · Ziehen = verschieben.'));
             }
             rail.append(exCard);
             // ---- Parkfläche (automatisch aus den Wänden) ----
@@ -9074,10 +9660,10 @@ import { createRevenueChart } from './revenue-chart.js';
             if (P.autoArea) {
                 const enc0 = enclosure();
                 if (enc0 && enc0.area > 0.3) {
-                    areaCard.append(el('div', { class: 'muted', style: 'font-size:.75rem;margin:.45rem 0' }, 'Umschlossen erkannt: ' + enc0.area.toFixed(1).replace('.', ',') + ' m² (grün schraffiert).'));
+                    areaCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-sm);margin:.45rem 0' }, 'Umschlossen erkannt: ' + enc0.area.toFixed(1).replace('.', ',') + ' m² (grün schraffiert).'));
                     areaCard.append(el('button', { class: 'btn btn-sm btn-block', title: 'Den erkannten Umriss als Hallenfläche übernehmen', onclick: deriveFloorFromWalls }, '⤵ Umriss aus Wänden übernehmen'));
                 } else {
-                    areaCard.append(el('div', { class: 'muted', style: 'font-size:.75rem;margin:.45rem 0' }, 'Außenwände zu einem geschlossenen Ring zeichnen — die Parkfläche wird dann automatisch erkannt und schraffiert.'));
+                    areaCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-sm);margin:.45rem 0' }, 'Außenwände zu einem geschlossenen Ring zeichnen — die Parkfläche wird dann automatisch erkannt und schraffiert.'));
                 }
             }
             rail.append(areaCard);
@@ -9096,11 +9682,11 @@ import { createRevenueChart } from './revenue-chart.js';
                     el('div', { class: 'gp-addrow' }, showBtn, calBtn),
                     el('div', { class: 'gp-field' }, el('label', {}, 'Deckkraft'), op),
                     el('div', { class: 'gp-addrow' },
-                        el('button', { class: 'btn btn-sm', title: 'Auf die Hallenfläche einpassen', onclick: () => { const bb = floorBB(); P.plan.x = bb.minX; P.plan.y = bb.minY; P.plan.w = Math.max(1, bb.maxX - bb.minX); P.plan.h = Math.max(1, bb.maxY - bb.minY); markDirty(); draw(); } }, '⤢ An Halle anpassen'),
+                        el('button', { class: 'btn btn-sm', title: 'Auf die Hallenfläche einpassen', onclick: () => { const bb = floorBB(); P.plan.x = bb.minX; P.plan.y = bb.minY; P.plan.w = Math.max(1, bb.maxX - bb.minX); P.plan.h = Math.max(1, bb.maxY - bb.minY); markDirty(); draw(); } }, icon('maximize', 14), ' An Halle anpassen'),
                         el('button', { class: 'btn btn-sm btn-danger', onclick: () => { P.plan = null; P.calib = false; markDirty(); draw(); renderRail(); toast('Bauplan entfernt'); } }, 'Entfernen'))));
-                planCard.append(el('div', { class: 'muted', style: 'font-size:.72rem;margin-top:.4rem' }, 'Kalibrieren: Bauplan verschieben und an den Ecken auf Maßstab ziehen. Wände/Fahrzeuge lassen sich dann exakt darüber platzieren.'));
+                planCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin-top:.4rem' }, 'Kalibrieren: Bauplan verschieben und an den Ecken auf Maßstab ziehen. Wände/Fahrzeuge lassen sich dann exakt darüber platzieren.'));
             } else {
-                planCard.append(el('div', { class: 'muted', style: 'font-size:.72rem;margin-top:.4rem' }, 'Ein Foto/Scan des Grundrisses als Unterlage laden, kalibrieren und darüber planen.'));
+                planCard.append(el('div', { class: 'muted', style: 'font-size:var(--text-xs);margin-top:.4rem' }, 'Ein Foto/Scan des Grundrisses als Unterlage laden, kalibrieren und darüber planen.'));
             }
             rail.append(planCard);
         }
@@ -9537,18 +10123,34 @@ import { createRevenueChart } from './revenue-chart.js';
         });
         drawOverlay.addEventListener('pointercancel', () => { if (nodeDrag || opDrag || zoneDrag || zoneDraw) { nodeDrag = null; opDrag = null; zoneDrag = null; zoneDraw = null; draw(); } });
 
-        // ---- palette drag → place ----
+        // ---- palette drag → place (und Tippen statt Ziehen) ----
+        // Ein Zug beginnt erst ab 6 px Bewegung. Bleibt der Finger liegen, war es ein Tipp:
+        // das Gefährt wird "bereit" und der nächste Tipp auf die Fläche legt es ab. Bisher
+        // meldete ein Tipp nur "Auf die Fläche ziehen" — Tastatur- und Schalternutzer
+        // konnten ein bestimmtes Gefährt gar nicht platzieren (WCAG 2.1.1).
         let drag = null, prev = null;
         rail.addEventListener('pointerdown', (e) => {
             if (e.button !== 0 || P.mode !== 'manage' || !canManageNow) return;
             const c = e.target.closest('.gp-vehc'); if (!c) return;
             const p = P.palette.find((x) => x.id == c.dataset.pid); if (!p) return; e.preventDefault();
-            const g = el('div', { class: 'gp-ghost' }, icon('car', 14), ' ' + p.label); document.body.append(g);
-            prev = el('div', { class: 'gp-preview' }, el('span', { class: 'gp-pl' })); layer.append(prev);
-            drag = { p, g }; moveDrag(e); c.setPointerCapture(e.pointerId);
+            drag = { p, g: null, sx: e.clientX, sy: e.clientY }; c.setPointerCapture(e.pointerId);
         });
-        rail.addEventListener('pointermove', (e) => { if (drag) moveDrag(e); });
-        rail.addEventListener('pointerup', (e) => { if (drag) dropDrag(e); });
+        rail.addEventListener('pointermove', (e) => {
+            if (!drag) return;
+            if (!drag.g) {
+                if (Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 6) return;
+                if (armed) disarm();
+                drag.g = el('div', { class: 'gp-ghost' }, icon('car', 14), ' ' + drag.p.label); document.body.append(drag.g);
+                prev = el('div', { class: 'gp-preview' }, el('span', { class: 'gp-pl' })); layer.append(prev);
+            }
+            moveDrag(e);
+        });
+        rail.addEventListener('pointerup', (e) => {
+            if (!drag) return;
+            if (drag.g) { dropDrag(e); return; }
+            const p = drag.p; drag = null;
+            if (armed && armed.p.id === p.id) disarm(); else arm(p, false);
+        });
         // pointercancel (touch interruption etc.): drop any in-flight drag/edit state
         // so it can't get stuck and block further interaction.
         const cancelGesture = () => {
@@ -9561,7 +10163,9 @@ import { createRevenueChart } from './revenue-chart.js';
         svg.addEventListener('pointercancel', cancelGesture);
         layer.addEventListener('pointercancel', cancelGesture);
         rail.addEventListener('pointercancel', cancelGesture);
-        function calcPlace(e) { const r = planEl.getBoundingClientRect(), v = drag.p, def = catFoot(v.type); const w = num(v.length_m, def[0]), h = num(v.width_m, def[1]); let x = (e.clientX - r.left) / P.CELL - w / 2, y = (e.clientY - r.top) / P.CELL - h / 2; x = gsnap(x); y = gsnap(y); const p = snapPos({ rot: 0, w, h }, x, y); return { x: p.x, y: p.y, w, h }; }
+        const footFor = (v) => { const def = catFoot(v.type); return { w: num(v.length_m, def[0]), h: num(v.width_m, def[1]) }; };
+        function placeAt(v, clientX, clientY) { const r = planEl.getBoundingClientRect(), { w, h } = footFor(v); let x = (clientX - r.left) / P.CELL - w / 2, y = (clientY - r.top) / P.CELL - h / 2; x = gsnap(x); y = gsnap(y); const p = snapPos({ rot: 0, w, h }, x, y); return { x: p.x, y: p.y, w, h }; }
+        function calcPlace(e) { return placeAt(drag.p, e.clientX, e.clientY); }
         function moveDrag(e) {
             drag.g.style.left = (e.clientX + 14) + 'px'; drag.g.style.top = (e.clientY + 14) + 'px';
             const pc = calcPlace(e), ins = rectInPoly(pc, P.floor), col = collide({ kind: 'veh', x: pc.x, y: pc.y, w: pc.w, h: pc.h }, null), bad = !ins || col;
@@ -9572,8 +10176,13 @@ import { createRevenueChart } from './revenue-chart.js';
             const pc = calcPlace(e), rr = planEl.getBoundingClientRect(), over = e.clientX >= rr.left && e.clientX <= rr.right && e.clientY >= rr.top && e.clientY <= rr.bottom;
             drag.g.remove(); if (prev) { prev.remove(); prev = null; } const p = drag.p; drag = null;
             if (!over) { toast('Auf die Fläche ziehen', 'warn'); return; }
-            if (!rectInPoly(pc, P.floor)) { toast('Außerhalb der Hallenfläche — bleibt in „Nicht platziert"', 'warn'); return; }
-            if (collide({ kind: 'veh', x: pc.x, y: pc.y, w: pc.w, h: pc.h }, null)) { toast('Kein Platz frei hier — bleibt in „Nicht platziert“ · „Auto-Anordnen“ packt es automatisch', 'warn'); return; }
+            await placeFromPalette(p, pc);
+        }
+        // Gemeinsamer Ablageweg für Ziehen und Tippen. Ungültig heißt: nichts wird
+        // gespeichert, das Gefährt bleibt in „Nicht platziert“ (wie bisher).
+        async function placeFromPalette(p, pc) {
+            if (!rectInPoly(pc, P.floor)) { toast('Außerhalb der Hallenfläche — bleibt in „Nicht platziert"', 'warn'); return false; }
+            if (collide({ kind: 'veh', x: pc.x, y: pc.y, w: pc.w, h: pc.h }, null)) { toast('Kein Platz frei hier — bleibt in „Nicht platziert“ · „Auto-Anordnen“ packt es automatisch', 'warn'); return false; }
             try {
                 const geom = { x: round2(pc.x), y: round2(pc.y), w: round2(pc.w), h: round2(pc.h), rot: 0, status: 'busy' };
                 // Hall-unique persisted spot label (uq_spots_hall_label) — suffix the vehicle id
@@ -9588,9 +10197,72 @@ import { createRevenueChart } from './revenue-chart.js';
                 P.palette = P.palette.filter((x) => x.id !== p.id); P.sel = spot.id;
                 const nb = P.spots[P.spots.length - 1];
                 if ((nb.H != null && nb.H > P.tor) || (nb.t != null && nb.t > P.load)) toast('⚠ ' + p.label + ' platziert · Höhe/Gewicht', 'warn'); else toast('✓ ' + p.label + ' platziert', 'ok');
+                if (armed && armed.p.id === p.id) armed = null;
                 draw();
-            } catch (err) { toast(err.message || 'Platzieren fehlgeschlagen', 'error'); }
+                return true;
+            } catch (err) { toast(err.message || 'Platzieren fehlgeschlagen', 'error'); return false; }
         }
+        // Erster gültiger Platz für ein Gefährt dieser Größe, zeilenweise von links oben
+        // im Raster der gewählten Schrittweite (½ m, wenn frei). Nur ein Vorschlag: der
+        // Benutzer verschiebt ihn oder tippt woanders hin.
+        function findFree(w, h) {
+            if (!P.floor || P.floor.length < 3) return null;
+            const xs = P.floor.map((q) => q[0]), ys = P.floor.map((q) => q[1]);
+            const step = (P.snap && P.gridStep) ? Math.max(P.gridStep, 0.25) : 0.5;
+            const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+            for (let y = y0; y + h <= y1 + 1e-6; y += step) {
+                for (let x = x0; x + w <= x1 + 1e-6; x += step) {
+                    const cand = { kind: 'veh', x: round2(x), y: round2(y), w, h };
+                    if (rectInPoly(cand, P.floor) && !collide(cand, null)) return cand;
+                }
+            }
+            return null;
+        }
+        function arm(p, viaKeyboard) {
+            const { w, h } = footFor(p), free = findFree(w, h);
+            let x, y;
+            if (free) { x = free.x; y = free.y; }
+            else { const xs = P.floor.map((q) => q[0]), ys = P.floor.map((q) => q[1]); x = round2((Math.min(...xs) + Math.max(...xs) - w) / 2); y = round2((Math.min(...ys) + Math.max(...ys) - h) / 2); }
+            armed = { p, x, y, w, h };
+            renderRail(); updateArm();
+            try { armPrev.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) { /* ältere Browser */ }
+            if (viaKeyboard) rail.querySelector('.gp-vehc[data-pid="' + p.id + '"] .gp-vpick')?.focus({ preventScroll: true });
+        }
+        function disarm() {
+            if (!armed) return;
+            const id = armed.p.id; armed = null;
+            renderRail(); updateArm();
+            rail.querySelector('.gp-vehc[data-pid="' + id + '"] .gp-vpick')?.focus({ preventScroll: true });
+        }
+        function updateArm() {
+            if (!armed || P.mode !== 'manage') { armBar.hidden = true; armPrev.hidden = true; return; }
+            const cand = { kind: 'veh', x: armed.x, y: armed.y, w: armed.w, h: armed.h };
+            const ins = rectInPoly(cand, P.floor), col = collide(cand, null), ok = ins && !col;
+            armPrev.hidden = false;
+            armPrev.className = 'gp-preview gp-armprev' + (ok ? '' : ' bad');
+            armPrev.style.left = (armed.x * P.CELL) + 'px'; armPrev.style.top = (armed.y * P.CELL) + 'px';
+            armPrev.style.width = (armed.w * P.CELL) + 'px'; armPrev.style.height = (armed.h * P.CELL) + 'px';
+            armPrev.querySelector('.gp-pl').textContent = !ins ? 'außerhalb der Fläche' : col ? 'belegt/ausgenommen' : armed.p.label;
+            armBar.hidden = false; armBar.textContent = '';
+            armBar.append(el('span', {}, el('b', {}, armed.p.label), ' bereit · ',
+                ok ? 'Fläche antippen oder Enter legt hier ab' : 'hier ist kein Platz – Fläche antippen oder mit den Pfeiltasten verschieben',
+                ' · Esc bricht ab'),
+                el('button', { class: 'gp-tbtn', type: 'button', onclick: disarm }, 'Abbrechen'));
+        }
+        async function commitArmed() {
+            const a = armed; if (!a) return;
+            const ok = await placeFromPalette(a.p, { x: a.x, y: a.y, w: a.w, h: a.h });
+            if (ok) { updateArm(); requestAnimationFrame(() => rail.querySelector('.gp-vpick')?.focus({ preventScroll: true })); }
+        }
+        // Bereit + Tipp auf die Fläche: dort ablegen. Läuft vor Auswahl, Rahmen und
+        // Verschieben (Capture), damit der Tipp nicht zusätzlich etwas markiert.
+        planWrap.addEventListener('pointerdown', (e) => {
+            if (!armed || e.button !== 0 || spaceDown || P.mode !== 'manage') return;
+            e.preventDefault(); e.stopPropagation();
+            const pc = placeAt(armed.p, e.clientX, e.clientY);
+            armed.x = pc.x; armed.y = pc.y; updateArm();
+            commitArmed();
+        }, true);
 
         // Arrive-from-vehicle focus: select the target spot, then scroll it into view
         // and pulse it once so it's easy to spot. Consumed once.
@@ -9601,6 +10273,11 @@ import { createRevenueChart } from './revenue-chart.js';
         }
         const focusTarget = (pendingSpotFocus != null && P.spots.some((s) => s._id === pendingSpotFocus)) ? pendingSpotFocus : null;
         pendingSpotFocus = null;
+        // Aus "Im Plan platzieren": das Gefaehrt steht bereit (Tippen statt Ziehen), die
+        // Flaeche zeigt schon die Vorschau. Ungueltig bleibt ungueltig — gespeichert wird
+        // erst eine gueltige Position, wie beim Ziehen.
+        const armTarget = canManageNow && pendingArmVehicle != null ? (P.palette || []).find((p) => p.id === pendingArmVehicle) : null;
+        pendingArmVehicle = null;
         if (focusTarget != null) P.sel = focusTarget;
 
         // initial paint — sync the floor bound to any loaded walls first
@@ -9608,8 +10285,124 @@ import { createRevenueChart } from './revenue-chart.js';
         setMode(P.mode);
         // Fit FIRST, then take the undo baseline — fitView() canonicalises coordinates (shiftWorld),
         // so recording the baseline afterwards keeps hist[0] == what's on screen (no undo jump) (F4).
-        requestAnimationFrame(() => { if (P.walls.edges.length) fitView(); else layout(); pushUndo(); if (focusTarget != null) requestAnimationFrame(() => focusSpot(focusTarget)); });
+        requestAnimationFrame(() => { if (P.walls.edges.length) fitView(); else layout(); pushUndo(); if (focusTarget != null) requestAnimationFrame(() => focusSpot(focusTarget));
+            if (armTarget && P.mode === 'manage') requestAnimationFrame(() => arm(armTarget, true)); });
     }
+
+    // ================= HILFE =================
+    // Das Betreiber-Handbuch (Kopie von docs/betreiber-handbuch.md in internal/help,
+    // in die App eingebettet) als Seite, nur fuer Admins. Ein kleiner Markdown-Leser fuer genau die Formen, die das Handbuch nutzt:
+    // Ueberschriften, Absaetze, Listen, Codeblock, Tabellen, Zitate, Trennlinien sowie
+    // **fett**, `Code` und Links. Gebaut wird aus DOM-Knoten, nie ueber innerHTML.
+    function helpSlug(text) { return norm(text).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
+    function mdInline(text) {
+        const out = [];
+        const re = /`([^`]+)`|\*\*(.+?)\*\*|\[([^\]]+)\]\(([^)\s]+)\)/g;
+        let last = 0, m;
+        while ((m = re.exec(text))) {
+            if (m.index > last) out.push(text.slice(last, m.index));
+            if (m[1] != null) out.push(el('code', {}, m[1]));
+            else if (m[2] != null) out.push(el('strong', {}, ...mdInline(m[2])));
+            // Externe Links oeffnen neu, Anker springen im Handbuch. Pfade ins Repository
+            // (README.md, …) gibt es in der App nicht: dort bleibt nur der Text.
+            else if (/^https?:\/\//i.test(m[4])) out.push(el('a', { href: m[4], target: '_blank', rel: 'noopener noreferrer' }, ...mdInline(m[3])));
+            else if (m[4].startsWith('#')) out.push(el('a', { href: '#/help?s=' + encodeURIComponent(helpSlug(m[4].slice(1))) }, ...mdInline(m[3])));
+            else out.push(...mdInline(m[3]));
+            last = re.lastIndex;
+        }
+        if (last < text.length) out.push(text.slice(last));
+        return out;
+    }
+    function mdRender(md) {
+        const root = el('div', { class: 'md card' });
+        const lines = String(md || '').replace(/\r\n?/g, '\n').split('\n');
+        const LIST = /^(\s*)([-*]|\d+\.)\s+(.*)$/;
+        const BLOCK = /^(#{1,6}\s|```|>|\|)|^\s*([-*]|\d+\.)\s+|^-{3,}\s*$/;
+        let i = 0, sawTitle = false;
+        while (i < lines.length) {
+            const line = lines[i];
+            if (!line.trim()) { i++; continue; }
+            let m;
+            if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) {
+                i++;
+                // Der Titel (#) steht schon im Seitenkopf; ## wird h3, ### h4 …
+                if (m[1].length === 1 && !sawTitle) { sawTitle = true; continue; }
+                const text = m[2].trim();
+                root.append(el('h' + Math.min(6, m[1].length + 1), { id: 'h-' + helpSlug(text) }, ...mdInline(text)));
+                continue;
+            }
+            if (line.startsWith('```')) {
+                const body = [];
+                i++;
+                while (i < lines.length && !lines[i].startsWith('```')) body.push(lines[i++]);
+                i++;
+                const code = body.join('\n');
+                root.append(el('div', { class: 'md-pre' }, el('pre', {}, el('code', {}, code)),
+                    el('button', { class: 'btn btn-ghost btn-sm copy-btn', type: 'button', title: 'Kopieren', 'aria-label': 'Codeblock kopieren',
+                        onclick: () => copyToClipboard(code, 'Kopiert') }, icon('copy', 14))));
+                continue;
+            }
+            if (/^-{3,}\s*$/.test(line)) { root.append(el('hr', {})); i++; continue; }
+            if (line.startsWith('|')) {
+                const rows = [];
+                while (i < lines.length && lines[i].startsWith('|')) rows.push(lines[i++].trim());
+                const cells = (r) => r.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+                const table = el('table', {});
+                table.append(el('thead', {}, el('tr', {}, ...cells(rows[0]).map((c) => el('th', { scope: 'col' }, ...mdInline(c))))));
+                const tbody = el('tbody', {});
+                rows.slice(1).filter((r) => !/^\|[\s:|-]+\|?$/.test(r))
+                    .forEach((r) => tbody.append(el('tr', {}, ...cells(r).map((c) => el('td', {}, ...mdInline(c))))));
+                table.append(tbody);
+                root.append(el('div', { class: 'md-table', tabindex: '0', role: 'region', 'aria-label': 'Tabelle' }, table));
+                continue;
+            }
+            if (line.startsWith('>')) {
+                const body = [];
+                while (i < lines.length && lines[i].startsWith('>')) body.push(lines[i++].replace(/^>\s?/, ''));
+                root.append(el('blockquote', {}, el('p', {}, ...mdInline(body.join(' ')))));
+                continue;
+            }
+            if ((m = LIST.exec(line))) {
+                const ordered = /\d/.test(m[2]);
+                const list = el(ordered ? 'ol' : 'ul', {});
+                if (ordered && parseInt(m[2], 10) !== 1) list.setAttribute('start', String(parseInt(m[2], 10)));
+                let item = null, text = '';
+                const flush = () => { if (item) { item.append(...mdInline(text.trim())); list.append(item); } };
+                while (i < lines.length) {
+                    const lm = LIST.exec(lines[i]);
+                    if (lm && lm[1].length < 2 && /\d/.test(lm[2]) === ordered) { flush(); item = el('li', {}); text = lm[3]; i++; continue; }
+                    if (item && lines[i].trim() && /^\s/.test(lines[i])) { text += ' ' + lines[i].trim(); i++; continue; }
+                    break;
+                }
+                flush();
+                root.append(list);
+                continue;
+            }
+            const para = [];
+            while (i < lines.length && lines[i].trim() && !(para.length && BLOCK.test(lines[i]))) para.push(lines[i++].trim());
+            root.append(el('p', {}, ...mdInline(para.join(' '))));
+        }
+        return root;
+    }
+    routes.help = async (page, _id, query = new URLSearchParams()) => {
+        if (!isAdmin()) { page.innerHTML = ''; page.append(emptyState('lock', 'Nur für Administratoren.')); return; }
+        const res = await api.get('/help/handbook');
+        page.innerHTML = '';
+        page.append(el('div', { class: 'page-head' }, el('h2', {}, 'Hilfe & Handbuch')));
+        const md = res && typeof res.markdown === 'string' ? res.markdown : '';
+        if (!md) { page.append(emptyState('book', 'Das Handbuch ist in dieser Installation nicht verfügbar.')); return; }
+        page.append(mdRender(md));
+        // Sprungziel eines Kontextlinks (Backup, Steuerjahr): ?s=<abschnitt>. Erst nach
+        // dem Seitenaufbau, der zuvor an den Anfang scrollt.
+        const target = query.get('s');
+        if (target) requestAnimationFrame(() => {
+            const h = document.getElementById('h-' + target);
+            if (!h || !page.contains(h)) return;
+            h.tabIndex = -1;
+            h.scrollIntoView({ block: 'start', behavior: 'instant' });
+            h.focus({ preventScroll: true });
+        });
+    };
 
     function openMenu() {
         const dlg = $('#menu');
@@ -9618,8 +10411,10 @@ import { createRevenueChart } from './revenue-chart.js';
         body.append(el('div', { class: 'sheet-user' },
             el('div', { class: 'name' }, esc(state.user.username)),
             el('div', { class: 'muted' }, ROLE_LABEL[state.user.role] || state.user.role)));
-        const item = (ic, label, fn, cls = '') => {
+        const current = parseHash().name;
+        const item = (ic, label, fn, cls = '', route = null) => {
             const b = el('button', { class: 'menu-item ' + cls }, el('span', { class: 'ic' }, icon(ic, 18)), el('span', {}, label));
+            if (route && route === current) b.setAttribute('aria-current', 'page');
             b.addEventListener('click', () => { dlg.close(); fn(); });
             return b;
         };
@@ -9627,20 +10422,27 @@ import { createRevenueChart } from './revenue-chart.js';
         // (Design wechseln, Abmelden). Drei Gruppen, jede mit einer Ueberschrift.
         const group = (title) => body.append(el('div', { class: 'menu-sec' }, title));
         group('Betrieb');
-        if (isAdmin()) body.append(item('receipt', 'Rechnungs-Einstellungen', () => navigate('billing')));
-        body.append(item('euro', 'Zusatzkosten', () => navigate('finance')));
-        if (isAdmin()) body.append(item('ledger', 'Steuerjahr', () => navigate('taxyear')));
+        body.append(item('receipt', 'Rechnungen', () => navigate('invoices'), '', 'invoices'));
+        body.append(item('euro', 'Zusatzkosten', () => navigate('finance'), '', 'finance'));
+        if (isAdmin()) body.append(item('ledger', 'Steuerjahr', () => navigate('taxyear'), '', 'taxyear'));
         group('Verwaltung');
-        body.append(item('settings', 'Einstellungen', () => navigate('settings')));
-        if (isAdmin()) body.append(item('users', 'Benutzer', () => navigate('users')));
-        if (isAdmin()) body.append(item('log', 'Audit-Log', () => navigate('audit')));
-        if (isAdmin()) body.append(item('archive', 'Backup', () => navigate('backup')));
+        if (isAdmin()) body.append(item('receiptGear', 'Rechnungs-Einstellungen', () => navigate('billing'), '', 'billing'));
+        body.append(item('settings', 'Einstellungen', () => navigate('settings'), '', 'settings'));
+        if (isAdmin()) body.append(item('users', 'Benutzer', () => navigate('users'), '', 'users'));
+        if (isAdmin()) body.append(item('log', 'Audit-Log', () => navigate('audit'), '', 'audit'));
+        if (isAdmin()) body.append(item('archive', 'Backup', () => navigate('backup'), '', 'backup'));
+        // Betreiber-Handbuch: nur fuer Admins (Betreiberentscheid 15.10.2026).
+        if (isAdmin()) body.append(item('book', 'Hilfe & Handbuch', () => navigate('help'), '', 'help'));
         group('Sitzung');
         // 'Design wechseln' ist raus: der Mond-Knopf in der Kopfzeile tut dasselbe
         // und traegt bereits aria-label='Design wechseln'.
         // Nur zeigen, solange der Browser die Installation tatsächlich anbietet.
         if (canInstall()) body.append(item('download', 'App installieren', runInstallPrompt));
         body.append(item('logout', 'Abmelden', () => logout(), 'danger'));
+        // Schliessen auch ohne Escape oder Tipp daneben. Steht oben rechts, kommt in der
+        // Tab-Reihenfolge aber zuletzt: der Fokus landet beim Oeffnen weiter auf dem
+        // ersten Eintrag.
+        body.append(el('button', { class: 'btn-icon sheet-close', type: 'button', 'aria-label': 'Menü schließen', title: 'Schließen', onclick: () => dlg.close() }, icon('close', 20)));
         dlg.showModal();
     }
 
@@ -10296,6 +11098,7 @@ import { createRevenueChart } from './revenue-chart.js';
         { label: 'Personen', sub: 'Stammdaten', url: '#/persons', kw: 'kunde halter mieter adresse kontakt' },
         { label: 'Gefährte', sub: 'Fahrzeuge', url: '#/vehicles', kw: 'auto wohnwagen wohnmobil boot anhaenger kennzeichen' },
         { label: 'Zusatzkosten', sub: 'Buchungen', url: '#/finance', kw: 'kosten strom reinigung leistung' },
+        { label: 'Rechnungen', sub: 'Offen, überfällig, bezahlt', url: '#/invoices', kw: 'rechnung beleg mahnung storno offen ueberfaellig' },
         { label: 'Tarife & Dienste', sub: 'Preise', url: '#/tariffs', kw: 'preis kategorie tarif dienst miete' },
         { label: 'Stellplätze', sub: 'Garagen, Hallen & Planer', url: '#/garages', kw: 'garage halle planer plan stellplatz' },
         { label: 'Einstellungen', sub: '', url: '#/settings', kw: 'optionen konfiguration profil passwort' },
@@ -10643,8 +11446,8 @@ import { createRevenueChart } from './revenue-chart.js';
             const hcard = el('div', { class: 'portal-card' }, el('h2', {}, P9.handovers));
             sum.handovers.forEach((ho) => hcard.append(el('div', { class: 'portal-row' },
                 el('span', {}, esc(ho.vehicle_label) + ' · ' + (ho.direction === 'einlagerung' ? P9.storein : P9.storeout),
-                    ho.notes ? el('span', { class: 'muted', style: 'display:block;font-size:.78rem' }, esc(ho.notes)) : null),
-                el('span', { class: 'muted', style: 'font-size:.8rem;text-align:right' },
+                    ho.notes ? el('span', { class: 'muted', style: 'display:block;font-size:var(--text-sm)' }, esc(ho.notes)) : null),
+                el('span', { class: 'muted', style: 'font-size:var(--text-sm);text-align:right' },
                     new Date(ho.created_at).toLocaleDateString(locale),
                     ho.signer_name ? el('span', { style: 'display:block' }, P9.signed + esc(ho.signer_name)) : null))));
             wrap.append(hcard);
@@ -10662,9 +11465,12 @@ import { createRevenueChart } from './revenue-chart.js';
                         + (iv.open > 0.005 ? ' · ' + P9.open_part + eur(iv.open) : '') + ' · PDF',
                     onclick: () => portalOpenPdf(token, iv.id) },
                     el('span', {}, P9.invoice + esc(iv.number),
-                        el('span', { class: 'muted', style: 'display:block;font-size:.78rem' }, new Date(iv.issued_on).toLocaleDateString(locale) + (iv.status ? ' · ' + (P9.inv_status[iv.status] || esc(iv.status)) : ''))),
+                        el('span', { class: 'muted', style: 'display:block;font-size:var(--text-sm)' }, new Date(iv.issued_on).toLocaleDateString(locale) + (iv.status ? ' · ' + (P9.inv_status[iv.status] || esc(iv.status)) : '')),
+                        // Sichtbarer Hinweis, dass die Zeile das PDF öffnet — bisher stand
+                        // "PDF" nur im aria-label.
+                        el('span', { class: 'portal-pdf', 'aria-hidden': 'true' }, icon('receipt', 13), 'PDF')),
                     el('span', { style: 'text-align:right' }, eur(iv.total),
-                        iv.open > 0.005 ? el('span', { class: 'muted', style: 'display:block;font-size:.78rem' }, P9.open_part + eur(iv.open)) : null)));
+                        iv.open > 0.005 ? el('span', { class: 'muted', style: 'display:block;font-size:var(--text-sm)' }, P9.open_part + eur(iv.open)) : null)));
             // Scan-to-pay QR for each still-open invoice.
             if (iv.open > 0.005) {
                 const qr = el('img', { alt: P9.qr_alt, width: 150, height: 150, style: 'max-width:150px;height:auto' });
@@ -10699,7 +11505,7 @@ import { createRevenueChart } from './revenue-chart.js';
         // Briefkasten — der Kunde reicht ein, der Betreiber übernimmt.
         {
             const rcard = el('div', { class: 'portal-card portal-requests' }, el('h2', {}, P9.requests),
-                el('p', { class: 'muted', style: 'font-size:.8rem' }, P9.req_hint));
+                el('p', { class: 'muted', style: 'font-size:var(--text-sm)' }, P9.req_hint));
             const send = async (body, msgEl, btn) => {
                 if (btn.disabled) return;
                 btn.disabled = true;
@@ -10793,6 +11599,13 @@ import { createRevenueChart } from './revenue-chart.js';
             }).catch(() => {});
         }
         const sb = $('#search-btn'); if (sb) sb.addEventListener('click', () => openCommandPalette());
+        // Sichtbarer Hinweis auf die Tastenkombination (Desktop): ⌘K am Mac, sonst Strg K
+        // — im Feld und im Tooltip, passend zu aria-keyshortcuts.
+        const kbd = $('#search-kbd');
+        if (kbd && !/Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '')) {
+            kbd.textContent = 'Strg K';
+            if (sb) sb.title = 'Suche · Strg K';
+        }
         document.addEventListener('keydown', (e) => {
             if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K') && state.user) { e.preventDefault(); openCommandPalette(); }
         });

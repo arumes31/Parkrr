@@ -36,7 +36,7 @@ for (const width of [320, 390, 1440]) {
       }
     }
     await page.getByText('Später aktivieren', { exact: true }).click();
-    await expect(page.locator('.tax-mode code')).toHaveText('PARKRR_TAX_WRITES_ENABLED=true');
+    await expect(page.locator('.tax-mode code.tax-env')).toHaveText('PARKRR_TAX_WRITES_ENABLED=true');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (width === 390) {
       await page.evaluate(() => document.documentElement.style.fontSize = '32px');
@@ -70,7 +70,7 @@ test('tax-year entry workflows expose their required controls', async ({ page })
   await expect(page.getByRole('button', { name: 'Jahr abschließen' })).toBeEnabled();
   await expect(page.getByRole('heading', { name: 'Steuerbereich · Bearbeitung aktiviert' })).toBeVisible();
   await page.getByText('Zurück zum Lesemodus', { exact: true }).click();
-  await expect(page.locator('.tax-mode code')).toHaveText('PARKRR_TAX_WRITES_ENABLED=false');
+  await expect(page.locator('.tax-mode code.tax-env')).toHaveText('PARKRR_TAX_WRITES_ENABLED=false');
 });
 
 test('expense and receipt retries reuse the original expense', async ({ page }) => {

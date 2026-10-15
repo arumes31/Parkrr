@@ -232,10 +232,11 @@ for (const width of [1440, 390, 320]) {
       },
     } });
     await page.goto(origin + '/#/vehicles');
-    await page.getByRole('button', { name: '+ Neu', exact: true }).click();
+    await page.getByRole('button', { name: '+ Gefährt', exact: true }).click();
     const modal = page.locator('#modal');
     await expect(modal).toBeVisible();
-    await expect(modal.getByLabel('Kennzeichen', { exact: true })).toBeHidden();
+    await expect(modal.getByLabel('Kennzeichen', { exact: true })).toBeVisible();
+    await expect(modal.getByLabel('Bezeichnung', { exact: true })).toBeHidden();
     await expect(modal.getByLabel('Notizen', { exact: true })).toBeHidden();
     const geometry = await modal.evaluate(node => {
       const rect = target => {

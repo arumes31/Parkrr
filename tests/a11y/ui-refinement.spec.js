@@ -75,7 +75,7 @@ test('short viewport keeps form actions reachable', async ({ page }, testInfo) =
   await page.setViewportSize({ width: 568, height: 320 });
   await mockUI(page);
   await page.goto(origin + '/#/persons');
-  await page.getByRole('button', { name: '+ Neu', exact: true }).click();
+  await page.getByRole('button', { name: '+ Person', exact: true }).click();
   // Wait for the sheet's entrance to settle before judging the final position.
   await expect.poll(async () => {
     const submit = await page.locator('#modal-submit').boundingBox();
@@ -128,6 +128,9 @@ test('list recovery, pagination focus and skip link keep the current route', asy
   await expect(page.getByText('Keine passenden Einträge.')).toBeVisible();
   await page.getByRole('button', { name: 'Suche zurücksetzen' }).click();
   await expect(search).toBeFocused();
+  // Standard sind 25 pro Seite; die Auswahl darunter verkleinert die Seite.
+  await expect(page.locator('.list-summary')).toHaveText('1–24 von 24 Einträgen');
+  await page.getByRole('combobox', { name: 'Einträge pro Seite' }).selectOption('10');
   await expect(page.locator('.list-summary')).toHaveText('1–10 von 24 Einträgen');
   await page.getByRole('button', { name: 'Nächste Seite' }).click();
   await expect(page.locator('.list-summary')).toBeFocused();
@@ -183,7 +186,7 @@ test('saving form blocks duplicate submit and Escape, preserves input on failure
     },
   } });
   await page.goto(origin + '/#/persons');
-  await page.getByRole('button', { name: '+ Neu', exact: true }).click();
+  await page.getByRole('button', { name: '+ Person', exact: true }).click();
   await page.locator('#f_first_name').fill('Test');
   await page.locator('#f_last_name').fill('Entwurf');
   await page.locator('#modal-form').evaluate(form => { form.requestSubmit(); form.requestSubmit(); });

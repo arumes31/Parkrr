@@ -13,9 +13,11 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem('parkrr-veh', '0');
   });
 });
+// Die Hinzufügen-Knöpfe tragen den Namen ihrer Liste statt „+ Neu“.
+const ADD = { persons: '+ Person', vehicles: '+ Gefährt', finance: '+ Position' };
 const openNew = async (page, route) => {
   await page.goto(origin + '/#/' + route);
-  await page.getByRole('button', { name: '+ Neu', exact: true }).click();
+  await page.getByRole('button', { name: ADD[route], exact: true }).click();
   await expect(page.locator('#modal')).toBeVisible();
 };
 const save = async (page, writes) => {
@@ -32,7 +34,9 @@ test('person fields pair on desktop; closed optional fields retain their exact p
     writes.push(route.request().postDataJSON()); return route.fulfill({ json: { id: 25 } });
   } } });
   await openNew(page, 'persons');
-  await expect(page.getByLabel('Vorname', { exact: true })).toBeFocused();
+  // Vor- und Nachname tragen den Stern (eines davon ist Pflicht); der Stern ist
+  // aria-hidden, darum über die Rolle und den zugänglichen Namen.
+  await expect(page.getByRole('textbox', { name: 'Vorname', exact: true })).toBeFocused();
   await expect(page.getByLabel('Adresse', { exact: true })).toBeHidden();
   const [first, last] = await page.evaluate(() => ['f_first_name', 'f_last_name'].map(id => {
     const { x, y } = document.getElementById(id).getBoundingClientRect(); return { x, y };
@@ -40,8 +44,8 @@ test('person fields pair on desktop; closed optional fields retain their exact p
   expect(first.y).toBe(last.y); expect(last.x).toBeGreaterThan(first.x);
   const modal = await page.locator('#modal').boundingBox();
   expect(modal.height).toBeLessThan(500);
-  await page.getByLabel('Vorname', { exact: true }).fill('Ada');
-  await page.getByLabel('Nachname', { exact: true }).fill('Muster');
+  await page.getByRole('textbox', { name: 'Vorname', exact: true }).fill('Ada');
+  await page.getByRole('textbox', { name: 'Nachname', exact: true }).fill('Muster');
   await page.getByText('Adresse & Notizen', { exact: true }).click();
   await page.getByLabel('Adresse', { exact: true }).fill('Wien\nTestgasse 1');
   await page.getByLabel('Notizen', { exact: true }).fill('Nicht verlieren');
@@ -164,9 +168,12 @@ test('vehicle rate follows the tariff only until manually changed; optional sett
   await expect(page.locator('#vehicle-rental-total')).toHaveText(/0,00/);
   await page.getByRole('button', { name: 'monatlich', exact: true }).click();
   await expect(page.locator('#f_rate')).toHaveValue('0');
-  await expect(page.getByLabel('Kennzeichen', { exact: true })).toBeHidden();
-  await page.getByText('Fahrzeugdetails', { exact: true }).click();
+  // Kennzeichen steht seit dem Vorher-Nachher-Durchgang ohne Aufklappen im Dialog;
+  // unter „Fahrzeugdetails“ bleibt die Bezeichnung.
   await expect(page.getByLabel('Kennzeichen', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Bezeichnung', { exact: true })).toBeHidden();
+  await page.getByText('Fahrzeugdetails', { exact: true }).click();
+  await expect(page.getByLabel('Bezeichnung', { exact: true })).toBeVisible();
   await page.getByText('Fahrzeugdetails', { exact: true }).click();
   await page.getByText('Notizen & Planer-Details', { exact: true }).click();
   await page.getByLabel('Notizen', { exact: true }).fill('Strom benötigt');

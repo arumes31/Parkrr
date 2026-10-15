@@ -1,4 +1,4 @@
-const months = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+const months = ['Jänner', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const shortMonths = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 const sumMoney = values => values.reduce((total, value) => total + Math.round(value * 100), 0) / 100;
 const validMonths = values => Array.isArray(values) && values.length === 12 && values.every(Number.isFinite);

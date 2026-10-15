@@ -64,8 +64,9 @@ for (const [width, theme] of viewports) {
     const metadata = overview.locator('.record-main');
     await expect(controls.getByRole('heading', { name: 'Status & Zahlung' })).toBeVisible();
     await expect(metadata.getByRole('link', { name: 'Demo Berger 1', exact: true })).toBeVisible();
-    await expect(controls.getByRole('radiogroup', { name: 'Lagerstatus', exact: true })).toBeVisible();
-    await expect(controls.getByRole('radiogroup', { name: 'Zahlstatus', exact: true })).toBeVisible();
+    // Die Gruppen tragen den Namen des Gefährts (Screenreader: welches Gefährt?).
+    await expect(controls.getByRole('radiogroup', { name: /^Lagerstatus · / })).toBeVisible();
+    await expect(controls.getByRole('radiogroup', { name: /^Zahlstatus · / })).toBeVisible();
     expect(await controls.evaluate(node => !!(node.compareDocumentPosition(node.parentElement.querySelector('.record-main')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
     const [actionsBox, metadataBox] = await Promise.all([controls.boundingBox(), metadata.boundingBox()]);
     if (width < 800) expect(actionsBox.y + actionsBox.height).toBeLessThanOrEqual(metadataBox.y + 1);
@@ -197,7 +198,9 @@ for (const role of ['admin', 'editor', 'reader']) {
     await page.getByRole('button', { name: 'Menü', exact: true }).click();
     const menu = page.getByRole('dialog', { name: 'Menü', exact: true });
     const billing = menu.getByRole('button', { name: 'Rechnungs-Einstellungen', exact: true });
-    await expect(menu.getByRole('button', { name: 'Rechnungen', exact: true })).toHaveCount(0);
+    // "Rechnungen" ist seit dem Rechnungslisten-Durchgang die echte Liste (alle Rollen)
+    // und darf nie wieder zu den Einstellungen führen.
+    await expect(menu.getByRole('button', { name: 'Rechnungen', exact: true })).toHaveCount(1);
     if (role === 'admin') {
       await billing.click();
       await expect(page).toHaveURL(/#\/billing$/);
@@ -215,7 +218,7 @@ for (const role of ['admin', 'editor', 'reader']) {
       await result.click();
       await expect(page).toHaveURL(/#\/billing$/);
     } else {
-      await expect(palette.getByRole('status')).toHaveText('Keine Treffer.');
+      await expect(palette.getByRole('option').filter({ hasText: 'Rechnungen' })).toHaveCount(1);
       await expect(palette.getByText('Rechnungs-Einstellungen', { exact: true })).toHaveCount(0);
       await page.keyboard.press('Escape');
       await open(page, 'billing');
