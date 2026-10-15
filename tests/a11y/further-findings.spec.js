@@ -292,8 +292,10 @@ test('a 320 px phone shows short tab labels; the full name stays the accessible 
   await expect(page.locator('.tab[data-route="garages"] .tab-short')).toBeVisible();
   await expect(page.locator('.tab[data-route="garages"] .tab-short')).toHaveText('Stellpl.');
   await expect(page.locator('.tab[data-route="vehicles"] .tab-label')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Stellplätze', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Übersicht', exact: true })).toBeVisible();
+  // Der volle Name bleibt der zugängliche Name, auch wenn die Kurzform sichtbar ist.
+  for (const name of ['Übersicht', 'Personen', 'Gefährte', 'Tarife', 'Stellplätze']) {
+    await expect(page.locator('.tabbar').getByRole('button', { name, exact: true })).toBeVisible();
+  }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.tab[data-route="garages"] .tab-short')).toBeHidden();
   await expect(page.locator('.tab[data-route="garages"] .tab-full')).toBeVisible();
@@ -318,7 +320,9 @@ test('tab labels never break mid-word; at 200 % text the bar shows icons and kee
   expect((await label.boundingBox()).height).toBeLessThan(lineHeight * 1.6);
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
   await expect.poll(() => label.evaluate(n => n.getBoundingClientRect().width)).toBeLessThanOrEqual(1);
-  await expect(page.getByRole('button', { name: 'Stellplätze', exact: true })).toBeVisible();
+  for (const name of ['Übersicht', 'Personen', 'Gefährte', 'Tarife', 'Stellplätze']) {
+    await expect(page.locator('.tabbar').getByRole('button', { name, exact: true })).toBeVisible();
+  }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
 });
 
@@ -327,7 +331,10 @@ test('desktop header shows the search field with its shortcut; icons are distinc
   await open(page, 'dashboard');
   const search = page.getByRole('button', { name: 'Suche', exact: true });
   await expect(search.locator('.search-hint')).toBeVisible();
-  await expect(search.locator('.search-kbd')).toHaveText(/⌘K|Strg K/);
+  // Kürzel im Feld und im Tooltip passen zur Plattform (Chromium im Test: kein Mac).
+  const mac = await page.evaluate(() => /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || ''));
+  await expect(search.locator('.search-kbd')).toHaveText(mac ? '⌘K' : 'Strg K');
+  await expect(search).toHaveAttribute('title', mac ? 'Suche · ⌘K' : 'Suche · Strg K');
   await page.getByRole('button', { name: 'Menü', exact: true }).click();
   const icon = (label) => page.locator('#menu .menu-item', { hasText: new RegExp('^' + label + '$') }).locator('svg').innerHTML();
   expect(await icon('Rechnungs-Einstellungen')).not.toBe(await icon('Einstellungen'));

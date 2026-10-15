@@ -11599,9 +11599,13 @@ import { createRevenueChart } from './revenue-chart.js';
             }).catch(() => {});
         }
         const sb = $('#search-btn'); if (sb) sb.addEventListener('click', () => openCommandPalette());
-        // Sichtbarer Hinweis auf die Tastenkombination (Desktop): ⌘K am Mac, sonst Strg K.
+        // Sichtbarer Hinweis auf die Tastenkombination (Desktop): ⌘K am Mac, sonst Strg K
+        // — im Feld und im Tooltip, passend zu aria-keyshortcuts.
         const kbd = $('#search-kbd');
-        if (kbd && !/Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '')) kbd.textContent = 'Strg K';
+        if (kbd && !/Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '')) {
+            kbd.textContent = 'Strg K';
+            if (sb) sb.title = 'Suche · Strg K';
+        }
         document.addEventListener('keydown', (e) => {
             if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K') && state.user) { e.preventDefault(); openCommandPalette(); }
         });
