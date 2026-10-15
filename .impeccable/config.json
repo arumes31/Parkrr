@@ -1,3 +1,45 @@
 {
-  "buildPath": "comp"
+  "buildPath": "comp",
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-color",
+        "value": "*",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T08:37:59.690Z",
+        "reason": "DESIGN.md beschreibt nur die Doku-Werkbaenke (docs/), nicht die App unter web/static"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T08:37:59.915Z",
+        "reason": "DESIGN.md beschreibt nur die Doku-Werkbaenke (docs/), nicht die App unter web/static"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "*",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T08:38:00.157Z",
+        "reason": "DESIGN.md beschreibt nur die Doku-Werkbaenke (docs/), nicht die App unter web/static"
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "*",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T08:38:00.371Z",
+        "reason": "DESIGN.md beschreibt nur die Doku-Werkbaenke (docs/), nicht die App unter web/static"
+      }
+    ]
+  }
 }

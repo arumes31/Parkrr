@@ -35,7 +35,7 @@ for (const width of [390, 768, 1440]) {
 
     await chart.getByLabel('Prognose anzeigen', { exact: true }).check();
     await expect(chart.locator('.revenue-totals')).toBeVisible();
-    for (const [index, name] of [[0, 'Januar'], [9, 'Oktober']]) {
+    for (const [index, name] of [[0, 'Jänner'], [9, 'Oktober']]) {
       await hover(chart.locator('.revenue-point.revenue-series-actual').nth(index));
       await expect(chart.locator('.revenue-readout strong')).toHaveText(name);
     }

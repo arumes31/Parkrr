@@ -128,6 +128,9 @@ test('list recovery, pagination focus and skip link keep the current route', asy
   await expect(page.getByText('Keine passenden Einträge.')).toBeVisible();
   await page.getByRole('button', { name: 'Suche zurücksetzen' }).click();
   await expect(search).toBeFocused();
+  // Standard sind 25 pro Seite; die Auswahl darunter verkleinert die Seite.
+  await expect(page.locator('.list-summary')).toHaveText('1–24 von 24 Einträgen');
+  await page.getByRole('combobox', { name: 'Einträge pro Seite' }).selectOption('10');
   await expect(page.locator('.list-summary')).toHaveText('1–10 von 24 Einträgen');
   await page.getByRole('button', { name: 'Nächste Seite' }).click();
   await expect(page.locator('.list-summary')).toBeFocused();

@@ -73,7 +73,7 @@ func NextRuns(expr string, k int) []time.Time {
 func describeDescriptor(expr string) string {
 	switch strings.ToLower(strings.Fields(expr)[0]) {
 	case "@yearly", "@annually":
-		return "Jährlich am 1. Januar um 00:00 Uhr."
+		return "Jährlich am 1. Jänner um 00:00 Uhr."
 	case "@monthly":
 		return "Monatlich am 1. um 00:00 Uhr."
 	case "@weekly":

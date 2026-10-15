@@ -23,8 +23,8 @@ test('person creation/edit, detail navigation and additional-cost payment surviv
     await page.goto('/#/persons');
     await page.getByRole('button', { name: '+ Person', exact: true }).click();
     const modal = page.locator('#modal');
-    await modal.getByLabel('Vorname', { exact: true }).fill('UI');
-    await modal.getByLabel('Nachname', { exact: true }).fill(lastName);
+    await modal.getByRole('textbox', { name: 'Vorname', exact: true }).fill('UI');
+    await modal.getByRole('textbox', { name: 'Nachname', exact: true }).fill(lastName);
     await modal.getByLabel('E-Mail', { exact: true }).fill(`workflow-${tag}@example.invalid`);
     const personResponse = page.waitForResponse(res => new URL(res.url()).pathname === '/api/persons' && res.request().method() === 'POST');
     await modal.getByRole('button', { name: 'Speichern', exact: true }).click();

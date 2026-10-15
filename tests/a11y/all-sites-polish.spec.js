@@ -64,8 +64,9 @@ for (const [width, theme] of viewports) {
     const metadata = overview.locator('.record-main');
     await expect(controls.getByRole('heading', { name: 'Status & Zahlung' })).toBeVisible();
     await expect(metadata.getByRole('link', { name: 'Demo Berger 1', exact: true })).toBeVisible();
-    await expect(controls.getByRole('radiogroup', { name: 'Lagerstatus', exact: true })).toBeVisible();
-    await expect(controls.getByRole('radiogroup', { name: 'Zahlstatus', exact: true })).toBeVisible();
+    // Die Gruppen tragen den Namen des Gefährts (Screenreader: welches Gefährt?).
+    await expect(controls.getByRole('radiogroup', { name: /^Lagerstatus · / })).toBeVisible();
+    await expect(controls.getByRole('radiogroup', { name: /^Zahlstatus · / })).toBeVisible();
     expect(await controls.evaluate(node => !!(node.compareDocumentPosition(node.parentElement.querySelector('.record-main')) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
     const [actionsBox, metadataBox] = await Promise.all([controls.boundingBox(), metadata.boundingBox()]);
     if (width < 800) expect(actionsBox.y + actionsBox.height).toBeLessThanOrEqual(metadataBox.y + 1);
