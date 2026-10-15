@@ -1,0 +1,1298 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-15T10:53:50.763Z",
+  "title": "Design System: Parkrr Fahrwerk",
+  "extensions": {
+    "colorMeta": {
+      "schiefer-canvas": {
+        "role": "neutral",
+        "displayName": "Schiefer · Canvas",
+        "canonical": "oklch(17.9% 0.011 185.5)",
+        "tonalRamp": [
+          "#060D0C",
+          "#1E2625",
+          "#3A4240",
+          "#57605E",
+          "#798281",
+          "#9DA7A5",
+          "#C3CDCB",
+          "#E7F1EF"
+        ]
+      },
+      "schiefer-surface": {
+        "role": "neutral",
+        "displayName": "Schiefer · Surface",
+        "canonical": "oklch(21.2% 0.014 179.8)",
+        "tonalRamp": [
+          "#050D0B",
+          "#1D2624",
+          "#384240",
+          "#56605E",
+          "#788380",
+          "#9CA8A5",
+          "#C2CECB",
+          "#E5F2EF"
+        ]
+      },
+      "schiefer-raised": {
+        "role": "neutral",
+        "displayName": "Schiefer · Raised",
+        "canonical": "oklch(24.5% 0.016 182.6)",
+        "tonalRamp": [
+          "#040D0C",
+          "#1C2725",
+          "#374340",
+          "#54615E",
+          "#768381",
+          "#9AA8A5",
+          "#C0CECB",
+          "#E4F2EF"
+        ]
+      },
+      "schiefer-rule": {
+        "role": "neutral",
+        "displayName": "Schiefer · Rule",
+        "canonical": "oklch(30% 0.018 179.3)",
+        "tonalRamp": [
+          "#040E0B",
+          "#1A2724",
+          "#364340",
+          "#53615E",
+          "#758480",
+          "#99A9A5",
+          "#BFCFCB",
+          "#E2F3EF"
+        ]
+      },
+      "schiefer-text": {
+        "role": "neutral",
+        "displayName": "Schiefer · Text",
+        "canonical": "oklch(94.9% 0.009 179.6)",
+        "tonalRamp": [
+          "#070C0B",
+          "#202524",
+          "#3B4140",
+          "#585F5E",
+          "#7B8280",
+          "#9FA6A5",
+          "#C5CCCB",
+          "#E8F0EE"
+        ]
+      },
+      "schiefer-muted": {
+        "role": "neutral",
+        "displayName": "Schiefer · Muted",
+        "canonical": "oklch(68.9% 0.024 178.9)",
+        "tonalRamp": [
+          "#010E0B",
+          "#172824",
+          "#324440",
+          "#50625E",
+          "#728580",
+          "#96AAA5",
+          "#BBD0CB",
+          "#DFF4EF"
+        ]
+      },
+      "papier-canvas": {
+        "role": "neutral",
+        "displayName": "Papier · Canvas",
+        "canonical": "oklch(97% 0.004 179.7)",
+        "tonalRamp": [
+          "#090C0B",
+          "#222524",
+          "#3D4040",
+          "#5B5E5E",
+          "#7D8180",
+          "#A2A5A4",
+          "#C8CBCA",
+          "#EBEFEE"
+        ]
+      },
+      "papier-surface": {
+        "role": "neutral",
+        "displayName": "Papier · Surface",
+        "canonical": "oklch(100% 0 89.9)",
+        "tonalRamp": [
+          "#0B0B0B",
+          "#242424",
+          "#404040",
+          "#5D5D5D",
+          "#808080",
+          "#A4A4A4",
+          "#CACACA",
+          "#EEEEEE"
+        ]
+      },
+      "papier-raised": {
+        "role": "neutral",
+        "displayName": "Papier · Raised",
+        "canonical": "oklch(95.3% 0.007 185.3)",
+        "tonalRamp": [
+          "#080C0B",
+          "#212524",
+          "#3C4140",
+          "#5A5F5E",
+          "#7C8181",
+          "#A0A6A5",
+          "#C6CCCB",
+          "#EAF0EF"
+        ]
+      },
+      "papier-rule": {
+        "role": "neutral",
+        "displayName": "Papier · Rule",
+        "canonical": "oklch(91.5% 0.01 181.4)",
+        "tonalRamp": [
+          "#070D0B",
+          "#1F2624",
+          "#3A4240",
+          "#58605E",
+          "#7A8280",
+          "#9EA7A5",
+          "#C4CDCB",
+          "#E8F1EF"
+        ]
+      },
+      "papier-text": {
+        "role": "neutral",
+        "displayName": "Papier · Text",
+        "canonical": "oklch(23.1% 0.017 183.3)",
+        "tonalRamp": [
+          "#040E0C",
+          "#1B2725",
+          "#364341",
+          "#53615E",
+          "#758481",
+          "#99A8A6",
+          "#BFCECB",
+          "#E3F3EF"
+        ]
+      },
+      "papier-muted": {
+        "role": "neutral",
+        "displayName": "Papier · Muted",
+        "canonical": "oklch(52.1% 0.024 173.2)",
+        "tonalRamp": [
+          "#020E0A",
+          "#182823",
+          "#33443F",
+          "#50625C",
+          "#73857F",
+          "#96AAA3",
+          "#BCD0C9",
+          "#DFF4ED"
+        ]
+      },
+      "petrol": {
+        "role": "primary",
+        "displayName": "Petrol",
+        "canonical": "oklch(69.6% 0.111 186.6)",
+        "tonalRamp": [
+          "#000F0D",
+          "#012B27",
+          "#004B45",
+          "#056C65",
+          "#01948A",
+          "#3ABBB0",
+          "#68E2D6",
+          "#B8FFF6"
+        ]
+      },
+      "petrol-bright": {
+        "role": "primary",
+        "displayName": "Petrol Bright",
+        "canonical": "oklch(76.4% 0.111 187)",
+        "tonalRamp": [
+          "#000F0D",
+          "#012B28",
+          "#004A45",
+          "#056C65",
+          "#01948B",
+          "#3ABBB0",
+          "#68E2D6",
+          "#B8FFF6"
+        ]
+      },
+      "petrol-ink": {
+        "role": "primary",
+        "displayName": "Petrol Ink",
+        "canonical": "oklch(80% 0.108 187)",
+        "tonalRamp": [
+          "#000F0D",
+          "#002B28",
+          "#034A45",
+          "#016C65",
+          "#08948A",
+          "#40BAB0",
+          "#6CE1D6",
+          "#B7FFF6"
+        ]
+      },
+      "on-petrol": {
+        "role": "primary",
+        "displayName": "On Petrol",
+        "canonical": "oklch(22.6% 0.033 185.1)",
+        "tonalRamp": [
+          "#000F0D",
+          "#0F2926",
+          "#2B4642",
+          "#486460",
+          "#6A8783",
+          "#8EACA7",
+          "#B3D2CD",
+          "#D7F6F1"
+        ]
+      },
+      "petrol-deep": {
+        "role": "primary",
+        "displayName": "Petrol Deep",
+        "canonical": "oklch(52.4% 0.088 187.7)",
+        "tonalRamp": [
+          "#000F0D",
+          "#022B28",
+          "#014A46",
+          "#076C66",
+          "#32918A",
+          "#5CB7AE",
+          "#83DDD5",
+          "#B7FFF7"
+        ]
+      },
+      "petrol-deeper": {
+        "role": "primary",
+        "displayName": "Petrol Deeper",
+        "canonical": "oklch(44.6% 0.074 188.5)",
+        "tonalRamp": [
+          "#000F0D",
+          "#012B28",
+          "#014A46",
+          "#1C6B66",
+          "#458F89",
+          "#6BB4AE",
+          "#91DBD4",
+          "#B6FFF8"
+        ]
+      },
+      "petrol-ink-on-papier": {
+        "role": "primary",
+        "displayName": "Petrol Ink On Papier",
+        "canonical": "oklch(44.5% 0.075 187.3)",
+        "tonalRamp": [
+          "#000F0D",
+          "#012B28",
+          "#004A46",
+          "#1C6B65",
+          "#458F88",
+          "#6BB4AD",
+          "#91DBD3",
+          "#B6FFF7"
+        ]
+      },
+      "kupfer": {
+        "role": "secondary",
+        "displayName": "Kupfer",
+        "canonical": "oklch(68.3% 0.146 48.5)",
+        "tonalRamp": [
+          "#190500",
+          "#3E1700",
+          "#682B00",
+          "#954203",
+          "#C36021",
+          "#ED854B",
+          "#FFB893",
+          "#FEEAE0"
+        ]
+      },
+      "kupfer-text": {
+        "role": "secondary",
+        "displayName": "Kupfer Text",
+        "canonical": "oklch(77.7% 0.114 51.7)",
+        "tonalRamp": [
+          "#180600",
+          "#3C1800",
+          "#662E00",
+          "#8E4813",
+          "#B56B3B",
+          "#DD8F60",
+          "#FEB990",
+          "#FEEADE"
+        ]
+      },
+      "on-kupfer": {
+        "role": "secondary",
+        "displayName": "On Kupfer",
+        "canonical": "oklch(21.8% 0.045 83.8)",
+        "tonalRamp": [
+          "#110A00",
+          "#2E2207",
+          "#4B3E23",
+          "#6A5C40",
+          "#8D7E62",
+          "#B2A385",
+          "#D9C9AA",
+          "#FDEDCD"
+        ]
+      },
+      "kupfer-deep": {
+        "role": "secondary",
+        "displayName": "Kupfer Deep",
+        "canonical": "oklch(55.6% 0.141 45.2)",
+        "tonalRamp": [
+          "#190500",
+          "#3F1501",
+          "#6A2901",
+          "#993D00",
+          "#C3602E",
+          "#EC8555",
+          "#FEB898",
+          "#FFE9E0"
+        ]
+      },
+      "kupfer-text-on-papier": {
+        "role": "secondary",
+        "displayName": "Kupfer Text On Papier",
+        "canonical": "oklch(49.6% 0.13 44.2)",
+        "tonalRamp": [
+          "#190400",
+          "#401501",
+          "#6B2801",
+          "#973F0F",
+          "#BF6339",
+          "#E7885E",
+          "#FEB899",
+          "#FFE9E1"
+        ]
+      },
+      "danger": {
+        "role": "state",
+        "displayName": "Danger",
+        "canonical": "oklch(65.8% 0.164 16.4)",
+        "tonalRamp": [
+          "#1E0004",
+          "#4A0011",
+          "#7A0223",
+          "#A6243C",
+          "#CF4D5D",
+          "#FA7480",
+          "#FFB3B7",
+          "#FFE8E9"
+        ]
+      },
+      "danger-bright": {
+        "role": "state",
+        "displayName": "Danger Bright",
+        "canonical": "oklch(75.9% 0.119 13.1)",
+        "tonalRamp": [
+          "#1E0005",
+          "#490115",
+          "#711B2D",
+          "#943C4A",
+          "#BC606C",
+          "#E5848F",
+          "#FFB3BA",
+          "#FFE8EA"
+        ]
+      },
+      "on-danger": {
+        "role": "state",
+        "displayName": "On Danger",
+        "canonical": "oklch(20% 0.055 16.4)",
+        "tonalRamp": [
+          "#1D0104",
+          "#3A181B",
+          "#593336",
+          "#7A5153",
+          "#9E7375",
+          "#C59799",
+          "#ECBDBE",
+          "#FFE8E9"
+        ]
+      },
+      "danger-deep": {
+        "role": "state",
+        "displayName": "Danger Deep",
+        "canonical": "oklch(50.3% 0.179 22.2)",
+        "tonalRamp": [
+          "#1F0002",
+          "#4A010A",
+          "#7B0218",
+          "#AC182A",
+          "#D6474D",
+          "#FF7172",
+          "#FFB4B1",
+          "#FEE9E7"
+        ]
+      },
+      "danger-deeper": {
+        "role": "state",
+        "displayName": "Danger Deeper",
+        "canonical": "oklch(45.5% 0.16 21.8)",
+        "tonalRamp": [
+          "#1F0002",
+          "#4A010B",
+          "#7B0218",
+          "#A52932",
+          "#CE5053",
+          "#F87677",
+          "#FFB4B1",
+          "#FEE9E7"
+        ]
+      },
+      "success": {
+        "role": "state",
+        "displayName": "Success",
+        "canonical": "oklch(74.9% 0.149 156)",
+        "tonalRamp": [
+          "#001005",
+          "#002D17",
+          "#024D2B",
+          "#057041",
+          "#03995A",
+          "#41C07C",
+          "#6DE7A1",
+          "#C5FFD9"
+        ]
+      },
+      "success-text": {
+        "role": "state",
+        "displayName": "Success Text",
+        "canonical": "oklch(81% 0.117 157.9)",
+        "tonalRamp": [
+          "#000F06",
+          "#002C18",
+          "#004D2D",
+          "#057045",
+          "#359565",
+          "#5DBB88",
+          "#85E2AD",
+          "#C4FFDB"
+        ]
+      },
+      "success-deep": {
+        "role": "state",
+        "displayName": "Success Deep",
+        "canonical": "oklch(52.9% 0.119 155.8)",
+        "tonalRamp": [
+          "#000F05",
+          "#012D16",
+          "#034D2B",
+          "#017040",
+          "#379561",
+          "#60BB85",
+          "#87E2AA",
+          "#C4FFD9"
+        ]
+      },
+      "success-text-on-papier": {
+        "role": "state",
+        "displayName": "Success Text On Papier",
+        "canonical": "oklch(45.2% 0.1 156.4)",
+        "tonalRamp": [
+          "#000F05",
+          "#002D17",
+          "#014D2B",
+          "#1F6E45",
+          "#479267",
+          "#6DB88B",
+          "#93DFB0",
+          "#C4FFD9"
+        ]
+      },
+      "amber": {
+        "role": "state",
+        "displayName": "Amber",
+        "canonical": "oklch(74.3% 0.13 77.3)",
+        "tonalRamp": [
+          "#120900",
+          "#322000",
+          "#563A02",
+          "#7D5501",
+          "#A97506",
+          "#D19937",
+          "#FABF61",
+          "#FFECD0"
+        ]
+      },
+      "amber-text": {
+        "role": "state",
+        "displayName": "Amber Text",
+        "canonical": "oklch(80.5% 0.122 83.3)",
+        "tonalRamp": [
+          "#110A00",
+          "#302100",
+          "#533B01",
+          "#785803",
+          "#A37807",
+          "#C99D3F",
+          "#F1C368",
+          "#FFECC9"
+        ]
+      },
+      "amber-deep": {
+        "role": "state",
+        "displayName": "Amber Deep",
+        "canonical": "oklch(62.3% 0.134 71.5)",
+        "tonalRamp": [
+          "#130900",
+          "#341F00",
+          "#593803",
+          "#815203",
+          "#AF7104",
+          "#D89536",
+          "#FEBC67",
+          "#FFEBD4"
+        ]
+      },
+      "amber-text-on-papier": {
+        "role": "state",
+        "displayName": "Amber Text On Papier",
+        "canonical": "oklch(47.1% 0.099 76.3)",
+        "tonalRamp": [
+          "#130900",
+          "#332000",
+          "#563901",
+          "#7D5505",
+          "#A27835",
+          "#C89C5A",
+          "#EFC280",
+          "#FFECD1"
+        ]
+      },
+      "beleg-paper": {
+        "role": "document",
+        "displayName": "Beleg · Paper",
+        "canonical": "oklch(100% 0 89.9)",
+        "tonalRamp": [
+          "#0B0B0B",
+          "#242424",
+          "#404040",
+          "#5D5D5D",
+          "#808080",
+          "#A4A4A4",
+          "#CACACA",
+          "#EEEEEE"
+        ]
+      },
+      "beleg-ink": {
+        "role": "document",
+        "displayName": "Beleg · Ink",
+        "canonical": "oklch(21.3% 0 89.9)",
+        "tonalRamp": [
+          "#0B0B0B",
+          "#242424",
+          "#404040",
+          "#5D5D5D",
+          "#808080",
+          "#A4A4A4",
+          "#CACACA",
+          "#EEEEEE"
+        ]
+      },
+      "beleg-ink-strong": {
+        "role": "document",
+        "displayName": "Beleg · Ink Strong",
+        "canonical": "oklch(19.1% 0 89.9)",
+        "tonalRamp": [
+          "#0B0B0B",
+          "#242424",
+          "#404040",
+          "#5D5D5D",
+          "#808080",
+          "#A4A4A4",
+          "#CACACA",
+          "#EEEEEE"
+        ]
+      },
+      "beleg-ink-muted": {
+        "role": "document",
+        "displayName": "Beleg · Ink Muted",
+        "canonical": "oklch(46.8% 0 89.9)",
+        "tonalRamp": [
+          "#0B0B0B",
+          "#242424",
+          "#404040",
+          "#5D5D5D",
+          "#808080",
+          "#A4A4A4",
+          "#CACACA",
+          "#EEEEEE"
+        ]
+      },
+      "beleg-rule": {
+        "role": "document",
+        "displayName": "Beleg · Rule",
+        "canonical": "oklch(90.5% 0.007 247.9)",
+        "tonalRamp": [
+          "#090B0E",
+          "#212427",
+          "#3D4043",
+          "#5B5E61",
+          "#7D8184",
+          "#A1A5A9",
+          "#C7CBCF",
+          "#EBEFF3"
+        ]
+      },
+      "beleg-rule-strong": {
+        "role": "document",
+        "displayName": "Beleg · Rule Strong",
+        "canonical": "oklch(78.3% 0.009 247.9)",
+        "tonalRamp": [
+          "#080C0F",
+          "#212428",
+          "#3C4044",
+          "#5A5E63",
+          "#7C8185",
+          "#A0A5AA",
+          "#C6CBD0",
+          "#EAEFF4"
+        ]
+      },
+      "beleg-fill": {
+        "role": "document",
+        "displayName": "Beleg · Fill",
+        "canonical": "oklch(94.8% 0.006 255.5)",
+        "tonalRamp": [
+          "#090B0E",
+          "#222427",
+          "#3E4043",
+          "#5B5E61",
+          "#7E8084",
+          "#A2A5A8",
+          "#C8CBCF",
+          "#ECEFF3"
+        ]
+      },
+      "plan-ground": {
+        "role": "planner",
+        "displayName": "Hallenplan · Ground",
+        "canonical": "oklch(15.6% 0.018 251.5)",
+        "tonalRamp": [
+          "#060C13",
+          "#1E252D",
+          "#394149",
+          "#565F68",
+          "#79818B",
+          "#9DA6B0",
+          "#C2CCD6",
+          "#E6F0FB"
+        ]
+      },
+      "plan-ground-raised": {
+        "role": "planner",
+        "displayName": "Hallenplan · Ground Raised",
+        "canonical": "oklch(18.7% 0.025 249.3)",
+        "tonalRamp": [
+          "#040C15",
+          "#1B2530",
+          "#36414D",
+          "#535F6C",
+          "#75828F",
+          "#99A6B4",
+          "#BECCDB",
+          "#E3F0FE"
+        ]
+      },
+      "plan-ink": {
+        "role": "planner",
+        "displayName": "Hallenplan · Ink",
+        "canonical": "oklch(96.5% 0.011 252.1)",
+        "tonalRamp": [
+          "#080C10",
+          "#202429",
+          "#3B4046",
+          "#595E64",
+          "#7B8187",
+          "#A0A5AC",
+          "#C5CBD2",
+          "#E9EFF6"
+        ]
+      },
+      "plan-teal": {
+        "role": "planner",
+        "displayName": "Hallenplan · Teal",
+        "canonical": "oklch(83.3% 0.142 181.8)",
+        "tonalRamp": [
+          "#000F0C",
+          "#012B26",
+          "#014B42",
+          "#006D61",
+          "#0A9485",
+          "#0ABEAA",
+          "#32E8D1",
+          "#BAFFF2"
+        ]
+      },
+      "plan-teal-deep": {
+        "role": "planner",
+        "displayName": "Hallenplan · Teal Deep",
+        "canonical": "oklch(70% 0.123 181.1)",
+        "tonalRamp": [
+          "#000F0C",
+          "#002B25",
+          "#044B42",
+          "#066D60",
+          "#069584",
+          "#25BDA9",
+          "#5BE5CF",
+          "#BAFFF1"
+        ]
+      },
+      "plan-teal-ink": {
+        "role": "planner",
+        "displayName": "Hallenplan · Teal Ink",
+        "canonical": "oklch(22.2% 0.033 185)",
+        "tonalRamp": [
+          "#000F0D",
+          "#0E2926",
+          "#2B4642",
+          "#486460",
+          "#6A8783",
+          "#8EACA7",
+          "#B3D2CD",
+          "#D7F6F1"
+        ]
+      },
+      "plan-muted": {
+        "role": "planner",
+        "displayName": "Hallenplan · Muted",
+        "canonical": "oklch(69.7% 0.04 249.6)",
+        "tonalRamp": [
+          "#000C1B",
+          "#142537",
+          "#2F4254",
+          "#4C6074",
+          "#6E8398",
+          "#92A7BD",
+          "#B7CDE4",
+          "#E3F0FF"
+        ]
+      },
+      "plan-faint": {
+        "role": "planner",
+        "displayName": "Hallenplan · Faint",
+        "canonical": "oklch(55% 0.04 247.3)",
+        "tonalRamp": [
+          "#000C1B",
+          "#132636",
+          "#2E4254",
+          "#4C6073",
+          "#6D8397",
+          "#91A7BD",
+          "#B6CEE4",
+          "#E2F0FE"
+        ]
+      },
+      "plan-soft": {
+        "role": "planner",
+        "displayName": "Hallenplan · Soft",
+        "canonical": "oklch(77.5% 0.029 248.2)",
+        "tonalRamp": [
+          "#030C17",
+          "#192532",
+          "#34414F",
+          "#515F6E",
+          "#738291",
+          "#97A7B6",
+          "#BCCDDD",
+          "#E2F0FF"
+        ]
+      },
+      "plan-exclusion": {
+        "role": "planner",
+        "displayName": "Hallenplan · Exclusion",
+        "canonical": "oklch(59.7% 0.045 249.7)",
+        "tonalRamp": [
+          "#000C1C",
+          "#112539",
+          "#2D4257",
+          "#4A6077",
+          "#6C839B",
+          "#8FA7C1",
+          "#B5CEE8",
+          "#E3F0FE"
+        ]
+      },
+      "plan-hall": {
+        "role": "planner",
+        "displayName": "Hallenplan · Hall",
+        "canonical": "oklch(64.1% 0.138 157.9)",
+        "tonalRamp": [
+          "#000F06",
+          "#002C18",
+          "#004D2D",
+          "#007044",
+          "#0A985F",
+          "#47BE83",
+          "#72E6A8",
+          "#C4FFDB"
+        ]
+      },
+      "plan-occupied": {
+        "role": "planner",
+        "displayName": "Hallenplan · Occupied",
+        "canonical": "oklch(62.2% 0.133 155.5)",
+        "tonalRamp": [
+          "#001005",
+          "#002D16",
+          "#024D2A",
+          "#00703F",
+          "#25975C",
+          "#53BD80",
+          "#7CE4A5",
+          "#C5FFD9"
+        ]
+      },
+      "plan-ok": {
+        "role": "planner",
+        "displayName": "Hallenplan · Ok",
+        "canonical": "oklch(82.5% 0.134 159.1)",
+        "tonalRamp": [
+          "#000F06",
+          "#002C19",
+          "#034D2F",
+          "#027046",
+          "#129862",
+          "#4ABE86",
+          "#74E5AB",
+          "#C4FFDC"
+        ]
+      },
+      "plan-reserved": {
+        "role": "planner",
+        "displayName": "Hallenplan · Reserved",
+        "canonical": "oklch(80.1% 0.13 79.8)",
+        "tonalRamp": [
+          "#120900",
+          "#322000",
+          "#553A01",
+          "#7A5603",
+          "#A77601",
+          "#CF9A35",
+          "#F7C15F",
+          "#FEECCE"
+        ]
+      },
+      "plan-invalid": {
+        "role": "planner",
+        "displayName": "Hallenplan · Invalid",
+        "canonical": "oklch(69.1% 0.168 25.8)",
+        "tonalRamp": [
+          "#1F0001",
+          "#4B0004",
+          "#7C000D",
+          "#A82426",
+          "#D24E48",
+          "#FC746C",
+          "#FEB5AE",
+          "#FEE9E6"
+        ]
+      },
+      "plan-move": {
+        "role": "planner",
+        "displayName": "Hallenplan · Move",
+        "canonical": "oklch(71.1% 0.142 247.3)",
+        "tonalRamp": [
+          "#000C1B",
+          "#012643",
+          "#004270",
+          "#0361A0",
+          "#2685D0",
+          "#51ABF8",
+          "#9ED0FF",
+          "#E2F0FE"
+        ]
+      },
+      "plan-danger-text": {
+        "role": "planner",
+        "displayName": "Hallenplan · Danger Text",
+        "canonical": "oklch(83.9% 0.089 25.1)",
+        "tonalRamp": [
+          "#1F0001",
+          "#460B0C",
+          "#672A27",
+          "#894844",
+          "#AF6B65",
+          "#D78F88",
+          "#FEB5AE",
+          "#FFE9E6"
+        ]
+      },
+      "plan-chip-text": {
+        "role": "planner",
+        "displayName": "Hallenplan · Chip Text",
+        "canonical": "oklch(92.6% 0.054 186.2)",
+        "tonalRamp": [
+          "#000F0D",
+          "#002B27",
+          "#164944",
+          "#376862",
+          "#5A8B85",
+          "#7EB0AA",
+          "#A3D6D0",
+          "#C7FBF4"
+        ]
+      },
+      "calendar-due": {
+        "role": "calendar",
+        "displayName": "Kalender · Due",
+        "canonical": "oklch(56.1% 0.134 41.3)",
+        "tonalRamp": [
+          "#1A0400",
+          "#421200",
+          "#6E2501",
+          "#993D13",
+          "#C1613B",
+          "#EA865F",
+          "#FFB79C",
+          "#FFE9E1"
+        ]
+      },
+      "calendar-wish": {
+        "role": "calendar",
+        "displayName": "Kalender · Wish",
+        "canonical": "oklch(54.9% 0.1 87.4)",
+        "tonalRamp": [
+          "#110A00",
+          "#2F2201",
+          "#513D00",
+          "#755901",
+          "#9A7C31",
+          "#BFA157",
+          "#E6C77D",
+          "#FEEDC5"
+        ]
+      },
+      "workbench-emphasis": {
+        "role": "neutral",
+        "displayName": "Workbench · Emphasis",
+        "canonical": "oklch(27.6% 0.019 179.1)",
+        "tonalRamp": [
+          "#030E0B",
+          "#1A2724",
+          "#354340",
+          "#53615E",
+          "#758480",
+          "#99A9A5",
+          "#BECFCB",
+          "#E2F3EF"
+        ]
+      },
+      "workbench-rule": {
+        "role": "neutral",
+        "displayName": "Workbench · Rule",
+        "canonical": "oklch(33.2% 0.023 178.7)",
+        "tonalRamp": [
+          "#020E0B",
+          "#172824",
+          "#334440",
+          "#50625E",
+          "#728580",
+          "#96AAA5",
+          "#BBD0CB",
+          "#DFF4EF"
+        ]
+      },
+      "workbench-rule-strong": {
+        "role": "neutral",
+        "displayName": "Workbench · Rule Strong",
+        "canonical": "oklch(41.1% 0.029 176.2)",
+        "tonalRamp": [
+          "#000F0B",
+          "#142923",
+          "#2F453F",
+          "#4D635D",
+          "#6F867F",
+          "#92ABA4",
+          "#B8D1CA",
+          "#DBF5EE"
+        ]
+      },
+      "workbench-muted": {
+        "role": "neutral",
+        "displayName": "Workbench · Muted",
+        "canonical": "oklch(73.1% 0.022 178.1)",
+        "tonalRamp": [
+          "#020E0B",
+          "#182824",
+          "#334440",
+          "#51625E",
+          "#738580",
+          "#97A9A4",
+          "#BCD0CA",
+          "#E0F4EE"
+        ]
+      },
+      "workbench-rule-on-papier": {
+        "role": "neutral",
+        "displayName": "Workbench · Rule On Papier",
+        "canonical": "oklch(89.7% 0.013 179.4)",
+        "tonalRamp": [
+          "#050D0B",
+          "#1D2624",
+          "#384240",
+          "#56605E",
+          "#788380",
+          "#9CA7A5",
+          "#C2CECB",
+          "#E5F2EF"
+        ]
+      },
+      "workbench-rule-strong-on-papier": {
+        "role": "neutral",
+        "displayName": "Workbench · Rule Strong On Papier",
+        "canonical": "oklch(82.6% 0.023 179.1)",
+        "tonalRamp": [
+          "#020E0B",
+          "#182824",
+          "#334440",
+          "#50625E",
+          "#728580",
+          "#96AAA5",
+          "#BCD0CB",
+          "#DFF4EF"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Person balance hero and the largest page figures."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page titles on desktop."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Section titles and dashboard hero numbers."
+      },
+      "title-small": {
+        "displayName": "Title Small",
+        "purpose": "Card headings and dialog titles."
+      },
+      "body-large": {
+        "displayName": "Body Large",
+        "purpose": "Form fields, buttons, menu items; base reading size."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Card metadata, lists, legends."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Segmented-control labels and secondary chips."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Mono eyebrows, KPI labels, badges, tab labels (uppercase)."
+      },
+      "micro": {
+        "displayName": "Micro",
+        "purpose": "Menu group headings (uppercase)."
+      },
+      "workbench-display": {
+        "displayName": "Workbench Display",
+        "purpose": "Thesis headlines in standalone dossiers."
+      },
+      "workbench-body": {
+        "displayName": "Workbench Body",
+        "purpose": "Reading text in standalone dossiers."
+      }
+    },
+    "shadows": [
+      {
+        "name": "card-schiefer",
+        "value": "0 1px 2px rgba(0,0,0,.35), 0 10px 28px rgba(0,0,0,.35)",
+        "purpose": "App cards on the dark theme; lifts them just above the plan linework."
+      },
+      {
+        "name": "card-papier",
+        "value": "0 1px 2px rgba(16,34,31,.05), 0 8px 24px rgba(16,34,31,.08)",
+        "purpose": "App cards on the light theme."
+      },
+      {
+        "name": "overlay-schiefer",
+        "value": "0 1px 2px rgba(0,0,0,.35), 0 14px 34px rgba(0,0,0,.45)",
+        "purpose": "Dialogs, menu sheet and toasts on the dark theme."
+      },
+      {
+        "name": "overlay-papier",
+        "value": "0 1px 2px rgba(16,34,31,.05), 0 14px 34px rgba(16,34,31,.12)",
+        "purpose": "Dialogs, menu sheet and toasts on the light theme."
+      },
+      {
+        "name": "focus-halo",
+        "value": "0 0 0 3px rgba(47,179,168,.14)",
+        "purpose": "Focused text fields, with a petrol border."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-switch",
+        "value": "transform .22s cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Sliding thumb of state switches."
+      },
+      {
+        "name": "control-feedback",
+        "value": "background .15s ease, border-color .15s",
+        "purpose": "Buttons and rows on hover; 1px press offset on :active."
+      },
+      {
+        "name": "bar-grow",
+        "value": "scaleX 0→1 .9s cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Dashboard status bars; removed under prefers-reduced-motion."
+      },
+      {
+        "name": "sheet-in",
+        "value": "translateX(30px)→0 .2s ease",
+        "purpose": "Menu sheet entering from the right."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "form-columns",
+        "value": "640px"
+      },
+      {
+        "name": "planner-plan-first",
+        "value": "900px"
+      },
+      {
+        "name": "rail-navigation",
+        "value": "1024px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one main action of a view.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">+ Gefährt</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;min-height:44px;padding:.6rem 1rem;border:1px solid transparent;border-radius:12px;background:var(--primary,#2FB3A8);color:var(--on-primary,#06211E);font:700 1rem 'Bricolage Grotesque',system-ui,sans-serif;cursor:pointer;transition:background .15s ease,transform .05s ease}.ds-btn-primary:hover{background:var(--primary-hover,#4CC9BE)}.ds-btn-primary:active{transform:translateY(1px)}.ds-btn-primary:focus-visible{outline:2px solid var(--primary-hover,#4CC9BE);outline-offset:2px}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary actions; the border is the control cue.",
+      "html": "<button class=\"ds-btn-ghost\" type=\"button\">Mehrfachauswahl</button>",
+      "css": ".ds-btn-ghost{display:inline-flex;align-items:center;gap:.4rem;min-height:36px;padding:.35rem .7rem;border:1px solid var(--text-muted,#8CA09B);border-radius:12px;background:transparent;color:var(--text,#E8F0EE);font:700 .875rem 'Bricolage Grotesque',system-ui,sans-serif;cursor:pointer}.ds-btn-ghost:hover{background:var(--bg-elev-2,#182321)}.ds-btn-ghost:focus-visible{outline:2px solid var(--primary-hover,#4CC9BE);outline-offset:2px}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Canvas-filled field with a petrol focus halo.",
+      "html": "<label class=\"ds-field\"><span>Kennzeichen</span><input class=\"ds-input\" value=\"DEMO-0\"></label>",
+      "css": ".ds-field{display:grid;gap:.35rem;font:600 .875rem 'Hanken Grotesk',system-ui,sans-serif;color:var(--text-muted,#8CA09B)}.ds-input{padding:.65rem .75rem;border:1px solid var(--border,#24312E);border-radius:12px;background:var(--bg,#0C1312);color:var(--text,#E8F0EE);font:400 1rem 'Hanken Grotesk',system-ui,sans-serif}.ds-input:focus{outline:none;border-color:var(--primary,#2FB3A8);box-shadow:0 0 0 3px var(--primary-soft,rgba(47,179,168,.14))}"
+    },
+    {
+      "name": "State Switch",
+      "kind": "custom",
+      "refersTo": "segmented-control",
+      "description": "Sliding-thumb switch for record states (stored / reserved / collected, open / paid).",
+      "html": "<div class=\"ds-seg\" role=\"radiogroup\" aria-label=\"Zahlstatus · Demo Wohnmobil 1\"><button role=\"radio\" aria-checked=\"true\" class=\"on\">offen</button><button role=\"radio\" aria-checked=\"false\">bezahlt</button></div>",
+      "css": ".ds-seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--border,#24312E);border-radius:999px;background:var(--bg-elev-2,#182321)}.ds-seg button{border:0;border-radius:999px;padding:.32rem .7rem;background:none;color:var(--text-muted,#8CA09B);font:600 .75rem 'Hanken Grotesk',system-ui,sans-serif;cursor:pointer}.ds-seg button.on{background:var(--accent,#E07A3F);color:var(--on-accent,#241800)}.ds-seg button:focus-visible{outline:2px solid var(--primary,#2FB3A8);outline-offset:2px}"
+    },
+    {
+      "name": "Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Tinted state badge with mono label type.",
+      "html": "<span class=\"ds-badge\">bezahlt · Rechnung</span>",
+      "css": ".ds-badge{display:inline-block;padding:.15rem .5rem;border-radius:999px;background:color-mix(in srgb,var(--success,#4CC985) 16%,transparent);color:var(--success-text,#7BD8A4);font:700 .6875rem 'Hanken Grotesk',system-ui,sans-serif}"
+    },
+    {
+      "name": "Record Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Whole-card navigation with one chevron; inner buttons stay separate targets.",
+      "html": "<article class=\"ds-card\"><div><h3><a href=\"#\">Demo Berger 1</a></h3><p>demo0@example.invalid · +43 000 000000</p><button class=\"ds-sect\" type=\"button\"><svg viewBox=\"0 0 24 24\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 21s-6-5.3-6-10a6 6 0 0 1 12 0c0 4.7-6 10-6 10Z\"/><circle cx=\"12\" cy=\"11\" r=\"2.3\"/></svg> Im Plan platzieren</button></div><span class=\"ds-chev\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M9 6l6 6-6 6\"/></svg></span></article>",
+      "css": ".ds-card{position:relative;display:flex;justify-content:space-between;gap:.75rem;padding:1rem 2.6rem 1rem 1rem;border:1px solid var(--card-border,#24312E);border-radius:14px;background:var(--card-bg,#121B19);box-shadow:0 1px 2px rgba(0,0,0,.35),0 10px 28px rgba(0,0,0,.35);color:var(--text,#E8F0EE);font:400 .875rem 'Hanken Grotesk',system-ui,sans-serif}.ds-card h3{margin:0 0 .2rem;font:700 1.125rem 'Bricolage Grotesque',system-ui,sans-serif}.ds-card h3 a{color:inherit;text-decoration:none}.ds-card h3 a::after{content:'';position:absolute;inset:0}.ds-card p{margin:0;color:var(--text-muted,#8CA09B)}.ds-card:hover{border-color:color-mix(in srgb,var(--primary,#2FB3A8) 45%,var(--card-border,#24312E))}.ds-sect{position:relative;z-index:1;display:inline-flex;align-items:center;gap:.3rem;margin:.35rem 0 0 -.55rem;padding:.35rem .55rem;border:0;border-radius:12px;background:none;color:var(--primary-ink,#5ED4C9);font:600 .875rem 'Hanken Grotesk',system-ui,sans-serif;cursor:pointer}.ds-sect:hover{background:var(--primary-soft,rgba(47,179,168,.14))}.ds-chev{position:absolute;right:.75rem;top:50%;transform:translateY(-50%);display:flex;color:var(--text-muted,#8CA09B);pointer-events:none}"
+    },
+    {
+      "name": "Tab Bar Item",
+      "kind": "nav",
+      "refersTo": "tab-active",
+      "description": "Bottom-bar destination; active in Petrol Ink on a soft petrol pill.",
+      "html": "<nav class=\"ds-tabs\"><button class=\"ds-tab on\" aria-current=\"page\"><span class=\"pill\"><svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M9 6l6 6-6 6\"/></svg></span><span>Übersicht</span></button><button class=\"ds-tab\"><span class=\"pill\"><svg viewBox=\"0 0 24 24\" width=\"15\" height=\"15\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 21s-6-5.3-6-10a6 6 0 0 1 12 0c0 4.7-6 10-6 10Z\"/><circle cx=\"12\" cy=\"11\" r=\"2.3\"/></svg></span><span>Stellplätze</span></button></nav>",
+      "css": ".ds-tabs{display:flex;gap:4px;padding:6px;border-top:1px solid var(--glass-border,rgba(232,240,238,.08));background:var(--bg-elev,#121B19)}.ds-tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;border:0;background:none;color:var(--text-muted,#8CA09B);font:600 .6875rem 'Hanken Grotesk',system-ui,sans-serif;white-space:nowrap;cursor:pointer}.ds-tab .pill{display:flex;align-items:center;justify-content:center;width:48px;height:28px;border-radius:999px}.ds-tab.on{color:var(--tab-active,#5ED4C9)}.ds-tab.on .pill{background:var(--primary-soft,rgba(47,179,168,.14))}.ds-tab:focus-visible{outline:2px solid var(--primary,#2FB3A8);outline-offset:-3px}"
+    },
+    {
+      "name": "Undo Toast",
+      "kind": "custom",
+      "refersTo": "toast",
+      "description": "Pill toast after a confirmed delete; the server call waits until it expires.",
+      "html": "<div class=\"ds-toast\" role=\"status\">Person wird gelöscht … <button type=\"button\">Rückgängig</button></div>",
+      "css": ".ds-toast{display:inline-flex;align-items:center;gap:.75rem;padding:.6rem .7rem .6rem 1.2rem;border:1px solid var(--border,#24312E);border-radius:999px;background:var(--bg-elev-2,#182321);color:var(--text,#E8F0EE);box-shadow:0 1px 2px rgba(0,0,0,.35),0 14px 34px rgba(0,0,0,.45);font:600 1rem 'Hanken Grotesk',system-ui,sans-serif}.ds-toast button{border:0;border-radius:999px;padding:.3rem .8rem;background:var(--primary,#2FB3A8);color:var(--on-primary,#06211E);font:700 .875rem 'Bricolage Grotesque',system-ui,sans-serif;cursor:pointer}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Fahrwerk",
+    "overview": "Fahrwerk is the running gear of a storage yard: the part that carries the daily load and is only noticed when it fails. Parkrr's interface follows that idea. A slate ground with a petrol tint carries dense operational screens (persons, vehicles, extra costs, invoices, the tax year) without decoration competing for attention. Petrol marks what can be acted on, copper marks money, amber marks a state that needs a look, and the faint garage-plan linework behind every page ties the tool to its spatial core, the scale hall planner.\n\nThe app is mobile-first and operated with one hand on a phone in the yard as often as at a desk. Controls are direct (one-tap sliders, segmented switches, whole-card navigation), numbers line up, and every state is readable without color. Dark is the default and is designed on its own terms; light is a full counterpart, not an inversion.\n\nThe standalone review workbenches (security audit, product roadmap, before/after comparisons) share the same world: the same slate and petrol, the same three typefaces, the same plan linework. They differ in density and composition, not in material.",
+    "keyCharacteristics": [
+      "Slate ground, petrol action, copper money, amber state.",
+      "Three voices: Bricolage Grotesque for numbers and headings, Hanken Grotesk for reading, JetBrains Mono for labels and data.",
+      "One-tap controls and whole-card targets over forms and small buttons.",
+      "Garage-plan linework as the recurring signature, always behind content.",
+      "Every state carried by text, shape or position as well as color."
+    ],
+    "rules": [
+      {
+        "name": "The Copper-Is-Money Rule",
+        "body": "Kupfer appears only where money is meant: a balance, an amount owed, the current month of a money chart. Never for decoration, never for a warning.",
+        "section": "colors"
+      },
+      {
+        "name": "The Amber-Is-State Rule",
+        "body": "Amber describes a state (reserved, due soon, backup stale). It is not a second accent.",
+        "section": "colors"
+      },
+      {
+        "name": "The Paper-Stays-Paper Rule",
+        "body": "The invoice preview uses the Beleg ink in every theme, because the operator must read on screen exactly what the customer receives.",
+        "section": "colors"
+      },
+      {
+        "name": "The Restrained Petrol Rule",
+        "body": "Petrol directs attention; it does not wash large areas. Large surfaces stay slate or paper.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ladder Rule",
+        "body": "Every size comes from the nine app steps above. Three exceptions are deliberate: the planner's zoom-dependent block labels (0.5–0.58rem), the icon-button glyph and invoice title (1.2rem), and single display figures between 1.3 and 2.5rem that each carry their own level of the hierarchy.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Money, counts and dates that line up use tabular numerals.",
+        "section": "typography"
+      },
+      {
+        "name": "The Border-Before-Shadow Rule",
+        "body": "Establish structure with rules and surface contrast first. Workbenches stay flat; app cards get only the soft card shadow; only true overlays float.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** keep copper for money and amber for state, and pair every color with text, an icon or a position.",
+      "**Do** use the nine-step type ladder and tabular numerals for figures that line up.",
+      "**Do** make the common action one tap: sliders, whole-card targets, tap-to-place in the planner.",
+      "**Do** keep icons in the shared SVG set and draw new ones with the same 1.8px stroke.",
+      "**Do** let the garage-plan linework sit behind content, with a scrim under page heads.",
+      "**Do** design dark and light separately and measure every ink/ground pair (WCAG AA)."
+    ],
+    "donts": [
+      "**Don't** use copper or amber as decoration, and don't use petrol as a large fill.",
+      "**Don't** introduce emoji or font-dependent Unicode glyphs as icons.",
+      "**Don't** add font sizes outside the ladder, or radii outside the scale, without documenting why.",
+      "**Don't** put the invoice preview into theme colors.",
+      "**Don't** add external fonts, CDNs or hosted services; all assets are local.",
+      "**Don't** introduce raster imagery into the workbenches without a documented need and provenance."
+    ]
+  }
+}

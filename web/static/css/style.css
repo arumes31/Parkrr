@@ -3060,7 +3060,7 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 @media (min-width: 1024px) {
     .app-header #search-btn { width: auto; min-width: 15rem; justify-content: flex-start; gap: .55rem; padding: 0 .5rem 0 .7rem; }
     .app-header #search-btn .search-hint { display: inline; font-size: var(--text-base); }
-    .app-header #search-btn .search-kbd { display: inline-block; margin-left: auto; font: 600 var(--text-xs) var(--font-mono); line-height: 1.6; padding: 0 .35rem; border: 1px solid var(--border); border-radius: 5px; color: var(--text-muted); }
+    .app-header #search-btn .search-kbd { display: inline-block; margin-left: auto; font: 600 var(--text-xs) var(--font-mono); line-height: 1.6; padding: 0 .35rem; border: 1px solid var(--border); border-radius: 6px; color: var(--text-muted); }
 }
 
 /* Menue: Schliessen-Knopf oben rechts im Blatt. */
@@ -3137,18 +3137,18 @@ button.portal-row { width:100%; border:0; border-bottom:1px solid var(--border);
 .restore-steps li:has(.restore-check:checked) label { color: var(--text-muted); text-decoration: line-through; }
 .help-link { display: inline-flex; align-items: center; gap: .35rem; font-weight: 600; color: var(--primary-ink); text-decoration: none; margin-top: .35rem; }
 .help-link:hover { text-decoration: underline; }
-.help-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.help-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 3px; }
 
 /* Hilfe & Handbuch: ruhige Lesespalte auf einer Karte (nicht ueber dem Hallenplan). */
 .md { max-width: 74ch; line-height: 1.65; padding: 1.25rem 1.5rem; }
 .md > :first-child { margin-top: 0; }
 .md h3 { font-size: 1.3rem; margin: 2.2rem 0 .6rem; scroll-margin-top: calc(var(--header-h) + 1rem); }
-.md h4 { font-size: 1.05rem; margin: 1.6rem 0 .4rem; scroll-margin-top: calc(var(--header-h) + 1rem); }
+.md h4 { font-size: var(--text-lg); margin: 1.6rem 0 .4rem; scroll-margin-top: calc(var(--header-h) + 1rem); }
 .md p, .md ul, .md ol { margin: 0 0 .9rem; }
 .md ul, .md ol { padding-left: 1.3rem; }
 .md li + li { margin-top: .3rem; }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0; }
-.md code { font-family: var(--font-mono); font-size: .9em; background: var(--bg-elev-2); border-radius: 5px; padding: .05rem .3rem; overflow-wrap: anywhere; }
+.md code { font-family: var(--font-mono); font-size: .9em; background: var(--bg-elev-2); border-radius: 6px; padding: .05rem .3rem; overflow-wrap: anywhere; }
 .md strong { font-weight: 700; }
 .md a { color: var(--primary-ink); }
 .md blockquote { margin: 0 0 1rem; padding: .7rem 1rem; border: 1px solid var(--border); background: var(--bg-elev-2); border-radius: 10px; }

@@ -5,40 +5,121 @@
     "ignoreFiles": [],
     "ignoreValues": [
       {
-        "rule": "design-system-color",
-        "value": "*",
+        "rule": "design-system-font-size",
+        "value": ".5rem",
         "files": [
           "web/static/**"
         ],
-        "createdAt": "2026-10-15T08:37:59.690Z",
-        "reason": "DESIGN.md beschreibt nur die Doku-Werkbaenke (docs/), nicht die App unter web/static"
-      },
-      {
-        "rule": "design-system-font",
-        "value": "*",
-        "files": [
-          "web/static/**"
-        ],
-        "createdAt": "2026-10-15T08:37:59.915Z",
-        "reason": "DESIGN.md beschreibt nur die Doku-Werkbaenke (docs/), nicht die App unter web/static"
+        "createdAt": "2026-10-15T10:53:51.216Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
       },
       {
         "rule": "design-system-font-size",
-        "value": "*",
+        "value": ".52rem",
         "files": [
           "web/static/**"
         ],
-        "createdAt": "2026-10-15T08:38:00.157Z",
-        "reason": "DESIGN.md beschreibt nur die Doku-Werkbaenke (docs/), nicht die App unter web/static"
+        "createdAt": "2026-10-15T10:53:51.753Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
       },
       {
-        "rule": "design-system-radius",
-        "value": "*",
+        "rule": "design-system-font-size",
+        "value": ".55rem",
         "files": [
           "web/static/**"
         ],
-        "createdAt": "2026-10-15T08:38:00.371Z",
-        "reason": "DESIGN.md beschreibt nur die Doku-Werkbaenke (docs/), nicht die App unter web/static"
+        "createdAt": "2026-10-15T10:53:52.264Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": ".56rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:52.777Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": ".57rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:53.150Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": ".58rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:53.568Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "1.2rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:53.948Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "1.3rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:54.299Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "1.5rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:54.592Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "1.7rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:54.974Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "1.8rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:55.255Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "2rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:55.543Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
+      },
+      {
+        "rule": "design-system-font-size",
+        "value": "2.5rem",
+        "files": [
+          "web/static/**"
+        ],
+        "createdAt": "2026-10-15T10:53:55.817Z",
+        "reason": "Dokumentierte Ausnahme: DESIGN.md, The Ladder Rule"
       }
     ]
   }
