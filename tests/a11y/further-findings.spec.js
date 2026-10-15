@@ -103,6 +103,10 @@ test('dashboard: the key figures start open, fold on request and remember it', a
   await expect(page.locator('.dash-money')).toBeVisible();
   await kpis.locator('summary').click();
   await expect(page.locator('.dash-money')).toBeHidden();
+  // Gespeichert wird im toggle-Ereignis, das der Browser NACH dem Klick als eigene
+  // Aufgabe feuert. Ohne dieses Warten lud der langsamere CI-Runner neu, bevor der
+  // Zustand geschrieben war.
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('parkrr-open-dash-kpis'))).toBe('0');
   await page.reload();
   await expect(page.locator('.dash-kpis')).not.toHaveAttribute('open', '');
   await expect(page.locator('.dash-hero')).toBeVisible();
