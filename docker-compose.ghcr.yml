@@ -2,7 +2,10 @@
 # (published by .github/workflows/docker-publish.yml for amd64 + arm64).
 # No local build needed:
 #   docker compose -f docker-compose.ghcr.yml up -d
-# Pin a release instead of latest via PARKRR_TAG (e.g. PARKRR_TAG=1.2).
+# Defaults to this repository's own image (ghcr.io/arumes31/parkrr); override
+# PARKRR_IMAGE only with an image you trust. `latest` is mutable: pin a release
+# via PARKRR_TAG (e.g. PARKRR_TAG=1.2), or a digest via
+# PARKRR_TAG=1.2@sha256:<digest> for a reproducible, tamper-evident deploy.
 #
 # IMPORTANT: the `app` service below is kept byte-for-byte in sync with the
 # `app` service in docker-compose.yml — same environment, volumes, ports and
@@ -12,12 +15,12 @@
 # it used to silently miss the backup key, S3, SMTP, /backups and the proxy CIDRs.
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:deb28ee471183cb0c303113dac9b2433c51eeeeb678def7af9a9ec5820367815
     container_name: parkrr-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${PARKRR_DB_USER:-parkrr}
-      POSTGRES_PASSWORD: ${PARKRR_DB_PASSWORD:-parkrr}
+      POSTGRES_PASSWORD: ${PARKRR_DB_PASSWORD:?PARKRR_DB_PASSWORD must be set}
       POSTGRES_DB: ${PARKRR_DB_NAME:-parkrr}
     volumes:
       - parkrr-db-data:/var/lib/postgresql/data
@@ -30,7 +33,7 @@ services:
       - parkrr-net
 
   app:
-    image: ghcr.io/${PARKRR_IMAGE:-d0linger/parkrr}:${PARKRR_TAG:-latest}
+    image: ghcr.io/${PARKRR_IMAGE:-arumes31/parkrr}:${PARKRR_TAG:-latest}
     container_name: parkrr-app
     restart: unless-stopped
     depends_on:
@@ -44,7 +47,7 @@ services:
       PARKRR_DB_HOST: db
       PARKRR_DB_PORT: "5432"
       PARKRR_DB_USER: ${PARKRR_DB_USER:-parkrr}
-      PARKRR_DB_PASSWORD: ${PARKRR_DB_PASSWORD:-parkrr}
+      PARKRR_DB_PASSWORD: ${PARKRR_DB_PASSWORD:?PARKRR_DB_PASSWORD must be set}
       PARKRR_DB_NAME: ${PARKRR_DB_NAME:-parkrr}
       PARKRR_DB_SSLMODE: ${PARKRR_DB_SSLMODE:-disable}
       # --- Admin bootstrap (ADMIN_PASSWORD required) ---
