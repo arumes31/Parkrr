@@ -137,12 +137,13 @@ compose network). Schema migrations run automatically at startup.
 | `PARKRR_HTTP_PORT` | published host port (compose) | `8080` |
 | `PARKRR_DATABASE_URL` | full Postgres URL (overrides the discrete values) | – |
 | `PARKRR_DB_HOST` / `PARKRR_DB_PORT` | DB host / port | `db` / `5432` |
-| `PARKRR_DB_USER` / `PARKRR_DB_PASSWORD` / `PARKRR_DB_NAME` | DB credentials | `parkrr` |
-| `PARKRR_DB_SSLMODE` | Postgres SSL mode | `disable` |
+| `PARKRR_DB_USER` / `PARKRR_DB_NAME` | DB user / database name | `parkrr` |
+| `PARKRR_DB_PASSWORD` | **required** (compose) — DB password | – |
+| `PARKRR_DB_SSLMODE` | Postgres SSL mode (`disable` is only fine for the bundled DB on the compose network; use `verify-full` for any external database) | `disable` |
 | `PARKRR_ADMIN_USERNAME` | admin username | `admin` |
 | `PARKRR_ADMIN_EMAIL` | admin email | `admin@example.com` |
-| `PARKRR_ADMIN_PASSWORD` | **required** — admin password | – |
-| `PARKRR_SESSION_SECRET` | **required** — session secret (min. 32 chars) | – |
+| `PARKRR_ADMIN_PASSWORD` | **required** — admin password (8–72 bytes; checked against HIBP when it is applied; `.env.example` placeholders are rejected) | – |
+| `PARKRR_SESSION_SECRET` | **required** — session secret (min. 32 chars; `.env.example` placeholders are rejected) | – |
 | `PARKRR_SESSION_MAX_AGE` | session lifetime / inactivity window (sec.) | `604800` (7 days) |
 | `PARKRR_SESSION_SLIDING` | extend the session on activity (re-login only after inactivity) | `false` |
 | `PARKRR_SESSION_ABSOLUTE_MAX_AGE` | hard cap on session lifetime (sec., when sliding) | `7776000` (90 days) |
@@ -546,6 +547,7 @@ every push to `main` (and for `v*` tags). Start without a local build:
 cp .env.example .env   # set the required values (admin password, session secret …)
 docker compose -f docker-compose.ghcr.yml up -d
 # pin a version instead of latest:  PARKRR_TAG=1.2 docker compose -f docker-compose.ghcr.yml up -d
+# or a digest (immutable):          PARKRR_TAG=1.2@sha256:<digest> ...
 ```
 
 ### Deploy with Portainer (paste your .env)
@@ -556,11 +558,13 @@ Portainer's stack env vars are used for `${VAR}` **substitution** in the compose
 
 1. **Stacks → Add stack →** *Web editor*.
 2. Paste the contents of **`docker-compose.ghcr.yml`** (image-based — Portainer
-   pulls `ghcr.io/d0linger/parkrr`, no build needed).
+   pulls `ghcr.io/arumes31/parkrr` by default, no build needed; override with
+   `PARKRR_IMAGE` only for an image you trust).
 3. Below the editor → **Environment variables → Advanced mode** → paste your
    whole **`.env`** (based on `.env.example`; every line is a clean `KEY=value`).
    At minimum set `PARKRR_ADMIN_PASSWORD`, `PARKRR_SESSION_SECRET` (≥32 chars)
-   and `PARKRR_DB_PASSWORD` — deployment fails fast if the first two are missing.
+   and `PARKRR_DB_PASSWORD` — deployment fails fast if any of them is missing,
+   and the app refuses to start while a value still holds a `change-me` placeholder.
 4. **Deploy the stack**, then open `http://<host>:${PARKRR_HTTP_PORT}` (default 8080).
 
 Notes:

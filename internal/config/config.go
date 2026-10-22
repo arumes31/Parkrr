@@ -273,6 +273,18 @@ func Load() (*Config, error) {
 	if cfg.BackupKey != "" && len(cfg.BackupKey) < 32 {
 		return nil, fmt.Errorf("PARKRR_BACKUP_KEY must be at least 32 bytes long when set (supply a random value, e.g. `openssl rand -base64 48`)")
 	}
+	// The .env.example placeholders are public: a deployment that copied the file
+	// unchanged would run with a known admin password and a known key for the
+	// CSRF HMAC and the TOTP-at-rest encryption. Refuse to start instead.
+	for _, s := range []struct{ name, value string }{
+		{"PARKRR_ADMIN_PASSWORD", cfg.AdminPassword},
+		{"PARKRR_SESSION_SECRET", cfg.SessionSecret},
+		{"PARKRR_BACKUP_KEY", cfg.BackupKey},
+	} {
+		if isPlaceholderSecret(s.value) {
+			return nil, fmt.Errorf("%s still holds a placeholder value from .env.example; replace it with your own random value (e.g. `openssl rand -base64 48`)", s.name)
+		}
+	}
 	// Reject an unknown SMTP TLS mode rather than silently degrading to cleartext:
 	// only none|tls|starttls are handled by the mailer.
 	switch strings.ToLower(cfg.SMTPTLS) {
@@ -282,6 +294,14 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// isPlaceholderSecret reports whether v is (or is derived from) one of the
+// documented placeholder values such as "change-me-admin-password".
+func isPlaceholderSecret(v string) bool {
+	l := strings.ToLower(v)
+	return strings.Contains(l, "change-me") || strings.Contains(l, "changeme") ||
+		strings.Contains(l, "change_me")
 }
 
 func getenv(key, def string) string {

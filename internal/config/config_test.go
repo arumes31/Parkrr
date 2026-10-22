@@ -217,3 +217,22 @@ func TestBrowserRestoreOptIn(t *testing.T) {
 		t.Error("PARKRR_BROWSER_RESTORE=true should enable browser restore")
 	}
 }
+
+func TestLoadRejectsPlaceholderSecrets(t *testing.T) {
+	cases := []struct{ key, value string }{
+		{"PARKRR_ADMIN_PASSWORD", "change-me-admin-password"},
+		{"PARKRR_SESSION_SECRET", "change-me-to-a-long-random-secret-string"},
+		{"PARKRR_SESSION_SECRET", "CHANGEME-this-is-long-enough-to-pass-length"},
+		{"PARKRR_BACKUP_KEY", "change_me-backup-key-that-is-long-enough!!"},
+	}
+	for _, c := range cases {
+		t.Run(c.key+"/"+c.value, func(t *testing.T) {
+			setRequired(t)
+			t.Setenv(c.key, c.value)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), c.key) {
+				t.Fatalf("expected placeholder rejection for %s, got %v", c.key, err)
+			}
+		})
+	}
+}
