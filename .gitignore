@@ -101,3 +101,6 @@ captures/
 !/web/static/icons/**
 !/web/static/img/**
 backups/
+
+# Claude Code per-developer settings (never share a local allow-list)
+.claude/settings.local.json
