@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -125,9 +127,45 @@ func checkRestorableTOC(toc string) error {
 	return nil
 }
 
+// minPgRestoreMinor lists, per major version, the first minor release whose
+// pg_restore emits \restrict and so stops a crafted archive from smuggling psql
+// meta-commands into the script piped to psql below (CVE-2025-8714). Majors from
+// 18 on are fixed in every release; older majors are out of support.
+var minPgRestoreMinor = map[int]int{13: 22, 14: 19, 15: 14, 16: 10, 17: 6}
+
+var pgVersionRe = regexp.MustCompile(`\(PostgreSQL\) (\d+)(?:\.(\d+))?`)
+
+// checkPgRestoreVersion parses `pg_restore --version` output and rejects a client
+// that predates the CVE-2025-8714 fix. The pipeline into psql is only safe with
+// such a client, so the restore refuses to run rather than trust it.
+func checkPgRestoreVersion(out string) error {
+	m := pgVersionRe.FindStringSubmatch(out)
+	if m == nil {
+		return fmt.Errorf("cannot determine pg_restore version from %q", strings.TrimSpace(out))
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2]) // empty for e.g. "18beta1": treated as .0
+	if major >= 18 {
+		return nil
+	}
+	if want, ok := minPgRestoreMinor[major]; ok && minor >= want {
+		return nil
+	}
+	return fmt.Errorf("pg_restore %d.%d is too old for a safe restore (CVE-2025-8714); upgrade the PostgreSQL client to 16.10 or later", major, minor)
+}
+
 // restoreArchive spielt ein entschlüsseltes pg_dump-Archiv atomar ein. Genau eine
 // Quelle ist gesetzt: archivePath (eine Datei) oder archive (stdin von pg_restore).
 func restoreArchive(ctx context.Context, dbURL, archivePath string, archive io.Reader) error {
+	// #nosec G204 -- fixed executable and arguments.
+	ver, err := exec.CommandContext(ctx, "pg_restore", "--version").Output()
+	if err != nil {
+		return fmt.Errorf("pg_restore --version: %w", err)
+	}
+	if err := checkPgRestoreVersion(string(ver)); err != nil {
+		return err
+	}
+
 	dsn, env := dbExecEnv(dbURL)
 	args := []string{"--clean", "--if-exists", "--no-owner", "--no-privileges", "--file=-"}
 	if archivePath != "" {
